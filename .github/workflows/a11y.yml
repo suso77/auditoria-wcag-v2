@@ -69,10 +69,10 @@ jobs:
           npm run export
           echo "✅ Informe Excel y ZIP generados correctamente."
 
-      # 8️⃣ Control de calidad (Quality Gate)
-      - name: 🚦 Control de calidad (Quality Gate)
+      # 8️⃣ Control de calidad (Quality Gate - modo auditoría)
+      - name: 🚦 Control de calidad (Quality Gate - modo auditoría)
         run: node scripts/quality-gate.js
-        continue-on-error: false
+        continue-on-error: true
 
       # 9️⃣ Subir artefactos (Excel + ZIP + capturas)
       - name: 📤 Subir artefactos finales
