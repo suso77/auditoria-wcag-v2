@@ -1,26 +1,26 @@
 /**
- * ♿ Quality Gate – Auditoría WCAG (modo recopilación + compatibilidad total)
- * ---------------------------------------------------------------------------
- * ✅ No bloquea el flujo CI/CD (ideal para auditorías)
- * ✅ Funciona localmente y en GitHub Actions sin errores de "path undefined"
- * ✅ Genera resumen visual + quality-report.json
+ * ♿ Quality Gate – Auditoría WCAG (modo auditoría robusto)
+ * ---------------------------------------------------------
+ * ✅ Compatible con GitHub Actions y ejecución local
+ * ✅ Sin dependencias de fileURLToPath (evita "path undefined")
+ * ✅ Crea quality-report.json + resumen visual
+ * ✅ Nunca bloquea el flujo de CI/CD
  */
 
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const auditoriasDir = path.resolve(__dirname, "..", "auditorias");
+// 📂 Resolver rutas absolutas sin depender de import.meta.url
+const ROOT_DIR = process.cwd();
+const AUDITORIAS_DIR = path.resolve(ROOT_DIR, "auditorias");
 
 // 🧱 Buscar el último archivo results-merged-*.json
 const files = fs
-  .readdirSync(auditoriasDir)
+  .readdirSync(AUDITORIAS_DIR)
   .filter(f => f.startsWith("results-merged-") && f.endsWith(".json"))
   .map(f => ({
     name: f,
-    time: fs.statSync(path.join(auditoriasDir, f)).mtime.getTime(),
+    time: fs.statSync(path.join(AUDITORIAS_DIR, f)).mtime.getTime(),
   }))
   .sort((a, b) => b.time - a.time);
 
@@ -29,7 +29,7 @@ if (!files.length) {
   process.exit(0);
 }
 
-const latestFile = path.join(auditoriasDir, files[0].name);
+const latestFile = path.join(AUDITORIAS_DIR, files[0].name);
 console.log(`📊 Analizando resultados desde: ${latestFile}`);
 
 let data;
@@ -64,8 +64,8 @@ console.log(`   🟡 Moderadas: ${stats.moderate}`);
 console.log(`   🟢 Menores  : ${stats.minor}`);
 console.log(`   📄 Total    : ${stats.total}`);
 
-// 🧾 Guardar resumen JSON local (útil para informes posteriores)
-const summaryJson = path.join(auditoriasDir, "quality-report.json");
+// 🧾 Guardar resumen JSON local
+const summaryJson = path.resolve(AUDITORIAS_DIR, "quality-report.json");
 fs.writeFileSync(summaryJson, JSON.stringify({
   file: path.basename(latestFile),
   ...stats,
@@ -73,8 +73,9 @@ fs.writeFileSync(summaryJson, JSON.stringify({
 }, null, 2));
 console.log(`📝 Resumen JSON guardado en: ${summaryJson}`);
 
-// 🧭 Escribir resumen visual en GitHub (solo si la variable existe y es string)
+// 🧭 Añadir resumen visual si el entorno GitHub lo permite
 const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+
 if (typeof summaryPath === "string" && summaryPath.trim() !== "") {
   try {
     const summary = `
@@ -104,6 +105,7 @@ if (typeof summaryPath === "string" && summaryPath.trim() !== "") {
 
 console.log("✅ Quality Gate completado sin errores (modo auditoría).");
 process.exit(0);
+
 
 
 
