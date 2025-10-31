@@ -20,9 +20,6 @@ const SERIOUS_MAX = parseInt(process.env.SERIOUS_MAX || "5", 10);
 
 // === FUNCIONES AUXILIARES ===================================
 
-/**
- * 🔍 Busca el archivo más reciente "results-merged-*.json"
- */
 function obtenerUltimoArchivo() {
   const files = fs
     .readdirSync(auditoriasDir)
@@ -36,9 +33,6 @@ function obtenerUltimoArchivo() {
   return files.length ? path.join(auditoriasDir, files[0].name) : null;
 }
 
-/**
- * 📊 Cuenta las violaciones por nivel de impacto
- */
 function contarViolacionesPorImpact(data) {
   const severidades = { critical: 0, serious: 0, moderate: 0, minor: 0 };
   for (const page of data) {
@@ -78,7 +72,6 @@ if (!Array.isArray(data) || !data.length) {
   process.exit(0);
 }
 
-// Contar severidades
 const counts = contarViolacionesPorImpact(data);
 
 console.log(chalk.cyan("\n🚦 UMBRALES DE CONTROL:"));
@@ -91,7 +84,6 @@ console.log(`   Serious : ${chalk.yellow(counts.serious)}`);
 console.log(`   Moderate: ${chalk.magenta(counts.moderate)}`);
 console.log(`   Minor   : ${chalk.gray(counts.minor)}\n`);
 
-// Evaluar umbrales
 let aprobado = true;
 
 if (counts.critical > CRITICAL_MAX) {
@@ -110,7 +102,6 @@ if (aprobado) {
   console.log(chalk.red.bold("\n🚫 Quality Gate no superado (modo auditoría, flujo continúa).\n"));
 }
 
-// Resumen final
 const totalViolaciones = Object.values(counts).reduce((a, b) => a + b, 0);
 
 console.log(chalk.gray("-----------------------------------"));
@@ -120,3 +111,4 @@ console.log(`   ⚠️ Violaciones totales: ${totalViolaciones}`);
 console.log(chalk.gray("-----------------------------------"));
 
 process.exit(0);
+
