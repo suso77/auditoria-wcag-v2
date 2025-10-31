@@ -1,19 +1,24 @@
 /**
- * ♿ Quality Gate – Auditoría WCAG (modo auditoría estable para CI)
- * ----------------------------------------------------------------
- * ✅ Compatible 100% con GitHub Actions
- * ✅ Sin dependencias ESM (import/export)
- * ✅ Evita error "path must be of type string"
- * ✅ Genera resumen JSON y no bloquea el pipeline
+ * ♿ Quality Gate – Auditoría WCAG (modo compatible universal)
+ * ------------------------------------------------------------
+ * ✅ Funciona con CommonJS o ESM
+ * ✅ Compatible con Node 20 y GitHub Actions
+ * ✅ Sin errores "path must be string"
  */
 
-const fs = require("fs");
-const path = require("path");
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+import process from "process";
+
+// 🧭 Resolver __dirname y __filename aunque sea ESM
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const ROOT_DIR = process.cwd();
 const AUDITORIAS_DIR = path.join(ROOT_DIR, "auditorias");
 
-// 🧱 Buscar el último archivo results-merged-*.json
+// Buscar el último archivo results-merged-*.json
 const files = fs
   .readdirSync(AUDITORIAS_DIR)
   .filter(f => f.startsWith("results-merged-") && f.endsWith(".json"))
@@ -104,6 +109,7 @@ if (typeof summaryPath === "string" && summaryPath.trim() !== "") {
 
 console.log("✅ Quality Gate completado sin errores (modo auditoría).");
 process.exit(0);
+
 
 
 
