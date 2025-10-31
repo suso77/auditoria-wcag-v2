@@ -1,18 +1,17 @@
 /**
- * ♿ Quality Gate – Auditoría WCAG (modo auditoría robusto)
- * ---------------------------------------------------------
- * ✅ Compatible con GitHub Actions y ejecución local
- * ✅ Sin dependencias de fileURLToPath (evita "path undefined")
- * ✅ Crea quality-report.json + resumen visual
- * ✅ Nunca bloquea el flujo de CI/CD
+ * ♿ Quality Gate – Auditoría WCAG (modo auditoría estable para CI)
+ * ----------------------------------------------------------------
+ * ✅ Compatible 100% con GitHub Actions
+ * ✅ Sin dependencias ESM (import/export)
+ * ✅ Evita error "path must be of type string"
+ * ✅ Genera resumen JSON y no bloquea el pipeline
  */
 
-import fs from "fs";
-import path from "path";
+const fs = require("fs");
+const path = require("path");
 
-// 📂 Resolver rutas absolutas sin depender de import.meta.url
 const ROOT_DIR = process.cwd();
-const AUDITORIAS_DIR = path.resolve(ROOT_DIR, "auditorias");
+const AUDITORIAS_DIR = path.join(ROOT_DIR, "auditorias");
 
 // 🧱 Buscar el último archivo results-merged-*.json
 const files = fs
@@ -46,7 +45,7 @@ if (!Array.isArray(data) || !data.length) {
 }
 
 // 📈 Contadores globales
-let stats = { critical: 0, serious: 0, moderate: 0, minor: 0, total: 0 };
+const stats = { critical: 0, serious: 0, moderate: 0, minor: 0, total: 0 };
 
 for (const page of data) {
   const violations = page.violations || [];
@@ -65,7 +64,7 @@ console.log(`   🟢 Menores  : ${stats.minor}`);
 console.log(`   📄 Total    : ${stats.total}`);
 
 // 🧾 Guardar resumen JSON local
-const summaryJson = path.resolve(AUDITORIAS_DIR, "quality-report.json");
+const summaryJson = path.join(AUDITORIAS_DIR, "quality-report.json");
 fs.writeFileSync(summaryJson, JSON.stringify({
   file: path.basename(latestFile),
   ...stats,
@@ -105,6 +104,7 @@ if (typeof summaryPath === "string" && summaryPath.trim() !== "") {
 
 console.log("✅ Quality Gate completado sin errores (modo auditoría).");
 process.exit(0);
+
 
 
 

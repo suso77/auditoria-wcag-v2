@@ -1,7 +1,7 @@
 {
   "name": "mi-proyecto-cypress",
   "version": "1.1.0",
-  "type": "module",
+  "type": "commonjs",
   "description": "Auditoría de accesibilidad automatizada con Cypress + axe-core + Puppeteer + ExcelJS + GitHub Actions",
   "scripts": {
     "crawl": "node crawler/crawl.js",
