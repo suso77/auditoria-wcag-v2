@@ -1,0 +1,68 @@
+# ==========================================
+# ⚙️ CONFIGURACIÓN GLOBAL DE GIT
+# Proyecto: Auditoría WCAG automatizada
+# ==========================================
+
+# 🔄 Normalización de finales de línea (para evitar errores en Windows / macOS / Linux)
+* text=auto eol=lf
+
+# ==========================================
+# 🧩 Archivos de código fuente
+# ==========================================
+*.js      text eol=lf
+*.cjs     text eol=lf
+*.json    text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.md      text eol=lf
+*.sh      text eol=lf
+*.html    text eol=lf
+*.css     text eol=lf
+
+# ==========================================
+# 🧪 Archivos binarios / informes / evidencias
+# ==========================================
+*.xlsx    binary
+*.zip     binary
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.mp4     binary
+*.webm    binary
+*.pdf     binary
+
+# ==========================================
+# 🚫 Evitar merges automáticos en binarios
+# ==========================================
+*.xlsx merge=ours
+*.zip  merge=ours
+*.png  merge=ours
+*.jpg  merge=ours
+*.jpeg merge=ours
+*.gif  merge=ours
+*.mp4  merge=ours
+*.webm merge=ours
+*.pdf  merge=ours
+
+# ==========================================
+# 🧰 GitHub Linguist (para detección de lenguaje)
+# ==========================================
+scripts/* linguist-language=JavaScript
+crawler/* linguist-language=JavaScript
+cypress/* linguist-language=JavaScript
+
+# ==========================================
+# 🚀 Auditorías y resultados
+# ==========================================
+auditorias/* linguist-vendored
+auditorias/*.xlsx binary
+auditorias/*.zip binary
+auditorias/*-evidencias/** binary
+
+# ==========================================
+# ✍️ Documentación y metadatos
+# ==========================================
+README.md   text eol=lf
+LICENSE     text eol=lf
+
