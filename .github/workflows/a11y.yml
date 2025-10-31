@@ -1,0 +1,95 @@
+name: ♿ Auditoría de Accesibilidad – a11y CI
+
+on:
+  workflow_dispatch:
+    inputs:
+      site_url:
+        description: "URL base del sitio a auditar"
+        required: false
+        default: "https://www.hiexperience.es"
+  push:
+    branches: [ main, master, principal ]
+  pull_request:
+
+jobs:
+  a11y:
+    runs-on: ubuntu-latest
+    env:
+      SITE_URL: ${{ github.event.inputs.site_url || 'https://www.hiexperience.es' }}
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+      CRITICAL_MAX: 0
+      SERIOUS_MAX: 5
+
+    steps:
+      # 1️⃣ Clonar el repositorio
+      - name: 🧩 Checkout del repositorio
+        uses: actions/checkout@v4
+
+      # 2️⃣ Configurar Node.js
+      - name: ⚙️ Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # 3️⃣ Instalar dependencias
+      - name: 📦 Instalar dependencias
+        run: npm ci
+
+      # 4️⃣ Rastreo automático de URLs
+      - name: 🌐 Rastreo de URLs (crawler con JS)
+        run: |
+          echo "🌍 Rastreando sitio: $SITE_URL"
+          npm run crawl:js
+          echo "✅ Archivo generado: scripts/urls.json"
+        env:
+          SITE_URL: ${{ env.SITE_URL }}
+
+      # 5️⃣ Auditoría con Cypress + axe-core
+      - name: ♿ Ejecutar auditoría de accesibilidad
+        uses: cypress-io/github-action@v6
+        with:
+          install-command: npm ci
+          command: npm run auditoria || echo "⚠️ Violaciones detectadas, continuamos..."
+        env:
+          SITE_URL: ${{ env.SITE_URL }}
+
+      # 6️⃣ Fusionar todos los resultados
+      - name: 🧩 Combinar resultados de auditoría
+        run: |
+          echo "🔄 Combinando results.json en un solo archivo..."
+          npm run merge
+          echo "✅ Archivo combinado creado correctamente."
+
+      # 7️⃣ Generar informe Excel profesional + ZIP
+      - name: 📊 Generar informe Excel y ZIP
+        run: |
+          echo "📄 Generando informe WCAG + evidencias..."
+          npm run export
+          echo "✅ Informe Excel y ZIP generados correctamente."
+
+      # 8️⃣ Control de calidad (Quality Gate)
+      - name: 🚦 Control de calidad (Quality Gate)
+        run: node scripts/quality-gate.js
+        continue-on-error: false
+
+      # 9️⃣ Subir artefactos (Excel + ZIP + capturas)
+      - name: 📤 Subir artefactos finales
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Auditoría-WCAG-${{ github.run_number }}
+          path: |
+            auditorias/Informe-*.xlsx
+            auditorias/Informe-WCAG-*.zip
+            auditorias/*-evidencias/**
+          retention-days: 30
+
+      # 🔟 Resumen final
+      - name: ✅ Resumen de ejecución
+        if: always()
+        run: |
+          echo "🌍 Sitio auditado: $SITE_URL"
+          echo "📊 Informe Excel y ZIP subidos como artefactos"
+          echo "🚦 Umbrales Quality Gate: Critical <= $CRITICAL_MAX, Serious <= $SERIOUS_MAX"
