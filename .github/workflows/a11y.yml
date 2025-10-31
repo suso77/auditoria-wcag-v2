@@ -74,6 +74,7 @@ jobs:
         run: node scripts/quality-gate.cjs
         continue-on-error: true
 
+
       # 9️⃣ Subir artefactos (Excel + ZIP + capturas)
       - name: 📤 Subir artefactos finales
         if: always()
