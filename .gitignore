@@ -1,1 +1,33 @@
-node_modules
+# ⚙️ Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 🧩 Archivos temporales o de entorno
+.env
+.DS_Store
+*.log
+*.tmp
+
+# 🧪 Resultados de auditoría locales
+auditorias/*.json
+auditorias/*.zip
+auditorias/*.xlsx
+auditorias/*-evidencias/
+
+# 🧰 Salidas automáticas de Cypress
+cypress/downloads/
+cypress/screenshots/
+cypress/videos/
+
+# 🚫 Evitar duplicación accidental de carpetas
+scripts/scripts/
+scripts/__pycache__/
+scripts/*.pyc
+scripts/*.bak
+
+# 📦 Archivos generados por VSCode o Mac
+.vscode/
+.idea/
+Thumbs.db
