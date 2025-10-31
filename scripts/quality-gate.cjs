@@ -1,118 +1,122 @@
 /**
- * ♿ Quality Gate – Auditoría WCAG (modo compatible universal)
- * ------------------------------------------------------------
- * ✅ Funciona con CommonJS o ESM
- * ✅ Compatible con Node 20 y GitHub Actions
- * ✅ Sin errores "path must be string"
+ * 🚦 QUALITY GATE – CONTROL DE CALIDAD WCAG
+ * ------------------------------------------
+ * ✅ Compatible con CommonJS (Node.js 20+)
+ * ✅ Lee el último archivo results-merged-*.json
+ * ✅ Evalúa umbrales de severidad (Critical / Serious)
+ * ✅ Imprime resultados con colores en consola
+ * ✅ No detiene el pipeline (modo auditoría)
  */
 
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
-import process from "process";
+const fs = require("fs");
+const path = require("path");
+const { format } = require("date-fns");
+const chalk = require("chalk");
 
-// 🧭 Resolver __dirname y __filename aunque sea ESM
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// === CONFIGURACIÓN ===========================================
+const auditoriasDir = path.join(__dirname, "..", "auditorias");
+const CRITICAL_MAX = parseInt(process.env.CRITICAL_MAX || "0", 10);
+const SERIOUS_MAX = parseInt(process.env.SERIOUS_MAX || "5", 10);
 
-const ROOT_DIR = process.cwd();
-const AUDITORIAS_DIR = path.join(ROOT_DIR, "auditorias");
+// === FUNCIONES AUXILIARES ===================================
 
-// Buscar el último archivo results-merged-*.json
-const files = fs
-  .readdirSync(AUDITORIAS_DIR)
-  .filter(f => f.startsWith("results-merged-") && f.endsWith(".json"))
-  .map(f => ({
-    name: f,
-    time: fs.statSync(path.join(AUDITORIAS_DIR, f)).mtime.getTime(),
-  }))
-  .sort((a, b) => b.time - a.time);
+/**
+ * 🔍 Busca el archivo más reciente "results-merged-*.json"
+ */
+function obtenerUltimoArchivo() {
+  const files = fs
+    .readdirSync(auditoriasDir)
+    .filter(f => f.startsWith("results-merged-") && f.endsWith(".json"))
+    .map(f => ({
+      name: f,
+      time: fs.statSync(path.join(auditoriasDir, f)).mtime.getTime(),
+    }))
+    .sort((a, b) => b.time - a.time);
 
-if (!files.length) {
-  console.error("❌ No se encontró ningún archivo results-merged-*.json");
+  return files.length ? path.join(auditoriasDir, files[0].name) : null;
+}
+
+/**
+ * 📊 Cuenta las violaciones por nivel de impacto
+ */
+function contarViolacionesPorImpact(data) {
+  const severidades = { critical: 0, serious: 0, moderate: 0, minor: 0 };
+  for (const page of data) {
+    for (const v of page.violations || []) {
+      const impact = (v.impact || "unknown").toLowerCase();
+      if (severidades[impact] !== undefined) severidades[impact]++;
+    }
+  }
+  return severidades;
+}
+
+// === PROCESO PRINCIPAL ======================================
+
+console.log(chalk.cyan.bold("🚦 QUALITY GATE – Auditoría WCAG"));
+console.log(chalk.gray("-----------------------------------"));
+
+const latestFile = obtenerUltimoArchivo();
+
+if (!latestFile) {
+  console.error(chalk.red("❌ No se encontró ningún archivo results-merged-*.json"));
   process.exit(0);
 }
 
-const latestFile = path.join(AUDITORIAS_DIR, files[0].name);
-console.log(`📊 Analizando resultados desde: ${latestFile}`);
+console.log(chalk.cyan(`📄 Analizando archivo de resultados: ${latestFile}`));
+console.log(chalk.gray(`📅 Fecha: ${format(new Date(), "yyyy-MM-dd HH:mm")}`));
 
 let data;
 try {
   data = JSON.parse(fs.readFileSync(latestFile, "utf8"));
 } catch (err) {
-  console.error("❌ Error al leer o parsear el archivo:", err.message);
+  console.error(chalk.red(`❌ Error al leer o parsear ${latestFile}: ${err.message}`));
   process.exit(0);
 }
 
 if (!Array.isArray(data) || !data.length) {
-  console.error("❌ El archivo de resultados está vacío o no tiene formato válido.");
+  console.warn(chalk.yellow("⚠️ El archivo no contiene datos de auditoría."));
   process.exit(0);
 }
 
-// 📈 Contadores globales
-const stats = { critical: 0, serious: 0, moderate: 0, minor: 0, total: 0 };
+// Contar severidades
+const counts = contarViolacionesPorImpact(data);
 
-for (const page of data) {
-  const violations = page.violations || [];
-  for (const v of violations) {
-    stats.total++;
-    if (v.impact && stats[v.impact] !== undefined) stats[v.impact]++;
-  }
+console.log(chalk.cyan("\n🚦 UMBRALES DE CONTROL:"));
+console.log(`   Critical max: ${CRITICAL_MAX}`);
+console.log(`   Serious max : ${SERIOUS_MAX}\n`);
+
+console.log(chalk.cyan("📊 RESULTADOS DE SEVERIDAD:"));
+console.log(`   Critical: ${chalk.red(counts.critical)}`);
+console.log(`   Serious : ${chalk.yellow(counts.serious)}`);
+console.log(`   Moderate: ${chalk.magenta(counts.moderate)}`);
+console.log(`   Minor   : ${chalk.gray(counts.minor)}\n`);
+
+// Evaluar umbrales
+let aprobado = true;
+
+if (counts.critical > CRITICAL_MAX) {
+  console.log(chalk.red(`❌ Demasiadas violaciones CRÍTICAS (${counts.critical} > ${CRITICAL_MAX})`));
+  aprobado = false;
 }
 
-// 🚦 Mostrar resumen
-console.log("📋 Resumen de violaciones detectadas:");
-console.log(`   🔴 Críticas : ${stats.critical}`);
-console.log(`   🟠 Serias   : ${stats.serious}`);
-console.log(`   🟡 Moderadas: ${stats.moderate}`);
-console.log(`   🟢 Menores  : ${stats.minor}`);
-console.log(`   📄 Total    : ${stats.total}`);
+if (counts.serious > SERIOUS_MAX) {
+  console.log(chalk.yellow(`❌ Demasiadas violaciones SERIAS (${counts.serious} > ${SERIOUS_MAX})`));
+  aprobado = false;
+}
 
-// 🧾 Guardar resumen JSON local
-const summaryJson = path.join(AUDITORIAS_DIR, "quality-report.json");
-fs.writeFileSync(summaryJson, JSON.stringify({
-  file: path.basename(latestFile),
-  ...stats,
-  date: new Date().toISOString(),
-}, null, 2));
-console.log(`📝 Resumen JSON guardado en: ${summaryJson}`);
-
-// 🧭 Añadir resumen visual si el entorno GitHub lo permite
-const summaryPath = process.env.GITHUB_STEP_SUMMARY;
-
-if (typeof summaryPath === "string" && summaryPath.trim() !== "") {
-  try {
-    const summary = `
-## ♿ Informe de Control de Calidad – WCAG
-
-| Severidad | Conteo | Emoji |
-|------------|--------|--------|
-| 🔴 Críticas | ${stats.critical} | 🔥 |
-| 🟠 Serias | ${stats.serious} | ⚠️ |
-| 🟡 Moderadas | ${stats.moderate} | 🕵️ |
-| 🟢 Menores | ${stats.minor} | 💡 |
-| 📄 **Total** | **${stats.total}** | ✅ |
-
-📊 **Archivo analizado:** \`${path.basename(latestFile)}\`
-📅 **Fecha:** ${new Date().toLocaleString("es-ES")}
-
-> Modo auditoría: el pipeline continúa aunque existan violaciones.
-`;
-    fs.appendFileSync(summaryPath, summary, "utf8");
-    console.log("✅ Resumen visual añadido a GITHUB_STEP_SUMMARY");
-  } catch (err) {
-    console.warn("⚠️ No se pudo escribir el resumen visual:", err.message);
-  }
+if (aprobado) {
+  console.log(chalk.green.bold("\n✅ Quality Gate superado. Cumple los umbrales establecidos.\n"));
 } else {
-  console.log("ℹ️ GITHUB_STEP_SUMMARY no disponible (modo local o runner limitado).");
+  console.log(chalk.red.bold("\n🚫 Quality Gate no superado (modo auditoría, flujo continúa).\n"));
 }
 
-console.log("✅ Quality Gate completado sin errores (modo auditoría).");
+// Resumen final
+const totalViolaciones = Object.values(counts).reduce((a, b) => a + b, 0);
+
+console.log(chalk.gray("-----------------------------------"));
+console.log(chalk.cyan("📋 RESUMEN FINAL:"));
+console.log(`   🧩 Páginas auditadas : ${data.length}`);
+console.log(`   ⚠️ Violaciones totales: ${totalViolaciones}`);
+console.log(chalk.gray("-----------------------------------"));
+
 process.exit(0);
-
-
-
-
-
-
-

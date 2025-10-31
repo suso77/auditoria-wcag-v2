@@ -14,6 +14,7 @@ on:
 jobs:
   a11y:
     runs-on: ubuntu-latest
+
     env:
       SITE_URL: ${{ github.event.inputs.site_url || 'https://www.hiexperience.es' }}
       LC_ALL: C.UTF-8
@@ -37,7 +38,7 @@ jobs:
       - name: 📦 Instalar dependencias
         run: npm ci
 
-      # 4️⃣ Rastreo automático de URLs
+      # 4️⃣ Rastreo automático de URLs (crawler con Puppeteer)
       - name: 🌐 Rastreo de URLs (crawler con JS)
         run: |
           echo "🌍 Rastreando sitio: $SITE_URL"
@@ -55,25 +56,42 @@ jobs:
         env:
           SITE_URL: ${{ env.SITE_URL }}
 
-      # 6️⃣ Fusionar todos los resultados
+      # 6️⃣ Fusionar todos los resultados (results.json)
       - name: 🧩 Combinar resultados de auditoría
         run: |
           echo "🔄 Combinando results.json en un solo archivo..."
           npm run merge
           echo "✅ Archivo combinado creado correctamente."
 
-      # 7️⃣ Generar informe Excel profesional + ZIP
+      # 7️⃣ Generar informe Excel profesional + ZIP con evidencias
       - name: 📊 Generar informe Excel y ZIP
         run: |
           echo "📄 Generando informe WCAG + evidencias..."
           npm run export
           echo "✅ Informe Excel y ZIP generados correctamente."
 
-     # 8️⃣ Control de calidad (Quality Gate - modo auditoría)
+      # 8️⃣ Control de calidad (Quality Gate - modo auditoría)
       - name: 🚦 Control de calidad (Quality Gate - modo auditoría)
-        run: node scripts/quality-gate.cjs
-        continue-on-error: true
+        run: |
+          echo "==============================================="
+          echo "🚦 INICIO DEL CONTROL DE CALIDAD (QUALITY GATE)"
+          echo "==============================================="
+          echo "🧩 Ejecutando Quality Gate en modo CommonJS..."
+          echo "📁 Archivo: scripts/quality-gate.cjs"
+          echo ""
+          
+          if [ -f "scripts/quality-gate.cjs" ]; then
+            node scripts/quality-gate.cjs || echo "⚠️ Quality Gate detectó violaciones, pero continuamos el flujo."
+          else
+            echo "❌ ERROR: El archivo scripts/quality-gate.cjs no existe o no se encontró."
+            exit 1
+          fi
 
+          echo ""
+          echo "==============================================="
+          echo "✅ FIN DEL CONTROL DE CALIDAD (QUALITY GATE)"
+          echo "==============================================="
+        continue-on-error: true
 
       # 9️⃣ Subir artefactos (Excel + ZIP + capturas)
       - name: 📤 Subir artefactos finales
@@ -94,3 +112,4 @@ jobs:
           echo "🌍 Sitio auditado: $SITE_URL"
           echo "📊 Informe Excel y ZIP subidos como artefactos"
           echo "🚦 Umbrales Quality Gate: Critical <= $CRITICAL_MAX, Serious <= $SERIOUS_MAX"
+          echo "♿ Auditoría finalizada correctamente."
