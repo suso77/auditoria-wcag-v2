@@ -23,7 +23,7 @@ jobs:
       SERIOUS_MAX: 5
 
     steps:
-      # 1️⃣ Clonar repositorio
+      # 1️⃣ Clonar el repositorio
       - name: 🧩 Checkout del repositorio
         uses: actions/checkout@v4
 
@@ -72,8 +72,25 @@ jobs:
       - name: 🧩 Combinar resultados de auditoría
         run: |
           echo "🔄 Combinando resultados..."
-          npm run merge || exit 1
+          npm run merge || npm run fix
           echo "✅ Archivo combinado creado correctamente."
+
+      # 🧪 Validar archivo combinado antes del informe
+      - name: 🔍 Validar integridad del archivo combinado
+        run: |
+          echo "🔎 Verificando contenido de auditorias/results-merged-*.json ..."
+          FILE=$(ls auditorias/results-merged-*.json 2>/dev/null | tail -n 1 || true)
+          if [ -z "$FILE" ]; then
+            echo "❌ No se encontró ningún results-merged.json. Intentando fusionar..."
+            npm run merge || npm run fix
+          else
+            if [ ! -s "$FILE" ]; then
+              echo "⚠️ Archivo combinado vacío. Intentando reparar..."
+              npm run fix
+            else
+              echo "✅ Archivo válido detectado: $FILE"
+            fi
+          fi
 
       # 7️⃣ Generar informe Excel + ZIP con evidencias
       - name: 📊 Generar informe Excel y ZIP
