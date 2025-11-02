@@ -1,49 +1,48 @@
 /**
- * ♿ Auditoría de accesibilidad total – v2.1
- * -----------------------------------------------------
- * Lee todas las URLs desde scripts/urls.json
- * y ejecuta axe-core en cada una.
- *
- * ✔ Capturas automáticas por página
- * ✔ Resultados por página → /auditorias
- * ✔ Compatible con merge-results y export-to-xlsx
- * -----------------------------------------------------
+ * ♿ Auditoría de accesibilidad total – v2.1 (CommonJS + CI)
+ * ------------------------------------------------------------
+ * 🔹 Lee todas las URLs desde scripts/urls.json
+ * 🔹 Ejecuta axe-core en cada una
+ * 🔹 Guarda los resultados en auditorias/YYYY-MM-DD-results.json
+ * 🔹 Compatible con merge-results.cjs y export-to-xlsx.cjs
+ * 🔹 Compatible con GitHub Actions y Node 20
+ * ------------------------------------------------------------
  */
 
-require("cypress-axe");
-const fs = require("fs");
-const path = require("path");
-const { format } = require("date-fns");
-
-const urlsPath = path.join(__dirname, "..", "..", "scripts", "urls.json");
-
-if (!fs.existsSync(urlsPath)) {
-  throw new Error("❌ No se encontró scripts/urls.json. Ejecuta primero: npm run crawl");
-}
-
-// 🔗 Leer URLs rastreadas
-const urls = JSON.parse(fs.readFileSync(urlsPath, "utf8"));
-if (!urls || !urls.length) {
-  throw new Error("❌ No se encontraron URLs en scripts/urls.json");
-}
-
-// 📁 Directorio de salida
-const fecha = format(new Date(), "yyyy-MM-dd");
-const dominio = new URL(urls[0]).hostname.replace(/\W+/g, "-");
-const outputDir = path.join(__dirname, "..", "..", "auditorias", `${fecha}-${dominio}`);
-
-if (!fs.existsSync(outputDir)) {
-  fs.mkdirSync(outputDir, { recursive: true });
-  console.log(`📁 Carpeta de auditoría creada: ${outputDir}`);
-}
+import "cypress-axe";
+import dayjs from "dayjs";
+import urls from "../../scripts/urls.json";
 
 describe("♿ Auditoría completa de accesibilidad (axe-core)", () => {
   urls.forEach((url) => {
     it(`Audita: ${url}`, () => {
+      // 🧭 Visitar la URL (aunque haya errores de estado)
       cy.visit(url, { failOnStatusCode: false });
+
+      // Inyectar axe-core
       cy.injectAxe();
 
+      // Ejecutar análisis de accesibilidad
       cy.checkA11y(null, null, (violations) => {
+        const total = violations.length;
+
+        if (total === 0) {
+          cy.task("log", `✅ ${url} — sin violaciones detectadas`);
+          return;
+        }
+
+        // 📊 Contadores
+        const critical = violations.filter((v) => v.impact === "critical").length;
+        const serious = violations.filter((v) => v.impact === "serious").length;
+        const moderate = violations.filter((v) => v.impact === "moderate").length;
+        const minor = violations.filter((v) => v.impact === "minor").length;
+
+        cy.task(
+          "log",
+          `♿ ${url} — ${total} violaciones (critical: ${critical}, serious: ${serious}, moderate: ${moderate}, minor: ${minor})`
+        );
+
+        // 🧾 Estructura uniforme para exportación
         const formatted = violations.map((v) => ({
           id: v.id,
           impact: v.impact,
@@ -58,26 +57,20 @@ describe("♿ Auditoría completa de accesibilidad (axe-core)", () => {
           })),
         }));
 
-        // 📸 Captura de pantalla
+        // 📸 Captura completa de pantalla
         const screenshotName = url
           .replace(/https?:\/\//, "")
           .replace(/[^\w.-]/g, "_");
         cy.screenshot(`${screenshotName}-audit`, { capture: "fullPage" });
 
-        // 🧩 Guardar resultados por página
-        const safeName = screenshotName.substring(0, 80);
-        const outputFile = path.join(
-          outputDir,
-          `results-${safeName}-${Date.now()}.json`
-        );
+        // 🧩 Guardar resultados en /auditorias
+        const fileName = `${dayjs().format("YYYY-MM-DD")}-results.json`;
+        cy.writeFile(`auditorias/${fileName}`, [{ url, violations: formatted }], { flag: "a+" });
 
-        fs.writeFileSync(
-          outputFile,
-          JSON.stringify([{ url, violations: formatted }], null, 2)
-        );
-
-        console.log(`✅ Resultados guardados: ${outputFile}`);
+        // 💾 Registrar también en GitHub Actions (task)
+        cy.task("saveA11yResults", { url, violations: formatted });
       });
     });
   });
 });
+

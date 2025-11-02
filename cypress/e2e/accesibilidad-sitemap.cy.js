@@ -1,69 +1,47 @@
 /// <reference types="cypress" />
+import 'cypress-axe';
+import dayjs from 'dayjs';
+import urls from '../../scripts/urls.json';
 
 /**
- * ♿ Auditoría de accesibilidad detallada (diagnóstico manual)
+ * ♿ Auditoría de accesibilidad detallada (modo sitemap)
  * ------------------------------------------------------------
- * ✅ Compatible con CommonJS y Node 20
- * ✅ Guarda resultados JSON válidos por fecha
- * ✅ Logs limpios para GitHub Actions o local
+ * ✅ Usa cy.writeFile (compatible con GitHub Actions y Node 20)
+ * ✅ Guarda un JSON por día en /auditorias
+ * ✅ Compatible con merge-results.cjs y export-to-xlsx.cjs
+ * ------------------------------------------------------------
  */
 
-require("cypress-axe");
-const fs = require("fs");
-const path = require("path");
-const dayjs = require("dayjs");
-
-// 🔗 Cargar URLs
-const urlsPath = path.join(__dirname, "..", "..", "scripts", "urls.json");
-
-if (!fs.existsSync(urlsPath)) {
-  throw new Error("❌ No se encontró scripts/urls.json. Ejecuta primero: npm run crawl");
-}
-
-const urls = JSON.parse(fs.readFileSync(urlsPath, "utf8"));
-if (!urls || !urls.length) {
-  throw new Error("❌ No se encontraron URLs en scripts/urls.json");
-}
-
-// 📁 Directorio de salida
-const fecha = dayjs().format("YYYY-MM-DD");
-const domain = new URL(urls[0]).hostname.replace(/\W+/g, "-");
-const outputDir = path.join(__dirname, "..", "..", "auditorias");
-
-if (!fs.existsSync(outputDir)) {
-  fs.mkdirSync(outputDir, { recursive: true });
-}
-
-const outputFile = path.join(outputDir, `${fecha}-results-${domain}.json`);
-console.log(`🧩 Archivo de salida: ${outputFile}`);
-
-describe("♿ Auditoría detallada de accesibilidad (axe-core)", () => {
+describe('♿ Auditoría de accesibilidad – sitemap mode', () => {
   urls.forEach((url) => {
     it(`Audita: ${url}`, () => {
+      // 🧭 Visitar URL (aunque haya errores de estado)
       cy.visit(url, { failOnStatusCode: false });
+
+      // Inyectar axe-core
       cy.injectAxe();
 
+      // Ejecutar auditoría de accesibilidad
       cy.checkA11y(null, null, (violations) => {
         const total = violations.length;
 
         if (total === 0) {
-          console.log(`✅ ${url} — sin violaciones detectadas`);
+          cy.task('log', `✅ ${url} — sin violaciones detectadas`);
           return;
         }
 
-        const summary = {
-          url,
-          total,
-          critical: violations.filter(v => v.impact === "critical").length,
-          serious: violations.filter(v => v.impact === "serious").length,
-          moderate: violations.filter(v => v.impact === "moderate").length,
-          minor: violations.filter(v => v.impact === "minor").length,
-        };
+        // 📊 Contadores
+        const critical = violations.filter(v => v.impact === 'critical').length;
+        const serious = violations.filter(v => v.impact === 'serious').length;
+        const moderate = violations.filter(v => v.impact === 'moderate').length;
+        const minor = violations.filter(v => v.impact === 'minor').length;
 
-        console.log(
-          `♿ ${url} — ${total} violaciones (🔴 ${summary.critical}, 🟠 ${summary.serious}, 🟡 ${summary.moderate}, 🟢 ${summary.minor})`
+        cy.task(
+          'log',
+          `♿ ${url} — ${total} violaciones (critical: ${critical}, serious: ${serious}, moderate: ${moderate}, minor: ${minor})`
         );
 
+        // 📋 Estructura limpia de resultados
         const detailedResults = violations.map(v => ({
           id: v.id,
           impact: v.impact,
@@ -72,27 +50,17 @@ describe("♿ Auditoría detallada de accesibilidad (axe-core)", () => {
           helpUrl: v.helpUrl,
           tags: v.tags,
           nodes: v.nodes.map(node => ({
-            target: node.target || [],
-            html: node.html?.slice(0, 500) || "(sin HTML)",
+            selector: node.target?.join(' > ') || '(sin selector)',
+            html: node.html?.trim().substring(0, 500) || '(sin HTML)',
           })),
         }));
 
-        // 🧾 Guardar resultados por URL en un JSON acumulativo
-        let allResults = [];
-        if (fs.existsSync(outputFile)) {
-          try {
-            allResults = JSON.parse(fs.readFileSync(outputFile, "utf8"));
-          } catch {
-            allResults = [];
-          }
-        }
+        // 🧩 Guardar resultados (modo append)
+        const fileName = `${dayjs().format('YYYY-MM-DD')}-results.json`;
+        cy.writeFile(`auditorias/${fileName}`, [{ url, violations: detailedResults }], { flag: 'a+' });
 
-        allResults.push({ ...summary, violations: detailedResults });
-        fs.writeFileSync(outputFile, JSON.stringify(allResults, null, 2));
-
-        // 📸 Captura visual
-        const screenshotName = url.replace(/https?:\/\//, "").replace(/[^\w.-]/g, "_");
-        cy.screenshot(`${screenshotName}-axe-report`, { capture: "fullPage" });
+        // 💾 Log visual (para Actions)
+        cy.task('saveA11yResults', { url, violations: detailedResults });
       });
     });
   });
