@@ -95,8 +95,14 @@ jobs:
       - name: 📊 Generar informe Excel y ZIP
         run: |
           echo "📄 Generando informe profesional..."
-          npm run report || echo "⚠️ Error generando Excel (continuamos)..."
-          echo "✅ Informe Excel y ZIP generados correctamente."
+          npm run report || exit 1
+          echo "✅ Informe Excel generado correctamente."
+          echo ""
+          echo "📂 Contenido del directorio auditorias/:"
+          ls -lh auditorias/ || echo "⚠️ No se encontró la carpeta auditorias."
+          echo ""
+          echo "📁 Archivos generados en auditorias:"
+          find auditorias -type f \( -name "*.xlsx" -o -name "*.zip" -o -name "results-merged*.json" \) -print || echo "⚠️ Ningún archivo encontrado."
 
       # 9️⃣ Control de calidad (Quality Gate)
       - name: 🚦 Control de calidad – WCAG (Quality Gate)
@@ -117,8 +123,8 @@ jobs:
         with:
           name: Auditoría-WCAG-${{ github.run_number }}
           path: |
-            auditorias/Informe-*.xlsx
-            auditorias/Informe-WCAG-*.zip
+            auditorias/*.xlsx
+            auditorias/*.zip
             auditorias/*-evidencias/**
           retention-days: 30
 
