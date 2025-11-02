@@ -1,6 +1,6 @@
 // ✅ scripts/export-to-xlsx.mjs
 // Genera informe Excel profesional + ZIP con evidencias de auditoría WCAG
-// Compatible con Node 20+ (ESM puro)
+// Totalmente compatible con Node 20+ (ESM puro)
 
 import fs from "fs";
 import path from "path";
@@ -40,6 +40,11 @@ async function generateExcel() {
   console.log(`📄 Cargando resultados desde: ${resultsPath}`);
   const results = JSON.parse(fs.readFileSync(resultsPath, "utf-8"));
 
+  if (!Array.isArray(results) || results.length === 0) {
+    console.error("❌ El archivo results.json está vacío o mal formado.");
+    process.exit(1);
+  }
+
   // Crear nuevo Excel
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet("Auditoría WCAG");
@@ -65,14 +70,21 @@ async function generateExcel() {
 
   // Rellenar datos
   results.forEach((page) => {
+    if (!page || !page.url) return; // Evitar registros vacíos
+
+    if (!page.violations || !Array.isArray(page.violations)) {
+      console.warn(`⚠️ Página sin resultados válidos: ${page.url}`);
+      return; // saltar a la siguiente página
+    }
+
     page.violations.forEach((v) => {
       const row = sheet.addRow({
         url: page.url,
-        date: page.date,
-        id: v.id,
+        date: page.date || "",
+        id: v.id || "",
         impact: v.impact || "—",
-        description: v.description,
-        target: v.nodes.map((n) => n.target.join(", ")).join(" | "),
+        description: v.description || "",
+        target: v.nodes?.map((n) => n.target.join(", ")).join(" | ") || "",
       });
 
       // Colorear según impacto
@@ -126,3 +138,4 @@ generateExcel().catch((err) => {
   console.error("❌ Error generando informe Excel:", err);
   process.exit(1);
 });
+
