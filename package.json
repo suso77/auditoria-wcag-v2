@@ -10,7 +10,7 @@
     "auditoria": "npx cypress run --browser chrome --headless || true",
     "merge": "node scripts/merge-results.cjs",
     "fix": "node scripts/fix-json.cjs",
-    "report": "node ./scripts/export-to-xlsx.cjs && ls -lh auditorias/",
+    "report": "node ./scripts/export-to-xlsx.mjs && ls -lh auditorias/",
     "quality": "node scripts/quality-gate.cjs",
     "audit:full": "npm run preaudit && npm run crawl:js && npm run auditoria && npm run merge && npm run report && npm run quality",
     "audit:local": "CRITICAL_MAX=0 SERIOUS_MAX=5 npm run audit:full",
