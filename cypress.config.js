@@ -1,50 +1,65 @@
-import { defineConfig } from 'cypress';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { format } from 'date-fns';
+/**
+ * ♿ Configuración Cypress – Auditoría WCAG v2 (modo CommonJS)
+ * ------------------------------------------------------------
+ * ✅ Compatible con Node 20 y GitHub Actions
+ * ✅ Registra tareas para logs y resultados axe-core
+ * ✅ Crea carpeta de salida automática por fecha
+ */
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const { defineConfig } = require("cypress");
+const fs = require("fs");
+const path = require("path");
+const { format } = require("date-fns");
 
-// 🗂️ Carpeta donde se guardarán los resultados de auditoría
-const timestamp = format(new Date(), 'yyyy-MM-dd-HHmmss');
-const outputDir = path.join(__dirname, `auditorias/${timestamp}-auditoria`);
+// 🗂️ Directorio de salida
+const fecha = format(new Date(), "yyyy-MM-dd-HHmmss");
+const outputDir = path.join(process.cwd(), "auditorias", `${fecha}-auditoria`);
 
 if (!fs.existsSync(outputDir)) {
   fs.mkdirSync(outputDir, { recursive: true });
+  console.log(`📁 Carpeta de salida creada: ${outputDir}`);
 }
 
-export default defineConfig({
+module.exports = defineConfig({
   e2e: {
-    baseUrl: process.env.SITE_URL || 'https://example.com',
+    baseUrl: process.env.SITE_URL || "https://example.com",
     video: false,
     screenshotOnRunFailure: false,
 
     setupNodeEvents(on, config) {
-      // ✅ Task para mostrar logs personalizados en consola
-      on('task', {
+      // ✅ Task de log (para imprimir mensajes en consola / GitHub Actions)
+      on("task", {
         log(message) {
           console.log(message);
           return null;
         },
 
-        // ✅ Task para guardar resultados de auditoría (axe-core)
+        // ✅ Task para guardar resultados de accesibilidad (axe-core)
         saveA11yResults({ url, violations }) {
-          const filePath = path.join(outputDir, 'results.json');
-          const existing = fs.existsSync(filePath)
-            ? JSON.parse(fs.readFileSync(filePath))
-            : [];
+          const filePath = path.join(outputDir, "results.json");
+
+          let existing = [];
+          if (fs.existsSync(filePath)) {
+            try {
+              existing = JSON.parse(fs.readFileSync(filePath, "utf8"));
+            } catch {
+              existing = [];
+            }
+          }
+
           existing.push({ url, violations });
+
           fs.writeFileSync(filePath, JSON.stringify(existing, null, 2));
+          console.log(`🧩 Resultados guardados en ${filePath}`);
           return null;
-        }
+        },
       });
 
-      // 📁 Expone la ruta de salida para otros scripts (merge/export)
+      // 📦 Exponer ruta para otros scripts (merge, export, etc.)
       config.env.outputDir = outputDir;
 
       return config;
-    }
-  }
+    },
+  },
 });
+

@@ -1,34 +1,61 @@
+/**
+ * 🧹 fix-json.cjs
+ * ------------------------------------------------------------
+ * Repara automáticamente archivos JSON dañados o truncados en /auditorias.
+ * Crea copias limpias con sufijo -fixed.json
+ * ------------------------------------------------------------
+ * ✅ Limpieza agresiva (arrays rotos, objetos consecutivos)
+ * ✅ Recorre todos los archivos automáticamente
+ * ✅ 100% CommonJS y compatible con GitHub Actions
+ */
+
 const fs = require("fs");
 const path = require("path");
 
-const filePath = "./auditorias/2025-10-31-results.json";
-console.log(`🧩 Reparando formato JSON en: ${filePath}`);
+const AUDITORIAS_DIR = path.join(process.cwd(), "auditorias");
 
-if (!fs.existsSync(filePath)) {
-  console.error("❌ No se encontró el archivo.");
-  process.exit(1);
+// 🕵️ Buscar JSON dañados
+const files = fs
+  .readdirSync(AUDITORIAS_DIR)
+  .filter(f => f.endsWith(".json") && !f.includes("fixed"));
+
+if (!files.length) {
+  console.log("ℹ️ No se encontraron archivos JSON para limpiar.");
+  process.exit(0);
 }
 
-let raw = fs.readFileSync(filePath, "utf8");
+for (const file of files) {
+  const filePath = path.join(AUDITORIAS_DIR, file);
+  let raw = fs.readFileSync(filePath, "utf8");
 
-// 1️⃣ Limpiar saltos de línea y posibles duplicados de cierre/apertura
-raw = raw
-  .replace(/\n/g, "")
-  .replace(/}\s*{/g, "},{")   // unir objetos consecutivos
-  .replace(/\]\s*\[/g, ",");  // unir arrays consecutivos
+  try {
+    JSON.parse(raw);
+    console.log(`✅ ${file} está correcto.`);
+    continue;
+  } catch {
+    console.warn(`⚠️ Reparando ${file}...`);
 
-// 2️⃣ Asegurar que todo esté entre []
-if (!raw.trim().startsWith("[")) raw = `[${raw}`;
-if (!raw.trim().endsWith("]")) raw = `${raw}]`;
+    // Limpieza avanzada
+    raw = raw
+      .replace(/\n/g, "")
+      .replace(/}\s*{/g, "},{")   // unir objetos consecutivos
+      .replace(/\]\s*\[/g, ",")   // unir arrays consecutivos
+      .replace(/,\s*]/g, "]")     // eliminar comas colgantes
+      .replace(/}\s*$/, "}")      // cierre forzado
+      .trim();
 
-// 3️⃣ Validar que sea JSON válido
-try {
-  const data = JSON.parse(raw);
-  const fixedPath = path.join(path.dirname(filePath), "2025-10-31-results-fixed.json");
-  fs.writeFileSync(fixedPath, JSON.stringify(data, null, 2));
-  console.log(`✅ Archivo reparado correctamente: ${fixedPath}`);
-  console.log(`📄 Total de elementos: ${data.length}`);
-} catch (err) {
-  console.error("❌ Error: El archivo sigue siendo inválido.");
-  console.error(err.message);
+    // Asegurar formato array
+    if (!raw.startsWith("[")) raw = `[${raw}`;
+    if (!raw.endsWith("]")) raw = `${raw}]`;
+
+    try {
+      const data = JSON.parse(raw);
+      const fixedPath = filePath.replace(".json", "-fixed.json");
+      fs.writeFileSync(fixedPath, JSON.stringify(data, null, 2), "utf8");
+      console.log(`🧩 Archivo corregido: ${fixedPath}`);
+      console.log(`📄 Total de elementos: ${data.length}`);
+    } catch (err) {
+      console.error(`❌ Error: ${file} sigue siendo inválido (${err.message})`);
+    }
+  }
 }

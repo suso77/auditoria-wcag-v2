@@ -1,30 +1,34 @@
 {
-  "name": "mi-proyecto-cypress",
-  "version": "1.1.0",
+  "name": "auditoria-wcag-v2",
+  "version": "1.1.2",
   "type": "commonjs",
   "description": "Auditoría de accesibilidad automatizada con Cypress + axe-core + Puppeteer + ExcelJS + GitHub Actions",
   "scripts": {
-  "crawl": "node crawler/crawl.js",
-  "crawl:js": "node crawler/crawl-puppeteer.mjs",
-  "auditoria": "npx cypress run --browser chrome --headless || true",
-  "merge": "node scripts/merge-results.cjs",
-  "export": "node scripts/export-to-xlsx.cjs",
-  "quality": "node scripts/quality-gate.cjs",
-  "audit:full": "npm run crawl:js && npm run auditoria && npm run merge && npm run export && npm run quality"
-},
+    "preaudit": "node -e \"if (!require('fs').existsSync('./scripts/urls.json')) { console.error('❌ No se encontró scripts/urls.json. Ejecuta npm run crawl:js'); process.exit(1) } else { console.log('✅ URLs detectadas, listo para auditar.') }\"",
+    "crawl": "node crawler/crawl.js",
+    "crawl:js": "node crawler/crawl-puppeteer.mjs",
+    "auditoria": "npx cypress run --browser chrome --headless || true",
+    "merge": "node scripts/merge-results.cjs",
+    "fix": "node scripts/fix-json.cjs",
+    "report": "node scripts/export-to-xlsx.cjs",
+    "quality": "node scripts/quality-gate.cjs",
+    "audit:full": "npm run preaudit && npm run crawl:js && npm run auditoria && npm run merge && npm run report && npm run quality",
+    "audit:local": "CRITICAL_MAX=0 SERIOUS_MAX=5 npm run audit:full",
+    "audit:sitemap": "npx cypress run --spec 'cypress/e2e/accesibilidad-sitemap.cy.js' --browser chrome --headless"
+  },
   "dependencies": {
     "axe-core": "^4.10.0",
     "axios": "^1.7.2",
-    "chalk": "^5.6.2",
+    "chalk": "^5.3.0",
     "cheerio": "^1.0.0-rc.12",
     "date-fns": "^3.6.0",
     "exceljs": "^4.4.0",
-    "puppeteer": "^23.6.0"
+    "puppeteer": "^23.6.0",
+    "archiver": "^7.0.0"
   },
   "devDependencies": {
     "cypress": "^13.13.0",
-    "cypress-axe": "^1.5.0",
-    "dayjs": "^1.11.19"
+    "cypress-axe": "^1.5.0"
   },
   "engines": {
     "node": ">=20"
@@ -38,8 +42,17 @@
     "exceljs",
     "auditoria",
     "github-actions",
-    "automatizacion"
+    "automatizacion",
+    "en301549"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/suso77/auditoria-wcag-v2"
+  },
+  "bugs": {
+    "url": "https://github.com/suso77/auditoria-wcag-v2/issues"
+  },
+  "homepage": "https://github.com/suso77/auditoria-wcag-v2#readme",
   "author": "Suso",
   "license": "MIT"
 }
