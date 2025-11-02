@@ -18,8 +18,8 @@ describe('♿ Auditoría de accesibilidad - axe-core (detallada)', () => {
     cy.wrap(urls).each((url) => {
       cy.task('log', `🚀 Analizando: ${url}`);
 
-      // Visitar página
-      cy.visit(url, { timeout: 90000 });
+      // ✅ VISITAR página sin fallar por códigos de error (404, 500, etc.)
+      cy.visit(url, { timeout: 90000, failOnStatusCode: false });
 
       // Inyectar axe-core
       cy.injectAxe();
@@ -69,7 +69,3 @@ describe('♿ Auditoría de accesibilidad - axe-core (detallada)', () => {
     });
   });
 });
-
-
-
-

@@ -5,18 +5,16 @@
  * Versión: Profesional Intermedia (con enlaces, severidad y formato de elemento afectado)
  */
 
-import fs from "fs";
-import path from "path";
-import ExcelJS from "exceljs";
-import open from "open";
-import chalk from "chalk";
+const fs = require("fs");
+const path = require("path");
+const ExcelJS = require("exceljs");
+const open = require("open");
+const chalk = require("chalk");
+const { WCAG_TEXTOS } = require("./wcag-dictionary.js");
 
 /* === CONFIGURACIÓN BASE === */
 const auditoriasDir = path.resolve("auditorias");
 const mergedPattern = /^results-merged.*\.json$/;
-
-/* === DICCIONARIO DE CRITERIOS WCAG 2.2 A/AA === */
-const { WCAG_TEXTOS } = require("./wcag-dictionary.js");
 
 /* === FUNCIÓN: Buscar el archivo más reciente === */
 function encontrarArchivoMerged() {
