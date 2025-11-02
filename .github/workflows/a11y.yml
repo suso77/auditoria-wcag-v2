@@ -23,11 +23,11 @@ jobs:
       SERIOUS_MAX: 5
 
     steps:
-      # 1️⃣ Clonar el repositorio
+      # 1️⃣ Clonar repositorio
       - name: 🧩 Checkout del repositorio
         uses: actions/checkout@v4
 
-      # 2️⃣ Configurar Node.js (limpio y cacheado)
+      # 2️⃣ Configurar Node.js
       - name: ⚙️ Configurar Node.js
         uses: actions/setup-node@v4
         with:
@@ -35,7 +35,7 @@ jobs:
           cache: 'npm'
           cache-dependency-path: '**/package-lock.json'
 
-      # 3️⃣ Instalar dependencias (desde cero)
+      # 3️⃣ Instalar dependencias limpias
       - name: 📦 Instalar dependencias
         run: |
           echo "🧹 Limpiando entorno previo..."
@@ -43,22 +43,15 @@ jobs:
           echo "📦 Instalando dependencias..."
           npm install --no-audit --no-fund
 
-      # 4️⃣ Rastreo automático de URLs con Puppeteer
-      - name: 🌐 Rastreo de URLs (crawler con Puppeteer)
+      # 4️⃣ Rastreo de URLs con Puppeteer
+      - name: 🌐 Rastreo de URLs
         run: |
           echo "==============================================="
           echo "🌍 INICIO DEL RASTREO DE URLs"
           echo "==============================================="
-          echo "🔗 Rastreando sitio: $SITE_URL"
+          echo "🔗 Sitio: $SITE_URL"
           echo ""
-          
-          if [ -f "crawler/crawl-puppeteer.mjs" ]; then
-            node crawler/crawl-puppeteer.mjs
-          else
-            echo "❌ ERROR: No se encontró crawler/crawl-puppeteer.mjs"
-            exit 1
-          fi
-          
+          npm run crawl:js
           echo ""
           echo "✅ Rastreo completado correctamente"
           echo "📁 Archivo generado: scripts/urls.json"
@@ -71,42 +64,37 @@ jobs:
         uses: cypress-io/github-action@v6
         with:
           install-command: npm ci
-          command: npm run auditoria || echo "⚠️ Violaciones detectadas, continuamos..."
+          command: npm run auditoria || echo "⚠️ Violaciones detectadas (continuamos para generar informes)..."
         env:
           SITE_URL: ${{ env.SITE_URL }}
 
-      # 6️⃣ Fusionar todos los resultados JSON
+      # 6️⃣ Combinar resultados (results.json → merged)
       - name: 🧩 Combinar resultados de auditoría
         run: |
-          echo "🔄 Combinando results.json en un solo archivo..."
-          node scripts/merge-results.cjs || exit 1
+          echo "🔄 Combinando resultados..."
+          npm run merge || exit 1
           echo "✅ Archivo combinado creado correctamente."
 
-      # 7️⃣ Generar informe Excel profesional + ZIP
+      # 7️⃣ Generar informe Excel + ZIP con evidencias
       - name: 📊 Generar informe Excel y ZIP
         run: |
-          echo "📄 Generando informe WCAG + evidencias..."
+          echo "📄 Generando informe profesional..."
           npm run report || exit 1
           echo "✅ Informe Excel y ZIP generados correctamente."
 
       # 8️⃣ Control de calidad (Quality Gate)
-      - name: 🚦 Control de calidad (Quality Gate - modo auditoría)
+      - name: 🚦 Control de calidad – WCAG (Quality Gate)
         run: |
           echo "==============================================="
-          echo "🚦 INICIO DEL CONTROL DE CALIDAD (QUALITY GATE)"
+          echo "🚦 INICIO DEL CONTROL DE CALIDAD"
           echo "==============================================="
-          if [ -f "scripts/quality-gate.cjs" ]; then
-            node scripts/quality-gate.cjs || echo "⚠️ Quality Gate detectó violaciones, pero continuamos el flujo."
-          else
-            echo "❌ ERROR: El archivo scripts/quality-gate.cjs no existe o no se encontró."
-            exit 1
-          fi
+          npm run quality || echo "⚠️ Violaciones fuera de umbrales (modo auditoría continua)"
           echo ""
-          echo "✅ FIN DEL CONTROL DE CALIDAD (QUALITY GATE)"
+          echo "✅ FIN DEL CONTROL DE CALIDAD"
           echo "==============================================="
         continue-on-error: true
 
-      # 9️⃣ Subir artefactos (Excel + ZIP + capturas)
+      # 9️⃣ Subir artefactos finales (Excel + ZIP + evidencias)
       - name: 📤 Subir artefactos finales
         if: always()
         uses: actions/upload-artifact@v4
