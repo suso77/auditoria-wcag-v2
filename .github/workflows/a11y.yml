@@ -70,7 +70,7 @@ jobs:
           npm run export
           echo "✅ Informe Excel y ZIP generados correctamente."
 
-      # 8️⃣ Control de calidad (Quality Gate - modo auditoría)
+           # 8️⃣ Control de calidad (Quality Gate - modo auditoría)
       - name: 🚦 Control de calidad (Quality Gate - modo auditoría)
         run: |
           echo "==============================================="
@@ -79,7 +79,7 @@ jobs:
           echo "🧩 Ejecutando Quality Gate en modo CommonJS..."
           echo "📁 Archivo: scripts/quality-gate.cjs"
           echo ""
-          
+
           if [ -f "scripts/quality-gate.cjs" ]; then
             node scripts/quality-gate.cjs || echo "⚠️ Quality Gate detectó violaciones, pero continuamos el flujo."
           else
@@ -92,6 +92,7 @@ jobs:
           echo "✅ FIN DEL CONTROL DE CALIDAD (QUALITY GATE)"
           echo "==============================================="
         continue-on-error: true
+
 
       # 9️⃣ Subir artefactos (Excel + ZIP + capturas)
       - name: 📤 Subir artefactos finales
