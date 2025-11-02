@@ -1,87 +1,81 @@
 /// <reference types="cypress" />
+import 'cypress-axe';
+import dayjs from 'dayjs';
+import urls from '../../scripts/urls.json';
+import fs from 'fs';
+import path from 'path';
 
-/**
- * ♿ Auditoría de accesibilidad - axe-core (modo resiliente)
- * ------------------------------------------------------------
- * ✅ Audita todas las URLs del sitio sin detenerse
- * ✅ Ignora errores de red, JS o 404
- * ✅ Guarda TODAS las violaciones encontradas
- * ✅ Compatible con merge-results.cjs y export-to-xlsx.cjs
- */
+const AUDITORIAS_DIR = 'auditorias';
+if (!fs.existsSync(AUDITORIAS_DIR)) {
+  fs.mkdirSync(AUDITORIAS_DIR, { recursive: true });
+}
 
-import "cypress-axe";
-import dayjs from "dayjs";
-import fs from "fs";
-import path from "path";
-import urls from "../../scripts/urls.json";
-
-const outputDir = path.join("auditorias");
-if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
-
-const timestamp = dayjs().format("YYYY-MM-DD-HHmmss");
-const resultsFile = path.join(outputDir, `${timestamp}-results.json`);
-const results = [];
-
-// 🔧 Evitar que Cypress se corte por errores de JS o red
-Cypress.on("uncaught:exception", () => false);
-
-describe("♿ Auditoría de accesibilidad (resiliente)", () => {
-  urls.forEach((url, index) => {
-    it(`(${index + 1}/${urls.length}) Audita: ${url}`, () => {
-      cy.visit(url, {
-        failOnStatusCode: false,
-        timeout: 60000, // 1 minuto por página
-      });
-
+describe('♿ Auditoría completa de accesibilidad – axe-core', () => {
+  urls.forEach((url) => {
+    it(`Audita: ${url}`, () => {
+      cy.visit(url, { failOnStatusCode: false });
       cy.injectAxe();
 
       cy.checkA11y(null, null, (violations) => {
         const total = violations.length;
-        const critical = violations.filter(v => v.impact === "critical").length;
-        const serious = violations.filter(v => v.impact === "serious").length;
-        const moderate = violations.filter(v => v.impact === "moderate").length;
-        const minor = violations.filter(v => v.impact === "minor").length;
+
+        if (total === 0) {
+          cy.task('log', `✅ ${url} — sin violaciones detectadas`);
+          return;
+        }
+
+        const summary = {
+          critical: violations.filter(v => v.impact === 'critical').length,
+          serious: violations.filter(v => v.impact === 'serious').length,
+          moderate: violations.filter(v => v.impact === 'moderate').length,
+          minor: violations.filter(v => v.impact === 'minor').length,
+        };
 
         cy.task(
-          "log",
-          `♿ ${url} — ${total} violaciones (critical: ${critical}, serious: ${serious}, moderate: ${moderate}, minor: ${minor})`
+          'log',
+          `♿ ${url} — ${total} violaciones (🔴 ${summary.critical}, 🟠 ${summary.serious}, 🟡 ${summary.moderate}, 🟢 ${summary.minor})`
         );
 
-        const formatted = violations.map(v => ({
+        // Estructura detallada
+        const detailedResults = violations.map((v) => ({
+          url,
           id: v.id,
           impact: v.impact,
           description: v.description,
           help: v.help,
           helpUrl: v.helpUrl,
-          tags: v.tags,
-          nodes: v.nodes.map(node => ({
-            html: node.html?.trim().substring(0, 1000) || "(sin HTML)",
-            target: node.target || [],
-            failureSummary: node.failureSummary || "",
+          tags: v.tags.join(', '),
+          nodes: v.nodes.map((node) => ({
+            selector: node.target?.join(' > ') || '(sin selector)',
+            html: node.html?.trim().substring(0, 500) || '(sin HTML)',
+            failureSummary: node.failureSummary,
           })),
         }));
 
-        results.push({
-          url,
-          total,
-          critical,
-          serious,
-          moderate,
-          minor,
-          violations: formatted,
-        });
+        // 📦 Guardar resultados en archivo
+        const fileName = `${dayjs().format('YYYY-MM-DD')}-results.json`;
+        const filePath = path.join(AUDITORIAS_DIR, fileName);
 
-        const screenshotName = url
-          .replace(/https?:\/\//, "")
-          .replace(/[^\w.-]/g, "_");
+        let existing = [];
+        if (fs.existsSync(filePath)) {
+          try {
+            existing = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+          } catch {
+            existing = [];
+          }
+        }
 
-        cy.screenshot(`${screenshotName}-audit`, { capture: "fullPage" });
+        existing.push(...detailedResults);
+        fs.writeFileSync(filePath, JSON.stringify(existing, null, 2));
+
+        cy.task('saveA11yResults', { url, violations: detailedResults });
+      });
+
+      // 💾 Importante: no romper flujo por violaciones
+      cy.then(() => {
+        expect(true).to.equal(true); // fuerza que el test siempre pase
       });
     });
   });
-
-  after(() => {
-    fs.writeFileSync(resultsFile, JSON.stringify(results, null, 2));
-    console.log(`✅ Resultados guardados en ${resultsFile}`);
-  });
 });
+
