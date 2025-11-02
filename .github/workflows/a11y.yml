@@ -27,7 +27,7 @@ jobs:
       - name: 🧩 Checkout del repositorio
         uses: actions/checkout@v4
 
-      # 2️⃣ Configurar Node.js (forzar recacheo del package.json actualizado)
+      # 2️⃣ Configurar Node.js (limpio y cacheado)
       - name: ⚙️ Configurar Node.js
         uses: actions/setup-node@v4
         with:
@@ -35,14 +35,16 @@ jobs:
           cache: 'npm'
           cache-dependency-path: '**/package-lock.json'
 
-      # 3️⃣ Instalar dependencias (sin usar npm cache previa para evitar residuos)
+      # 3️⃣ Instalar dependencias (desde cero)
       - name: 📦 Instalar dependencias
         run: |
+          echo "🧹 Limpiando entorno previo..."
           rm -rf node_modules package-lock.json
+          echo "📦 Instalando dependencias..."
           npm install --no-audit --no-fund
 
-      # 4️⃣ Rastreo automático de URLs (crawler con Puppeteer)
-      - name: 🌐 Rastreo de URLs (crawler con JS)
+      # 4️⃣ Rastreo automático de URLs con Puppeteer
+      - name: 🌐 Rastreo de URLs (crawler con Puppeteer)
         run: |
           echo "==============================================="
           echo "🌍 INICIO DEL RASTREO DE URLs"
@@ -73,21 +75,21 @@ jobs:
         env:
           SITE_URL: ${{ env.SITE_URL }}
 
-      # 6️⃣ Fusionar todos los resultados (results.json)
+      # 6️⃣ Fusionar todos los resultados JSON
       - name: 🧩 Combinar resultados de auditoría
         run: |
           echo "🔄 Combinando results.json en un solo archivo..."
           node scripts/merge-results.cjs || exit 1
           echo "✅ Archivo combinado creado correctamente."
 
-      # 7️⃣ Generar informe Excel profesional + ZIP con evidencias
+      # 7️⃣ Generar informe Excel profesional + ZIP
       - name: 📊 Generar informe Excel y ZIP
         run: |
           echo "📄 Generando informe WCAG + evidencias..."
-          node scripts/export-to-xlsx.cjs || exit 1
+          npm run report || exit 1
           echo "✅ Informe Excel y ZIP generados correctamente."
 
-      # 8️⃣ Control de calidad (Quality Gate - modo auditoría)
+      # 8️⃣ Control de calidad (Quality Gate)
       - name: 🚦 Control de calidad (Quality Gate - modo auditoría)
         run: |
           echo "==============================================="
@@ -120,7 +122,10 @@ jobs:
       - name: ✅ Resumen de ejecución
         if: always()
         run: |
+          echo "==============================================="
+          echo "♿ RESUMEN FINAL DE LA AUDITORÍA DE ACCESIBILIDAD"
+          echo "==============================================="
           echo "🌍 Sitio auditado: $SITE_URL"
           echo "📊 Informe Excel y ZIP subidos como artefactos"
           echo "🚦 Umbrales Quality Gate: Critical <= $CRITICAL_MAX, Serious <= $SERIOUS_MAX"
-          echo "♿ Auditoría finalizada correctamente."
+          echo "✅ Auditoría finalizada correctamente."
