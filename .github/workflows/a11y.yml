@@ -38,14 +38,30 @@ jobs:
       - name: 📦 Instalar dependencias
         run: npm ci
 
-      # 4️⃣ Rastreo automático de URLs (crawler con Puppeteer)
+                 # 4️⃣ Rastreo automático de URLs (crawler con Puppeteer)
       - name: 🌐 Rastreo de URLs (crawler con JS)
         run: |
-          echo "🌍 Rastreando sitio: $SITE_URL"
-          npm run crawl:js
-          echo "✅ Archivo generado: scripts/urls.json"
+          echo "==============================================="
+          echo "🌍 INICIO DEL RASTREO DE URLs"
+          echo "==============================================="
+          echo "🔗 Rastreando sitio: $SITE_URL"
+          echo ""
+          
+          # Ejecutar el crawler en formato .mjs
+          if [ -f "crawler/crawl-puppeteer.mjs" ]; then
+            node crawler/crawl-puppeteer.mjs
+          else
+            echo "❌ ERROR: No se encontró crawler/crawl-puppeteer.mjs"
+            exit 1
+          fi
+          
+          echo ""
+          echo "✅ Rastreo completado correctamente"
+          echo "📁 Archivo generado: scripts/urls.json"
+          echo "==============================================="
         env:
           SITE_URL: ${{ env.SITE_URL }}
+
 
       # 5️⃣ Auditoría con Cypress + axe-core
       - name: ♿ Ejecutar auditoría de accesibilidad
