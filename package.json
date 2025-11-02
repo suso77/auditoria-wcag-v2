@@ -7,8 +7,8 @@
   "crawl": "node crawler/crawl.js",
   "crawl:js": "node crawler/crawl-puppeteer.mjs",
   "auditoria": "npx cypress run --browser chrome --headless || true",
-  "merge": "node scripts/merge-results.js",
-  "export": "node scripts/export-to-xlsx.js",
+  "merge": "node scripts/merge-results.cjs",
+  "export": "node scripts/export-to-xlsx.cjs",
   "quality": "node scripts/quality-gate.cjs",
   "audit:full": "npm run crawl:js && npm run auditoria && npm run merge && npm run export && npm run quality"
 },
