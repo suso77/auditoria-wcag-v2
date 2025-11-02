@@ -76,14 +76,14 @@ jobs:
       - name: 🧩 Combinar resultados de auditoría
         run: |
           echo "🔄 Combinando results.json en un solo archivo..."
-          npm run merge
+          node scripts/merge-results.cjs
           echo "✅ Archivo combinado creado correctamente."
 
       # 7️⃣ Generar informe Excel profesional + ZIP con evidencias
       - name: 📊 Generar informe Excel y ZIP
         run: |
           echo "📄 Generando informe WCAG + evidencias..."
-          npm run export
+          node scripts/export-to-xlsx.cjs
           echo "✅ Informe Excel y ZIP generados correctamente."
 
       # 8️⃣ Control de calidad (Quality Gate - modo auditoría)
