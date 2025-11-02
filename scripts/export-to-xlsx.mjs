@@ -1,167 +1,128 @@
-#!/usr/bin/env node
-/**
- * Generador profesional de informe de accesibilidad WCAG en Excel
- * Autor: Suso (Ilúmina Media)
- * Versión: Profesional Intermedia (con enlaces, severidad y formato de elemento afectado)
- */
+// ✅ scripts/export-to-xlsx.mjs
+// Genera informe Excel profesional + ZIP con evidencias de auditoría WCAG
+// Compatible con Node 20+ (ESM puro)
 
-const fs = require("fs");
-const path = require("path");
-const ExcelJS = require("exceljs");
-const open = require("open");
-const chalk = require("chalk");
-const { WCAG_TEXTOS } = require("./wcag-dictionary.js");
+import fs from "fs";
+import path from "path";
+import ExcelJS from "exceljs";
+import archiver from "archiver";
+import { fileURLToPath } from "url";
 
-/* === CONFIGURACIÓN BASE === */
-const auditoriasDir = path.resolve("auditorias");
-const mergedPattern = /^results-merged.*\.json$/;
+// Necesario para obtener __dirname en módulos ES
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-/* === FUNCIÓN: Buscar el archivo más reciente === */
-function encontrarArchivoMerged() {
-  const archivos = fs.readdirSync(auditoriasDir).filter(f => mergedPattern.test(f));
-  if (archivos.length === 0) return null;
-  const masReciente = archivos.sort((a, b) =>
-    fs.statSync(path.join(auditoriasDir, b)).mtime - fs.statSync(path.join(auditoriasDir, a)).mtime
-  )[0];
-  return path.join(auditoriasDir, masReciente);
-}
+async function generateExcel() {
+  console.log("📊 Iniciando exportación de resultados WCAG...");
 
-/* === FUNCIÓN: Formatear el campo “Elemento afectado” === */
-function formatElementoAfectado(node) {
-  if (!node) return "";
+  const auditoriasDir = path.join(__dirname, "../auditorias");
 
-  const selector = node.selector || node.target || node.nodeName || "Elemento desconocido";
-  const text = node.text ? node.text.trim().replace(/\s+/g, " ").slice(0, 120) : "";
-  const alt = node.alt ? ` alt="${node.alt}"` : "";
-  const label = node.label ? ` label="${node.label}"` : "";
-  const href = node.href ? ` href="${node.href}"` : "";
+  // Buscar carpetas de auditorías
+  const subdirs = fs
+    .readdirSync(auditoriasDir)
+    .filter((d) => d.includes("-auditoria"))
+    .sort()
+    .reverse();
 
-  // Si es encabezado
-  if (/^h[1-6]$/i.test(node.nodeName)) {
-    const nivel = node.nodeName.toLowerCase().replace("h", "");
-    return `<${selector}> nivel=${nivel}`;
-  }
-
-  // Si tiene texto visible
-  if (text) return `<${selector}> texto="${text}"${alt}${label}${href}`;
-
-  // Si tiene atributos alternativos
-  if (alt || label) return `<${selector}>${alt}${label}${href}`;
-
-  // Fallback
-  return `<${selector}>`;
-}
-
-/* === GENERADOR DE INFORME === */
-async function generarInforme() {
-  console.log(chalk.cyan("📄 Cargando resultados desde:"));
-  const archivo = encontrarArchivoMerged();
-  if (!archivo) {
-    console.error("❌ No se encontró ningún archivo results-merged-*.json");
+  if (subdirs.length === 0) {
+    console.error("❌ No se encontraron carpetas de auditoría.");
     process.exit(1);
   }
 
-  console.log(archivo);
-  const data = JSON.parse(fs.readFileSync(archivo, "utf8"));
-  const resultados = Array.isArray(data[0]) ? data.flat() : data;
+  const latest = path.join(auditoriasDir, subdirs[0]);
+  const resultsPath = path.join(latest, "results.json");
 
+  if (!fs.existsSync(resultsPath)) {
+    console.error("❌ No se encontró results.json en la última auditoría.");
+    process.exit(1);
+  }
+
+  console.log(`📄 Cargando resultados desde: ${resultsPath}`);
+  const results = JSON.parse(fs.readFileSync(resultsPath, "utf-8"));
+
+  // Crear nuevo Excel
   const workbook = new ExcelJS.Workbook();
-  const hoja = workbook.addWorksheet("Informe WCAG");
+  const sheet = workbook.addWorksheet("Auditoría WCAG");
 
-  hoja.columns = [
-    { header: "ID", key: "id", width: 25 },
-    { header: "Sistema operativo, navegador y tecnología asistiva", key: "system", width: 40 },
-    { header: "Resumen", key: "resumen", width: 60 },
-    { header: "Elemento afectado", key: "elemento", width: 60 },
-    { header: "Páginas Afectadas", key: "url", width: 40 },
-    { header: "Resultado actual", key: "resultadoActual", width: 60 },
-    { header: "Resultado esperado", key: "resultadoEsperado", width: 60 },
-    { header: "Metodología de testing", key: "metodologia", width: 40 },
-    { header: "Severidad", key: "impact", width: 15 },
-    { header: "Criterio WCAG", key: "criterio", width: 30 },
-    { header: "Captura de pantalla", key: "screenshot", width: 30 },
-    { header: "Recomendación (W3C)", key: "recomendacion", width: 45 },
-    { header: "Notas", key: "notas", width: 30 }
+  // Definir columnas
+  sheet.columns = [
+    { header: "Página", key: "url", width: 60 },
+    { header: "Fecha", key: "date", width: 25 },
+    { header: "Violación", key: "id", width: 25 },
+    { header: "Impacto", key: "impact", width: 15 },
+    { header: "Descripción", key: "description", width: 80 },
+    { header: "Elemento", key: "target", width: 60 },
   ];
 
-  let totalViolaciones = 0;
+  // Estilo cabecera
+  sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+  sheet.getRow(1).fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: "FF1F4E78" },
+  };
+  sheet.getRow(1).alignment = { vertical: "middle", horizontal: "center" };
 
-  resultados.forEach(pagina => {
-    if (!pagina.violations) return;
-    pagina.violations.forEach(v => {
-      totalViolaciones++;
-
-      // Detección del criterio WCAG
-      const criterio =
-        Object.keys(WCAG_TEXTOS).find(k =>
-          v.tags?.some(t => t.includes(k.replace(/\./g, "")))
-        ) || "";
-      const info = WCAG_TEXTOS[criterio] || {};
-
-      // Formatear el primer nodo afectado
-      const nodo = v.nodes?.[0] || {};
-      const elementoAfectado = formatElementoAfectado(nodo);
-
-      // Normalizar severidad
-      const severidad = v.impact
-        ? v.impact.charAt(0).toUpperCase() + v.impact.slice(1)
-        : "Media";
-
-      // Construir la fila
-      const fila = hoja.addRow({
+  // Rellenar datos
+  results.forEach((page) => {
+    page.violations.forEach((v) => {
+      const row = sheet.addRow({
+        url: page.url,
+        date: page.date,
         id: v.id,
-        system: pagina.system || "",
-        resumen: info.resumen || v.description,
-        elemento: elementoAfectado,
-        url: { text: pagina.url, hyperlink: pagina.url },
-        resultadoActual: info.actual || v.help,
-        resultadoEsperado: info.esperado || "",
-        metodologia: "WCAG 2.1 / 2.2 AA (automatizado con axe-core + revisión manual)",
-        impact: severidad,
-        criterio: criterio
-          ? `${criterio} ${info.titulo || v.help} (${info.nivel || ""})`
-          : v.help,
-        screenshot: "Evidencia (Página)",
-        recomendacion: { text: "Ver recomendación W3C", hyperlink: info.url || v.helpUrl },
-        notas: ""
+        impact: v.impact || "—",
+        description: v.description,
+        target: v.nodes.map((n) => n.target.join(", ")).join(" | "),
       });
 
-      // Aplicar color a la celda de severidad
-      const celdaSeveridad = fila.getCell("impact");
-      if (severidad === "Alta") {
-        celdaSeveridad.fill = {
+      // Colorear según impacto
+      const impactColors = {
+        critical: "FFFF0000",
+        serious: "FFFF6600",
+        moderate: "FFFFC000",
+        minor: "FF92D050",
+      };
+
+      if (impactColors[v.impact]) {
+        row.getCell("impact").fill = {
           type: "pattern",
           pattern: "solid",
-          fgColor: { argb: "FFFF9999" } // rojo claro
-        };
-      } else if (severidad === "Media") {
-        celdaSeveridad.fill = {
-          type: "pattern",
-          pattern: "solid",
-          fgColor: { argb: "FFFFCC99" } // naranja claro
-        };
-      } else if (severidad === "Baja") {
-        celdaSeveridad.fill = {
-          type: "pattern",
-          pattern: "solid",
-          fgColor: { argb: "FFCCFFCC" } // verde claro
+          fgColor: { argb: impactColors[v.impact] },
         };
       }
     });
   });
 
-  const nombreArchivo = `Informe-${new Date().toISOString().split("T")[0]}.xlsx`;
-  const ruta = path.join(auditoriasDir, nombreArchivo);
+  // Ajustes visuales
+  sheet.autoFilter = {
+    from: { row: 1, column: 1 },
+    to: { row: 1, column: sheet.columnCount },
+  };
 
-  await workbook.xlsx.writeFile(ruta);
-  console.log(chalk.green(`✅ Informe Excel generado: ${ruta}`));
-  console.log(chalk.yellow(`📊 Exportando ${totalViolaciones} violaciones...`));
+  sheet.getRow(1).height = 25;
+  sheet.views = [{ state: "frozen", ySplit: 1 }];
 
-  try {
-    await open(ruta);
-  } catch {
-    console.log("⚠️ No se pudo abrir automáticamente (entorno sin GUI).");
-  }
+  const excelPath = path.join(latest, "Informe-WCAG.xlsx");
+  await workbook.xlsx.writeFile(excelPath);
+
+  console.log(`✅ Archivo Excel generado correctamente: ${excelPath}`);
+
+  // 📦 Crear ZIP con Excel + capturas
+  const zipPath = path.join(auditoriasDir, `${subdirs[0]}.zip`);
+  const output = fs.createWriteStream(zipPath);
+  const archive = archiver("zip", { zlib: { level: 9 } });
+
+  archive.pipe(output);
+  archive.directory(latest, false);
+
+  await archive.finalize();
+  console.log(`🗜️ ZIP generado correctamente: ${zipPath}`);
+
+  console.log("✅ Exportación completada con éxito.");
 }
 
-generarInforme().catch(err => console.error(chalk.red(`❌ Error: ${err.message}`)));
+// Ejecutar
+generateExcel().catch((err) => {
+  console.error("❌ Error generando informe Excel:", err);
+  process.exit(1);
+});
