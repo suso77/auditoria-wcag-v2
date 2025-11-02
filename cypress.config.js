@@ -1,65 +1,99 @@
-/**
- * ♿ Configuración Cypress – Auditoría WCAG v2 (modo CommonJS)
- * ------------------------------------------------------------
- * ✅ Compatible con Node 20 y GitHub Actions
- * ✅ Registra tareas para logs y resultados axe-core
- * ✅ Crea carpeta de salida automática por fecha
- */
-
 const { defineConfig } = require("cypress");
 const fs = require("fs");
 const path = require("path");
-const { format } = require("date-fns");
-
-// 🗂️ Directorio de salida
-const fecha = format(new Date(), "yyyy-MM-dd-HHmmss");
-const outputDir = path.join(process.cwd(), "auditorias", `${fecha}-auditoria`);
-
-if (!fs.existsSync(outputDir)) {
-  fs.mkdirSync(outputDir, { recursive: true });
-  console.log(`📁 Carpeta de salida creada: ${outputDir}`);
-}
 
 module.exports = defineConfig({
   e2e: {
     baseUrl: process.env.SITE_URL || "https://example.com",
     video: false,
-    screenshotOnRunFailure: false,
+    screenshotOnRunFailure: true,
 
     setupNodeEvents(on, config) {
-      // ✅ Task de log (para imprimir mensajes en consola / GitHub Actions)
       on("task", {
+        // =====================================================
+        // ✅ LOGS EN CONSOLA
+        // =====================================================
         log(message) {
           console.log(message);
           return null;
         },
 
-        // ✅ Task para guardar resultados de accesibilidad (axe-core)
-        saveA11yResults({ url, violations }) {
-          const filePath = path.join(outputDir, "results.json");
+        // =====================================================
+        // ✅ CREAR CARPETA DE AUDITORÍA
+        // =====================================================
+        createFolder(dirPath) {
+          if (!fs.existsSync(dirPath)) {
+            fs.mkdirSync(dirPath, { recursive: true });
+            console.log(`📁 Carpeta creada: ${dirPath}`);
+          }
+          return null;
+        },
 
+        // =====================================================
+        // ✅ GUARDAR RESULTADOS DE VIOLACIONES AXE
+        // =====================================================
+        writeResults({ dir, data }) {
+          const filePath = path.join(dir, "results.json");
           let existing = [];
+
           if (fs.existsSync(filePath)) {
             try {
               existing = JSON.parse(fs.readFileSync(filePath, "utf8"));
-            } catch {
+            } catch (err) {
+              console.warn(`⚠️ Archivo JSON corrupto: ${filePath}. Será recreado.`);
               existing = [];
             }
           }
 
-          existing.push({ url, violations });
-
+          // Añadir nuevos datos
+          existing.push(data);
           fs.writeFileSync(filePath, JSON.stringify(existing, null, 2));
           console.log(`🧩 Resultados guardados en ${filePath}`);
           return null;
         },
-      });
 
-      // 📦 Exponer ruta para otros scripts (merge, export, etc.)
-      config.env.outputDir = outputDir;
+        // =====================================================
+        // ✅ LIMPIAR AUDITORÍAS ANTIGUAS
+        // =====================================================
+        cleanOldResults() {
+          const auditoriasDir = path.join(__dirname, "auditorias");
+          if (!fs.existsSync(auditoriasDir)) return null;
+
+          const files = fs.readdirSync(auditoriasDir);
+          for (const file of files) {
+            if (file.includes("auditoria")) {
+              const fullPath = path.join(auditoriasDir, file);
+              fs.rmSync(fullPath, { recursive: true, force: true });
+              console.log(`🧹 Carpeta eliminada: ${file}`);
+            }
+          }
+          return null;
+        },
+
+        // =====================================================
+        // ✅ NUEVO: LEER URLs DESDE scripts/urls.json (sin usar fs en el navegador)
+        // =====================================================
+        readUrls() {
+          const urlsPath = path.join(__dirname, "scripts", "urls.json");
+
+          if (!fs.existsSync(urlsPath)) {
+            throw new Error(`❌ No se encontró ${urlsPath}`);
+          }
+
+          const raw = fs.readFileSync(urlsPath, "utf8");
+          const urls = JSON.parse(raw);
+
+          console.log(`🌐 URLs cargadas desde ${urlsPath}: ${urls.length}`);
+          return urls;
+        },
+      });
 
       return config;
     },
   },
 });
+
+
+
+
 

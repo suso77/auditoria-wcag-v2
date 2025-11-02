@@ -1,0 +1,2489 @@
+[
+  [
+    {
+      "url": "https://cashgalicia.net",
+      "date": "2025-11-02T17:06:40.509Z",
+      "pageTitle": "cypress/e2e/accesibilidad-sitemap.cy.js",
+      "violations": [
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "tags": [
+            "cat.color",
+            "wcag2aa",
+            "wcag143",
+            "TTv5",
+            "TT13.c",
+            "EN-301-549",
+            "EN-9.1.4.3",
+            "ACT",
+            "RGAAv4",
+            "RGAA-3.2.1"
+          ],
+          "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+          "help": "Elements must meet minimum color contrast ratio thresholds",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=axeAPI",
+          "nodes": [
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#159cda",
+                    "bgColor": "#ffffff",
+                    "contrastRatio": 3.08,
+                    "fontSize": "15.0pt (20px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<section class=\"elementor-section el...\" data-id=\"7640c57d\" data-element_type=\"section\" data-settings=\"{\"background_backgro...\">",
+                      "target": [
+                        ".elementor-element-7640c57d"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 3.08 (foreground color: #159cda, background color: #ffffff, font size: 15.0pt (20px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a href=\"https://cashgalicia.net/\" aria-current=\"page\" class=\"elementor-item elementor-item-active\">Inicio</a>",
+              "target": [
+                "#menu-1-9104465 > .menu-item-987.menu-item-home.current-menu-item > .elementor-item-active[aria-current=\"page\"][href$=\"cashgalicia.net/\"]"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.08 (foreground color: #159cda, background color: #ffffff, font size: 15.0pt (20px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#159cda",
+                    "bgColor": "#f3f3f3",
+                    "contrastRatio": 2.78,
+                    "fontSize": "20.2pt (26.88px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "3:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<section class=\"elementor-section el...\" data-id=\"77e8e9c\" data-element_type=\"section\" data-settings=\"{\"background_backgro...\">",
+                      "target": [
+                        ".elementor-element-77e8e9c"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 2.78 (foreground color: #159cda, background color: #f3f3f3, font size: 20.2pt (26.88px), font weight: normal). Expected contrast ratio of 3:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<h4 class=\"elementor-heading-title elementor-size-default\">Productos</h4>",
+              "target": [
+                ".elementor-element-b8559fa > .elementor-widget-container > h4"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.78 (foreground color: #159cda, background color: #f3f3f3, font size: 20.2pt (26.88px), font weight: normal). Expected contrast ratio of 3:1"
+            }
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "tags": [
+            "cat.semantics",
+            "best-practice"
+          ],
+          "description": "Ensure the order of headings is semantically correct",
+          "help": "Heading levels should only increase by one",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/heading-order?application=axeAPI",
+          "nodes": [
+            {
+              "any": [
+                {
+                  "id": "heading-order",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "moderate",
+                  "message": "Heading order invalid"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "moderate",
+              "html": "<h4 class=\"elementor-heading-title elementor-size-default\">Ahorra con nosotros</h4>",
+              "target": [
+                ".elementor-element-cf3358a > .elementor-widget-container > h4"
+              ],
+              "failureSummary": "Fix any of the following:\n  Heading order invalid"
+            }
+          ]
+        },
+        {
+          "id": "landmark-unique",
+          "impact": "moderate",
+          "tags": [
+            "cat.semantics",
+            "best-practice"
+          ],
+          "description": "Ensure landmarks are unique",
+          "help": "Landmarks should have a unique role or role/label/title (i.e. accessible name) combination",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/landmark-unique?application=axeAPI",
+          "nodes": [
+            {
+              "any": [
+                {
+                  "id": "landmark-is-unique",
+                  "data": {
+                    "role": "navigation",
+                    "accessibleText": "menú"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<nav aria-label=\"Menú\" class=\"elementor-nav-menu--main elementor-nav-menu__container elementor-nav-menu--layout-vertical e--pointer-none\">",
+                      "target": [
+                        ".elementor-nav-menu--layout-vertical"
+                      ]
+                    }
+                  ],
+                  "impact": "moderate",
+                  "message": "The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "moderate",
+              "html": "<nav aria-label=\"Menú\" class=\"elementor-nav-menu--main elementor-nav-menu__container elementor-nav-menu--layout-horizontal e--pointer-none\">",
+              "target": [
+                ".elementor-nav-menu--layout-horizontal"
+              ],
+              "failureSummary": "Fix any of the following:\n  The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable"
+            }
+          ]
+        },
+        {
+          "id": "link-name",
+          "impact": "serious",
+          "tags": [
+            "cat.name-role-value",
+            "wcag2a",
+            "wcag244",
+            "wcag412",
+            "section508",
+            "section508.22.a",
+            "TTv5",
+            "TT6.a",
+            "EN-301-549",
+            "EN-9.2.4.4",
+            "EN-9.4.1.2",
+            "ACT",
+            "RGAAv4",
+            "RGAA-6.2.1"
+          ],
+          "description": "Ensure links have discernible text",
+          "help": "Links must have discernible text",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/link-name?application=axeAPI",
+          "nodes": [
+            {
+              "any": [
+                {
+                  "id": "has-visible-text",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "Element does not have text that is visible to screen readers"
+                },
+                {
+                  "id": "aria-label",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "aria-label attribute does not exist or is empty"
+                },
+                {
+                  "id": "aria-labelledby",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty"
+                },
+                {
+                  "id": "non-empty-title",
+                  "data": {
+                    "messageKey": "noAttr"
+                  },
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "Element has no title attribute"
+                }
+              ],
+              "all": [],
+              "none": [
+                {
+                  "id": "focusable-no-name",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "Element is in tab order and does not have accessible text"
+                }
+              ],
+              "impact": "serious",
+              "html": "<a href=\"https://cashgalicia.net\">",
+              "target": [
+                ".elementor-widget-container > a[href$=\"cashgalicia.net\"]"
+              ],
+              "failureSummary": "Fix all of the following:\n  Element is in tab order and does not have accessible text\n\nFix any of the following:\n  Element does not have text that is visible to screen readers\n  aria-label attribute does not exist or is empty\n  aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty\n  Element has no title attribute"
+            }
+          ]
+        },
+        {
+          "id": "page-has-heading-one",
+          "impact": "moderate",
+          "tags": [
+            "cat.semantics",
+            "best-practice"
+          ],
+          "description": "Ensure that the page, or at least one of its frames contains a level-one heading",
+          "help": "Page should contain a level-one heading",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/page-has-heading-one?application=axeAPI",
+          "nodes": [
+            {
+              "any": [],
+              "all": [
+                {
+                  "id": "page-has-heading-one",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "moderate",
+                  "message": "Page must have a level-one heading"
+                }
+              ],
+              "none": [],
+              "impact": "moderate",
+              "html": "<html lang=\"es\">",
+              "target": [
+                "html"
+              ],
+              "failureSummary": "Fix all of the following:\n  Page must have a level-one heading"
+            }
+          ]
+        }
+      ],
+      "system": "macOS + Electron/Chrome (Cypress) + axe-core"
+    },
+    {
+      "url": "https://cashgalicia.net/conocenos",
+      "date": "2025-11-02T17:06:43.680Z",
+      "pageTitle": "cypress/e2e/accesibilidad-sitemap.cy.js",
+      "violations": [
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "tags": [
+            "cat.color",
+            "wcag2aa",
+            "wcag143",
+            "TTv5",
+            "TT13.c",
+            "EN-301-549",
+            "EN-9.1.4.3",
+            "ACT",
+            "RGAAv4",
+            "RGAA-3.2.1"
+          ],
+          "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+          "help": "Elements must meet minimum color contrast ratio thresholds",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=axeAPI",
+          "nodes": [
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#159cda",
+                    "bgColor": "#ffffff",
+                    "contrastRatio": 3.08,
+                    "fontSize": "15.0pt (20px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<section class=\"elementor-section el...\" data-id=\"7640c57d\" data-element_type=\"section\" data-settings=\"{\"background_backgro...\">",
+                      "target": [
+                        ".elementor-element-7640c57d"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 3.08 (foreground color: #159cda, background color: #ffffff, font size: 15.0pt (20px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a href=\"https://cashgalicia.net/conocenos/\" aria-current=\"page\" class=\"elementor-item elementor-item-active\">Conócenos</a>",
+              "target": [
+                "#menu-1-9104465 > .menu-item-967.current-menu-item.page_item > .elementor-item-active.elementor-item[aria-current=\"page\"]"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.08 (foreground color: #159cda, background color: #ffffff, font size: 15.0pt (20px), font weight: normal). Expected contrast ratio of 4.5:1"
+            }
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "tags": [
+            "cat.semantics",
+            "best-practice"
+          ],
+          "description": "Ensure the order of headings is semantically correct",
+          "help": "Heading levels should only increase by one",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/heading-order?application=axeAPI",
+          "nodes": [
+            {
+              "any": [
+                {
+                  "id": "heading-order",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "moderate",
+                  "message": "Heading order invalid"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "moderate",
+              "html": "<h3 class=\"elementor-heading-title elementor-size-default\">Servicio, atención y precio a tu disposición</h3>",
+              "target": [
+                ".elementor-element-2e60d395 > .elementor-widget-container > h3"
+              ],
+              "failureSummary": "Fix any of the following:\n  Heading order invalid"
+            }
+          ]
+        },
+        {
+          "id": "landmark-unique",
+          "impact": "moderate",
+          "tags": [
+            "cat.semantics",
+            "best-practice"
+          ],
+          "description": "Ensure landmarks are unique",
+          "help": "Landmarks should have a unique role or role/label/title (i.e. accessible name) combination",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/landmark-unique?application=axeAPI",
+          "nodes": [
+            {
+              "any": [
+                {
+                  "id": "landmark-is-unique",
+                  "data": {
+                    "role": "navigation",
+                    "accessibleText": "menú"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<nav aria-label=\"Menú\" class=\"elementor-nav-menu--main elementor-nav-menu__container elementor-nav-menu--layout-vertical e--pointer-none\">",
+                      "target": [
+                        ".elementor-nav-menu--layout-vertical"
+                      ]
+                    }
+                  ],
+                  "impact": "moderate",
+                  "message": "The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "moderate",
+              "html": "<nav aria-label=\"Menú\" class=\"elementor-nav-menu--main elementor-nav-menu__container elementor-nav-menu--layout-horizontal e--pointer-none\">",
+              "target": [
+                ".elementor-nav-menu--layout-horizontal"
+              ],
+              "failureSummary": "Fix any of the following:\n  The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable"
+            }
+          ]
+        },
+        {
+          "id": "link-name",
+          "impact": "serious",
+          "tags": [
+            "cat.name-role-value",
+            "wcag2a",
+            "wcag244",
+            "wcag412",
+            "section508",
+            "section508.22.a",
+            "TTv5",
+            "TT6.a",
+            "EN-301-549",
+            "EN-9.2.4.4",
+            "EN-9.4.1.2",
+            "ACT",
+            "RGAAv4",
+            "RGAA-6.2.1"
+          ],
+          "description": "Ensure links have discernible text",
+          "help": "Links must have discernible text",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/link-name?application=axeAPI",
+          "nodes": [
+            {
+              "any": [
+                {
+                  "id": "has-visible-text",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "Element does not have text that is visible to screen readers"
+                },
+                {
+                  "id": "aria-label",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "aria-label attribute does not exist or is empty"
+                },
+                {
+                  "id": "aria-labelledby",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty"
+                },
+                {
+                  "id": "non-empty-title",
+                  "data": {
+                    "messageKey": "noAttr"
+                  },
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "Element has no title attribute"
+                }
+              ],
+              "all": [],
+              "none": [
+                {
+                  "id": "focusable-no-name",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "Element is in tab order and does not have accessible text"
+                }
+              ],
+              "impact": "serious",
+              "html": "<a href=\"https://cashgalicia.net\">",
+              "target": [
+                ".elementor-widget-container > a[href$=\"cashgalicia.net\"]"
+              ],
+              "failureSummary": "Fix all of the following:\n  Element is in tab order and does not have accessible text\n\nFix any of the following:\n  Element does not have text that is visible to screen readers\n  aria-label attribute does not exist or is empty\n  aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty\n  Element has no title attribute"
+            }
+          ]
+        }
+      ],
+      "system": "macOS + Electron/Chrome (Cypress) + axe-core"
+    },
+    {
+      "url": "https://cashgalicia.net/catalogos",
+      "date": "2025-11-02T17:06:45.621Z",
+      "pageTitle": "cypress/e2e/accesibilidad-sitemap.cy.js",
+      "violations": [
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "tags": [
+            "cat.color",
+            "wcag2aa",
+            "wcag143",
+            "TTv5",
+            "TT13.c",
+            "EN-301-549",
+            "EN-9.1.4.3",
+            "ACT",
+            "RGAAv4",
+            "RGAA-3.2.1"
+          ],
+          "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+          "help": "Elements must meet minimum color contrast ratio thresholds",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=axeAPI",
+          "nodes": [
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#159cda",
+                    "bgColor": "#ffffff",
+                    "contrastRatio": 3.08,
+                    "fontSize": "15.0pt (20px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<section class=\"elementor-section el...\" data-id=\"7640c57d\" data-element_type=\"section\" data-settings=\"{\"background_backgro...\">",
+                      "target": [
+                        ".elementor-element-7640c57d"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 3.08 (foreground color: #159cda, background color: #ffffff, font size: 15.0pt (20px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a href=\"https://cashgalicia.net/catalogos/\" aria-current=\"page\" class=\"elementor-item elementor-item-active\">Catálogos</a>",
+              "target": [
+                "#menu-1-9104465 > .menu-item-960.current-menu-item.page_item > .elementor-item-active.elementor-item[aria-current=\"page\"]"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.08 (foreground color: #159cda, background color: #ffffff, font size: 15.0pt (20px), font weight: normal). Expected contrast ratio of 4.5:1"
+            }
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "tags": [
+            "cat.semantics",
+            "best-practice"
+          ],
+          "description": "Ensure the order of headings is semantically correct",
+          "help": "Heading levels should only increase by one",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/heading-order?application=axeAPI",
+          "nodes": [
+            {
+              "any": [
+                {
+                  "id": "heading-order",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "moderate",
+                  "message": "Heading order invalid"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "moderate",
+              "html": "<h3 class=\"elementor-heading-title elementor-size-default\">Ahorra con nosotros</h3>",
+              "target": [
+                ".elementor-element-62258a6c > .elementor-widget-container > h3"
+              ],
+              "failureSummary": "Fix any of the following:\n  Heading order invalid"
+            }
+          ]
+        },
+        {
+          "id": "landmark-unique",
+          "impact": "moderate",
+          "tags": [
+            "cat.semantics",
+            "best-practice"
+          ],
+          "description": "Ensure landmarks are unique",
+          "help": "Landmarks should have a unique role or role/label/title (i.e. accessible name) combination",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/landmark-unique?application=axeAPI",
+          "nodes": [
+            {
+              "any": [
+                {
+                  "id": "landmark-is-unique",
+                  "data": {
+                    "role": "navigation",
+                    "accessibleText": "menú"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<nav aria-label=\"Menú\" class=\"elementor-nav-menu--main elementor-nav-menu__container elementor-nav-menu--layout-vertical e--pointer-none\">",
+                      "target": [
+                        ".elementor-nav-menu--layout-vertical"
+                      ]
+                    }
+                  ],
+                  "impact": "moderate",
+                  "message": "The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "moderate",
+              "html": "<nav aria-label=\"Menú\" class=\"elementor-nav-menu--main elementor-nav-menu__container elementor-nav-menu--layout-horizontal e--pointer-none\">",
+              "target": [
+                ".elementor-nav-menu--layout-horizontal"
+              ],
+              "failureSummary": "Fix any of the following:\n  The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable"
+            }
+          ]
+        },
+        {
+          "id": "link-name",
+          "impact": "serious",
+          "tags": [
+            "cat.name-role-value",
+            "wcag2a",
+            "wcag244",
+            "wcag412",
+            "section508",
+            "section508.22.a",
+            "TTv5",
+            "TT6.a",
+            "EN-301-549",
+            "EN-9.2.4.4",
+            "EN-9.4.1.2",
+            "ACT",
+            "RGAAv4",
+            "RGAA-6.2.1"
+          ],
+          "description": "Ensure links have discernible text",
+          "help": "Links must have discernible text",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/link-name?application=axeAPI",
+          "nodes": [
+            {
+              "any": [
+                {
+                  "id": "has-visible-text",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "Element does not have text that is visible to screen readers"
+                },
+                {
+                  "id": "aria-label",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "aria-label attribute does not exist or is empty"
+                },
+                {
+                  "id": "aria-labelledby",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty"
+                },
+                {
+                  "id": "non-empty-title",
+                  "data": {
+                    "messageKey": "noAttr"
+                  },
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "Element has no title attribute"
+                }
+              ],
+              "all": [],
+              "none": [
+                {
+                  "id": "focusable-no-name",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "Element is in tab order and does not have accessible text"
+                }
+              ],
+              "impact": "serious",
+              "html": "<a href=\"https://cashgalicia.net\">",
+              "target": [
+                ".elementor-widget-container > a[href$=\"cashgalicia.net\"]"
+              ],
+              "failureSummary": "Fix all of the following:\n  Element is in tab order and does not have accessible text\n\nFix any of the following:\n  Element does not have text that is visible to screen readers\n  aria-label attribute does not exist or is empty\n  aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty\n  Element has no title attribute"
+            }
+          ]
+        }
+      ],
+      "system": "macOS + Electron/Chrome (Cypress) + axe-core"
+    },
+    {
+      "url": "https://cashgalicia.net/centros-mayoristas",
+      "date": "2025-11-02T17:06:47.470Z",
+      "pageTitle": "cypress/e2e/accesibilidad-sitemap.cy.js",
+      "violations": [
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "tags": [
+            "cat.color",
+            "wcag2aa",
+            "wcag143",
+            "TTv5",
+            "TT13.c",
+            "EN-301-549",
+            "EN-9.1.4.3",
+            "ACT",
+            "RGAAv4",
+            "RGAA-3.2.1"
+          ],
+          "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+          "help": "Elements must meet minimum color contrast ratio thresholds",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=axeAPI",
+          "nodes": [
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffd512",
+                    "bgColor": "#ffffff",
+                    "contrastRatio": 1.42,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a class=\"elementor-accordion-title\" tabindex=\"0\">A Coruña</a>",
+              "target": [
+                "#elementor-tab-title-2271 > .elementor-accordion-title"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffd512",
+                    "bgColor": "#ffffff",
+                    "contrastRatio": 1.42,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a class=\"elementor-accordion-title\" tabindex=\"0\">A Estrada</a>",
+              "target": [
+                "#elementor-tab-title-2272 > .elementor-accordion-title"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffd512",
+                    "bgColor": "#ffffff",
+                    "contrastRatio": 1.42,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a class=\"elementor-accordion-title\" tabindex=\"0\">Baiona</a>",
+              "target": [
+                "#elementor-tab-title-2273 > .elementor-accordion-title"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffd512",
+                    "bgColor": "#ffffff",
+                    "contrastRatio": 1.42,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a class=\"elementor-accordion-title\" tabindex=\"0\">Cangas</a>",
+              "target": [
+                "#elementor-tab-title-2274 > .elementor-accordion-title"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffd512",
+                    "bgColor": "#ffffff",
+                    "contrastRatio": 1.42,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a class=\"elementor-accordion-title\" tabindex=\"0\">Carballo</a>",
+              "target": [
+                "#elementor-tab-title-2275 > .elementor-accordion-title"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffd512",
+                    "bgColor": "#ffffff",
+                    "contrastRatio": 1.42,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a class=\"elementor-accordion-title\" tabindex=\"0\">Lugo</a>",
+              "target": [
+                "#elementor-tab-title-2276 > .elementor-accordion-title"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffd512",
+                    "bgColor": "#ffffff",
+                    "contrastRatio": 1.42,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a class=\"elementor-accordion-title\" tabindex=\"0\">Narón</a>",
+              "target": [
+                "#elementor-tab-title-2277 > .elementor-accordion-title"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffd512",
+                    "bgColor": "#ffffff",
+                    "contrastRatio": 1.42,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a class=\"elementor-accordion-title\" tabindex=\"0\">Ourense</a>",
+              "target": [
+                "#elementor-tab-title-2278 > .elementor-accordion-title"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffd512",
+                    "bgColor": "#ffffff",
+                    "contrastRatio": 1.42,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a class=\"elementor-accordion-title\" tabindex=\"0\">Pontevedra</a>",
+              "target": [
+                "#elementor-tab-title-2279 > .elementor-accordion-title"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffd512",
+                    "bgColor": "#ffffff",
+                    "contrastRatio": 1.42,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a class=\"elementor-accordion-title\" tabindex=\"0\">Ribeira</a>",
+              "target": [
+                "#elementor-tab-title-22710 > .elementor-accordion-title"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffd512",
+                    "bgColor": "#ffffff",
+                    "contrastRatio": 1.42,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a class=\"elementor-accordion-title\" tabindex=\"0\">Santiago</a>",
+              "target": [
+                "#elementor-tab-title-22711 > .elementor-accordion-title"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffd512",
+                    "bgColor": "#ffffff",
+                    "contrastRatio": 1.42,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a class=\"elementor-accordion-title\" tabindex=\"0\">Sanxenxo</a>",
+              "target": [
+                "#elementor-tab-title-22712 > .elementor-accordion-title"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffd512",
+                    "bgColor": "#ffffff",
+                    "contrastRatio": 1.42,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a class=\"elementor-accordion-title\" tabindex=\"0\">Vigo</a>",
+              "target": [
+                "#elementor-tab-title-22713 > .elementor-accordion-title"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffd512",
+                    "bgColor": "#ffffff",
+                    "contrastRatio": 1.42,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a class=\"elementor-accordion-title\" tabindex=\"0\">Vilagarcía de Arousa</a>",
+              "target": [
+                "#elementor-tab-title-22714 > .elementor-accordion-title"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffd512",
+                    "bgColor": "#ffffff",
+                    "contrastRatio": 1.42,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a class=\"elementor-accordion-title\" tabindex=\"0\">Almacén Central y Oficinas</a>",
+              "target": [
+                "#elementor-tab-title-22715 > .elementor-accordion-title"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.42 (foreground color: #ffd512, background color: #ffffff, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffd512",
+                    "bgColor": "#c7d9e6",
+                    "contrastRatio": 1.01,
+                    "fontSize": "20.2pt (26.88px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "3:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<section class=\"elementor-section el...\" data-id=\"2803e56\" data-element_type=\"section\" data-settings=\"{\"background_backgro...\">",
+                      "target": [
+                        ".elementor-element-2803e56"
+                      ]
+                    },
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.01 (foreground color: #ffd512, background color: #c7d9e6, font size: 20.2pt (26.88px), font weight: normal). Expected contrast ratio of 3:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<h4 class=\"elementor-heading-title elementor-size-default\">Almacén central y oficinas</h4>",
+              "target": [
+                ".elementor-element-7e85404 > .elementor-widget-container > h4"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.01 (foreground color: #ffd512, background color: #c7d9e6, font size: 20.2pt (26.88px), font weight: normal). Expected contrast ratio of 3:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffffff",
+                    "bgColor": "#c7d9e6",
+                    "contrastRatio": 1.44,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<section class=\"elementor-section el...\" data-id=\"2803e56\" data-element_type=\"section\" data-settings=\"{\"background_backgro...\">",
+                      "target": [
+                        ".elementor-element-2803e56"
+                      ]
+                    },
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.44 (foreground color: #ffffff, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<div class=\"elementor-widget-container\">\n\t\t\t\t\t\t\t\t\tPolígono industrial O Campiño<br>\nC/ Coveliño, s/n<br>\n36158 Marcón (Pontevedra)\t\t\t\t\t\t\t\t</div>",
+              "target": [
+                ".elementor-element-bf9c041 > .elementor-widget-container"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.44 (foreground color: #ffffff, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffd512",
+                    "bgColor": "#c7d9e6",
+                    "contrastRatio": 1.01,
+                    "fontSize": "20.2pt (26.88px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "3:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<section class=\"elementor-section el...\" data-id=\"2803e56\" data-element_type=\"section\" data-settings=\"{\"background_backgro...\">",
+                      "target": [
+                        ".elementor-element-2803e56"
+                      ]
+                    },
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.01 (foreground color: #ffd512, background color: #c7d9e6, font size: 20.2pt (26.88px), font weight: normal). Expected contrast ratio of 3:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<h4 class=\"elementor-heading-title elementor-size-default\">Horario</h4>",
+              "target": [
+                ".elementor-element-fa4bc76 > .elementor-widget-container > h4"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.01 (foreground color: #ffd512, background color: #c7d9e6, font size: 20.2pt (26.88px), font weight: normal). Expected contrast ratio of 3:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffffff",
+                    "bgColor": "#c7d9e6",
+                    "contrastRatio": 1.44,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<section class=\"elementor-section el...\" data-id=\"2803e56\" data-element_type=\"section\" data-settings=\"{\"background_backgro...\">",
+                      "target": [
+                        ".elementor-element-2803e56"
+                      ]
+                    },
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.44 (foreground color: #ffffff, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<p>",
+              "target": [
+                ".elementor-element-4287bb3 > .elementor-widget-container > p"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.44 (foreground color: #ffffff, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffd512",
+                    "bgColor": "#c7d9e6",
+                    "contrastRatio": 1.01,
+                    "fontSize": "20.2pt (26.88px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "3:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<section class=\"elementor-section el...\" data-id=\"2803e56\" data-element_type=\"section\" data-settings=\"{\"background_backgro...\">",
+                      "target": [
+                        ".elementor-element-2803e56"
+                      ]
+                    },
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.01 (foreground color: #ffd512, background color: #c7d9e6, font size: 20.2pt (26.88px), font weight: normal). Expected contrast ratio of 3:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<span>Contacto</span>",
+              "target": [
+                "h4 > span"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.01 (foreground color: #ffd512, background color: #c7d9e6, font size: 20.2pt (26.88px), font weight: normal). Expected contrast ratio of 3:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffde46",
+                    "bgColor": "#c7d9e6",
+                    "contrastRatio": 1.08,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<section class=\"elementor-section el...\" data-id=\"2803e56\" data-element_type=\"section\" data-settings=\"{\"background_backgro...\">",
+                      "target": [
+                        ".elementor-element-2803e56"
+                      ]
+                    },
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.08 (foreground color: #ffde46, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<span class=\"elementor-icon-list-text\">986 708 131</span>",
+              "target": [
+                ".elementor-element-847f26b > .elementor-widget-container > .elementor-icon-list-items > .elementor-icon-list-item:nth-child(1) > a[href=\"tel:+34986708131\"] > .elementor-icon-list-text"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.08 (foreground color: #ffde46, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffde46",
+                    "bgColor": "#c7d9e6",
+                    "contrastRatio": 1.08,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<section class=\"elementor-section el...\" data-id=\"2803e56\" data-element_type=\"section\" data-settings=\"{\"background_backgro...\">",
+                      "target": [
+                        ".elementor-element-2803e56"
+                      ]
+                    },
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.08 (foreground color: #ffde46, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<span class=\"elementor-icon-list-text\">info@cashgalicia.net</span>",
+              "target": [
+                ".elementor-element-847f26b > .elementor-widget-container > .elementor-icon-list-items > .elementor-icon-list-item:nth-child(2) > a[href=\"mailto:info@cashgalicia.net\"] > .elementor-icon-list-text"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.08 (foreground color: #ffde46, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffd512",
+                    "bgColor": "#c7d9e6",
+                    "contrastRatio": 1.01,
+                    "fontSize": "20.2pt (26.88px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "3:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<section class=\"elementor-section el...\" data-id=\"2803e56\" data-element_type=\"section\" data-settings=\"{\"background_backgro...\">",
+                      "target": [
+                        ".elementor-element-2803e56"
+                      ]
+                    },
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.01 (foreground color: #ffd512, background color: #c7d9e6, font size: 20.2pt (26.88px), font weight: normal). Expected contrast ratio of 3:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<h4 class=\"elementor-heading-title elementor-size-default\">Secciones</h4>",
+              "target": [
+                ".elementor-element-c0c7dcf > .elementor-widget-container > h4"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.01 (foreground color: #ffd512, background color: #c7d9e6, font size: 20.2pt (26.88px), font weight: normal). Expected contrast ratio of 3:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffdb32",
+                    "bgColor": "#c7d9e6",
+                    "contrastRatio": 1.06,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<section class=\"elementor-section el...\" data-id=\"2803e56\" data-element_type=\"section\" data-settings=\"{\"background_backgro...\">",
+                      "target": [
+                        ".elementor-element-2803e56"
+                      ]
+                    },
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.06 (foreground color: #ffdb32, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a href=\"https://cashgalicia.net/\" class=\"elementor-item\">Inicio</a>",
+              "target": [
+                "#menu-1-b43e8b0 > .menu-item-1032.menu-item-home.menu-item-type-post_type > .elementor-item[href$=\"cashgalicia.net/\"]"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.06 (foreground color: #ffdb32, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffd512",
+                    "bgColor": "#c7d9e6",
+                    "contrastRatio": 1.01,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<section class=\"elementor-section el...\" data-id=\"2803e56\" data-element_type=\"section\" data-settings=\"{\"background_backgro...\">",
+                      "target": [
+                        ".elementor-element-2803e56"
+                      ]
+                    },
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.01 (foreground color: #ffd512, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a href=\"https://cashgalicia.net/centros-mayoristas/\" aria-current=\"page\" class=\"elementor-item elementor-item-active\">Centros</a>",
+              "target": [
+                "#menu-1-b43e8b0 > .menu-item-1034.current-menu-item.page_item > .elementor-item-active.elementor-item[aria-current=\"page\"]"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.01 (foreground color: #ffd512, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffdb32",
+                    "bgColor": "#c7d9e6",
+                    "contrastRatio": 1.06,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<section class=\"elementor-section el...\" data-id=\"2803e56\" data-element_type=\"section\" data-settings=\"{\"background_backgro...\">",
+                      "target": [
+                        ".elementor-element-2803e56"
+                      ]
+                    },
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.06 (foreground color: #ffdb32, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a href=\"https://cashgalicia.net/catalogos/\" class=\"elementor-item\">Catálogos</a>",
+              "target": [
+                "#menu-1-b43e8b0 > .menu-item-1036.menu-item-type-post_type.menu-item-object-page > .elementor-item"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.06 (foreground color: #ffdb32, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffdb32",
+                    "bgColor": "#c7d9e6",
+                    "contrastRatio": 1.06,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<section class=\"elementor-section el...\" data-id=\"2803e56\" data-element_type=\"section\" data-settings=\"{\"background_backgro...\">",
+                      "target": [
+                        ".elementor-element-2803e56"
+                      ]
+                    },
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.06 (foreground color: #ffdb32, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a href=\"https://cashgalicia.net/conocenos/\" class=\"elementor-item\">Conócenos</a>",
+              "target": [
+                "#menu-1-b43e8b0 > .menu-item-1035.menu-item-type-post_type.menu-item-object-page > .elementor-item"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.06 (foreground color: #ffdb32, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffdb32",
+                    "bgColor": "#c7d9e6",
+                    "contrastRatio": 1.06,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<section class=\"elementor-section el...\" data-id=\"2803e56\" data-element_type=\"section\" data-settings=\"{\"background_backgro...\">",
+                      "target": [
+                        ".elementor-element-2803e56"
+                      ]
+                    },
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.06 (foreground color: #ffdb32, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a href=\"https://cashgalicia.net/empleo/\" class=\"elementor-item\">Empleo</a>",
+              "target": [
+                "#menu-1-b43e8b0 > .menu-item-1169.menu-item-type-post_type.menu-item-object-page > .elementor-item"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.06 (foreground color: #ffdb32, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffdb32",
+                    "bgColor": "#c7d9e6",
+                    "contrastRatio": 1.06,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<section class=\"elementor-section el...\" data-id=\"2803e56\" data-element_type=\"section\" data-settings=\"{\"background_backgro...\">",
+                      "target": [
+                        ".elementor-element-2803e56"
+                      ]
+                    },
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.06 (foreground color: #ffdb32, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a href=\"https://cashgalicia.net/politica-de-cookies/\" class=\"elementor-item\">Política de cookies</a>",
+              "target": [
+                "#menu-1-b43e8b0 > .menu-item-1456.menu-item-type-post_type.menu-item-object-page > .elementor-item"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.06 (foreground color: #ffdb32, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffdb32",
+                    "bgColor": "#c7d9e6",
+                    "contrastRatio": 1.06,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<section class=\"elementor-section el...\" data-id=\"2803e56\" data-element_type=\"section\" data-settings=\"{\"background_backgro...\">",
+                      "target": [
+                        ".elementor-element-2803e56"
+                      ]
+                    },
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.06 (foreground color: #ffdb32, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a href=\"https://cashgalicia.net/politica-de-cookies/#configurar\" class=\"elementor-item elementor-item-anchor\">Configurar cookies</a>",
+              "target": [
+                "#menu-1-b43e8b0 > .menu-item-1459.menu-item-type-custom.menu-item-object-custom > .elementor-item-anchor.elementor-item"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.06 (foreground color: #ffdb32, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffd512",
+                    "bgColor": "#c7d9e6",
+                    "contrastRatio": 1.01,
+                    "fontSize": "20.2pt (26.88px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "3:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<section class=\"elementor-section el...\" data-id=\"2803e56\" data-element_type=\"section\" data-settings=\"{\"background_backgro...\">",
+                      "target": [
+                        ".elementor-element-2803e56"
+                      ]
+                    },
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.01 (foreground color: #ffd512, background color: #c7d9e6, font size: 20.2pt (26.88px), font weight: normal). Expected contrast ratio of 3:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<h4 class=\"elementor-heading-title elementor-size-default\">Recibe nuestras novedades</h4>",
+              "target": [
+                ".elementor-element-c665e93 > .elementor-widget-container > h4"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.01 (foreground color: #ffd512, background color: #c7d9e6, font size: 20.2pt (26.88px), font weight: normal). Expected contrast ratio of 3:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffffff",
+                    "bgColor": "#c7d9e6",
+                    "contrastRatio": 1.44,
+                    "fontSize": "25.5pt (34px)",
+                    "fontWeight": "bold",
+                    "messageKey": null,
+                    "expectedContrastRatio": "3:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<section class=\"elementor-section el...\" data-id=\"2803e56\" data-element_type=\"section\" data-settings=\"{\"background_backgro...\">",
+                      "target": [
+                        ".elementor-element-2803e56"
+                      ]
+                    },
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.44 (foreground color: #ffffff, background color: #c7d9e6, font size: 25.5pt (34px), font weight: bold). Expected contrast ratio of 3:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<p class=\"elementor-heading-title elementor-size-default\">Apúntate a nuestra Newsletter</p>",
+              "target": [
+                ".elementor-element-bb3fcc2 > .elementor-widget-container > .elementor-heading-title.elementor-size-default"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.44 (foreground color: #ffffff, background color: #c7d9e6, font size: 25.5pt (34px), font weight: bold). Expected contrast ratio of 3:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffffff",
+                    "bgColor": "#c7d9e6",
+                    "contrastRatio": 1.44,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<section class=\"elementor-section el...\" data-id=\"2803e56\" data-element_type=\"section\" data-settings=\"{\"background_backgro...\">",
+                      "target": [
+                        ".elementor-element-2803e56"
+                      ]
+                    },
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.44 (foreground color: #ffffff, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<span class=\"elementor-heading-title elementor-size-default\">© 2025 COMASA S.L  |  Cash Galicia  </span>",
+              "target": [
+                ".elementor-element-67e31b6 > .elementor-widget-container > .elementor-heading-title.elementor-size-default"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.44 (foreground color: #ffffff, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffd512",
+                    "bgColor": "#c7d9e6",
+                    "contrastRatio": 1.01,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<section class=\"elementor-section el...\" data-id=\"2803e56\" data-element_type=\"section\" data-settings=\"{\"background_backgro...\">",
+                      "target": [
+                        ".elementor-element-2803e56"
+                      ]
+                    },
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.01 (foreground color: #ffd512, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a href=\"/aviso-legal/\">Aviso Legal</a>",
+              "target": [
+                "a[href$=\"aviso-legal/\"]"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.01 (foreground color: #ffd512, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#ffd512",
+                    "bgColor": "#c7d9e6",
+                    "contrastRatio": 1.01,
+                    "fontSize": "14.4pt (19.2px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<section class=\"elementor-section el...\" data-id=\"2803e56\" data-element_type=\"section\" data-settings=\"{\"background_backgro...\">",
+                      "target": [
+                        ".elementor-element-2803e56"
+                      ]
+                    },
+                    {
+                      "html": "<body class=\"wp-singular page-template-default page page-id-882 wp-custom-logo wp-embed-responsive wp-theme-hello-elementor wp-child-theme-hello-elementor-child hello-elementor-default elementor-default elementor-kit-789 elementor-page elementor-page-882\">",
+                      "target": [
+                        "body"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 1.01 (foreground color: #ffd512, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a href=\"/aviso-legal/#cookies\">Política de Cookies</a>",
+              "target": [
+                "a[href$=\"aviso-legal/#cookies\"]"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.01 (foreground color: #ffd512, background color: #c7d9e6, font size: 14.4pt (19.2px), font weight: normal). Expected contrast ratio of 4.5:1"
+            }
+          ]
+        },
+        {
+          "id": "frame-title",
+          "impact": "serious",
+          "tags": [
+            "cat.text-alternatives",
+            "wcag2a",
+            "wcag412",
+            "section508",
+            "section508.22.i",
+            "TTv5",
+            "TT12.d",
+            "EN-301-549",
+            "EN-9.4.1.2",
+            "RGAAv4",
+            "RGAA-2.1.1"
+          ],
+          "description": "Ensure <iframe> and <frame> elements have an accessible name",
+          "help": "Frames must have an accessible name",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/frame-title?application=axeAPI",
+          "nodes": [
+            {
+              "any": [
+                {
+                  "id": "non-empty-title",
+                  "data": {
+                    "messageKey": "noAttr"
+                  },
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "Element has no title attribute"
+                },
+                {
+                  "id": "aria-label",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "aria-label attribute does not exist or is empty"
+                },
+                {
+                  "id": "aria-labelledby",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty"
+                },
+                {
+                  "id": "presentational-role",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "Element's default semantics were not overridden with role=\"none\" or role=\"presentation\""
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<iframe loading=\"lazy\" src=\"https://www.google.c...\" width=\"100%\" height=\"650\" data-rocket-lazyload=\"fitvidscompatible\" data-lazy-src=\"https://www.google.c...\" data-ll-status=\"loading\" class=\"entered lazyloading\">",
+              "target": [
+                "iframe"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has no title attribute\n  aria-label attribute does not exist or is empty\n  aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty\n  Element's default semantics were not overridden with role=\"none\" or role=\"presentation\""
+            }
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "tags": [
+            "cat.semantics",
+            "best-practice"
+          ],
+          "description": "Ensure the order of headings is semantically correct",
+          "help": "Heading levels should only increase by one",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/heading-order?application=axeAPI",
+          "nodes": [
+            {
+              "any": [
+                {
+                  "id": "heading-order",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "moderate",
+                  "message": "Heading order invalid"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "moderate",
+              "html": "<h3 class=\"elementor-heading-title elementor-size-default\">Presencia en toda la comunidad</h3>",
+              "target": [
+                ".elementor-element-682fea9 > .elementor-widget-container > h3"
+              ],
+              "failureSummary": "Fix any of the following:\n  Heading order invalid"
+            }
+          ]
+        },
+        {
+          "id": "landmark-unique",
+          "impact": "moderate",
+          "tags": [
+            "cat.semantics",
+            "best-practice"
+          ],
+          "description": "Ensure landmarks are unique",
+          "help": "Landmarks should have a unique role or role/label/title (i.e. accessible name) combination",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/landmark-unique?application=axeAPI",
+          "nodes": [
+            {
+              "any": [
+                {
+                  "id": "landmark-is-unique",
+                  "data": {
+                    "role": "navigation",
+                    "accessibleText": "menú"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<nav aria-label=\"Menú\" class=\"elementor-nav-menu--main elementor-nav-menu__container elementor-nav-menu--layout-vertical e--pointer-none\">",
+                      "target": [
+                        ".elementor-nav-menu--layout-vertical"
+                      ]
+                    }
+                  ],
+                  "impact": "moderate",
+                  "message": "The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "moderate",
+              "html": "<nav aria-label=\"Menú\" class=\"elementor-nav-menu--main elementor-nav-menu__container elementor-nav-menu--layout-horizontal e--pointer-none\">",
+              "target": [
+                ".elementor-nav-menu--layout-horizontal"
+              ],
+              "failureSummary": "Fix any of the following:\n  The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable"
+            }
+          ]
+        },
+        {
+          "id": "link-name",
+          "impact": "serious",
+          "tags": [
+            "cat.name-role-value",
+            "wcag2a",
+            "wcag244",
+            "wcag412",
+            "section508",
+            "section508.22.a",
+            "TTv5",
+            "TT6.a",
+            "EN-301-549",
+            "EN-9.2.4.4",
+            "EN-9.4.1.2",
+            "ACT",
+            "RGAAv4",
+            "RGAA-6.2.1"
+          ],
+          "description": "Ensure links have discernible text",
+          "help": "Links must have discernible text",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/link-name?application=axeAPI",
+          "nodes": [
+            {
+              "any": [
+                {
+                  "id": "has-visible-text",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "Element does not have text that is visible to screen readers"
+                },
+                {
+                  "id": "aria-label",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "aria-label attribute does not exist or is empty"
+                },
+                {
+                  "id": "aria-labelledby",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty"
+                },
+                {
+                  "id": "non-empty-title",
+                  "data": {
+                    "messageKey": "noAttr"
+                  },
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "Element has no title attribute"
+                }
+              ],
+              "all": [],
+              "none": [
+                {
+                  "id": "focusable-no-name",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "Element is in tab order and does not have accessible text"
+                }
+              ],
+              "impact": "serious",
+              "html": "<a href=\"https://cashgalicia.net\">",
+              "target": [
+                ".elementor-widget-container > a[href$=\"cashgalicia.net\"]"
+              ],
+              "failureSummary": "Fix all of the following:\n  Element is in tab order and does not have accessible text\n\nFix any of the following:\n  Element does not have text that is visible to screen readers\n  aria-label attribute does not exist or is empty\n  aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty\n  Element has no title attribute"
+            }
+          ]
+        }
+      ],
+      "system": "macOS + Electron/Chrome (Cypress) + axe-core"
+    },
+    {
+      "url": "https://cashgalicia.net/empleo",
+      "date": "2025-11-02T17:06:49.392Z",
+      "pageTitle": "cypress/e2e/accesibilidad-sitemap.cy.js",
+      "violations": [
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "tags": [
+            "cat.color",
+            "wcag2aa",
+            "wcag143",
+            "TTv5",
+            "TT13.c",
+            "EN-301-549",
+            "EN-9.1.4.3",
+            "ACT",
+            "RGAAv4",
+            "RGAA-3.2.1"
+          ],
+          "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+          "help": "Elements must meet minimum color contrast ratio thresholds",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/color-contrast?application=axeAPI",
+          "nodes": [
+            {
+              "any": [
+                {
+                  "id": "color-contrast",
+                  "data": {
+                    "fgColor": "#159cda",
+                    "bgColor": "#ffffff",
+                    "contrastRatio": 3.08,
+                    "fontSize": "15.0pt (20px)",
+                    "fontWeight": "normal",
+                    "messageKey": null,
+                    "expectedContrastRatio": "4.5:1"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<section class=\"elementor-section el...\" data-id=\"7640c57d\" data-element_type=\"section\" data-settings=\"{\"background_backgro...\">",
+                      "target": [
+                        ".elementor-element-7640c57d"
+                      ]
+                    }
+                  ],
+                  "impact": "serious",
+                  "message": "Element has insufficient color contrast of 3.08 (foreground color: #159cda, background color: #ffffff, font size: 15.0pt (20px), font weight: normal). Expected contrast ratio of 4.5:1"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "serious",
+              "html": "<a href=\"https://cashgalicia.net/empleo/\" aria-current=\"page\" class=\"elementor-item elementor-item-active\">Empleo</a>",
+              "target": [
+                "#menu-1-9104465 > .menu-item-1170.current-menu-item.page_item > .elementor-item-active.elementor-item[aria-current=\"page\"]"
+              ],
+              "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.08 (foreground color: #159cda, background color: #ffffff, font size: 15.0pt (20px), font weight: normal). Expected contrast ratio of 4.5:1"
+            }
+          ]
+        },
+        {
+          "id": "heading-order",
+          "impact": "moderate",
+          "tags": [
+            "cat.semantics",
+            "best-practice"
+          ],
+          "description": "Ensure the order of headings is semantically correct",
+          "help": "Heading levels should only increase by one",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/heading-order?application=axeAPI",
+          "nodes": [
+            {
+              "any": [
+                {
+                  "id": "heading-order",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "moderate",
+                  "message": "Heading order invalid"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "moderate",
+              "html": "<h3 class=\"elementor-heading-title elementor-size-default\">¿Te gustaría formar parte del equipo?</h3>",
+              "target": [
+                "h3"
+              ],
+              "failureSummary": "Fix any of the following:\n  Heading order invalid"
+            },
+            {
+              "any": [
+                {
+                  "id": "heading-order",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "moderate",
+                  "message": "Heading order invalid"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "moderate",
+              "html": "<h6>Tamaño de archivo máximo: 5Mb<br>\nArchivos permitidos: PDF, Word.</h6>",
+              "target": [
+                ".elementor-field-group-field_67bb6f5 > h6"
+              ],
+              "failureSummary": "Fix any of the following:\n  Heading order invalid"
+            }
+          ]
+        },
+        {
+          "id": "landmark-unique",
+          "impact": "moderate",
+          "tags": [
+            "cat.semantics",
+            "best-practice"
+          ],
+          "description": "Ensure landmarks are unique",
+          "help": "Landmarks should have a unique role or role/label/title (i.e. accessible name) combination",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/landmark-unique?application=axeAPI",
+          "nodes": [
+            {
+              "any": [
+                {
+                  "id": "landmark-is-unique",
+                  "data": {
+                    "role": "navigation",
+                    "accessibleText": "menú"
+                  },
+                  "relatedNodes": [
+                    {
+                      "html": "<nav aria-label=\"Menú\" class=\"elementor-nav-menu--main elementor-nav-menu__container elementor-nav-menu--layout-vertical e--pointer-none\">",
+                      "target": [
+                        ".elementor-nav-menu--layout-vertical"
+                      ]
+                    }
+                  ],
+                  "impact": "moderate",
+                  "message": "The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable"
+                }
+              ],
+              "all": [],
+              "none": [],
+              "impact": "moderate",
+              "html": "<nav aria-label=\"Menú\" class=\"elementor-nav-menu--main elementor-nav-menu__container elementor-nav-menu--layout-horizontal e--pointer-none\">",
+              "target": [
+                ".elementor-nav-menu--layout-horizontal"
+              ],
+              "failureSummary": "Fix any of the following:\n  The landmark must have a unique aria-label, aria-labelledby, or title to make landmarks distinguishable"
+            }
+          ]
+        },
+        {
+          "id": "link-name",
+          "impact": "serious",
+          "tags": [
+            "cat.name-role-value",
+            "wcag2a",
+            "wcag244",
+            "wcag412",
+            "section508",
+            "section508.22.a",
+            "TTv5",
+            "TT6.a",
+            "EN-301-549",
+            "EN-9.2.4.4",
+            "EN-9.4.1.2",
+            "ACT",
+            "RGAAv4",
+            "RGAA-6.2.1"
+          ],
+          "description": "Ensure links have discernible text",
+          "help": "Links must have discernible text",
+          "helpUrl": "https://dequeuniversity.com/rules/axe/4.11/link-name?application=axeAPI",
+          "nodes": [
+            {
+              "any": [
+                {
+                  "id": "has-visible-text",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "Element does not have text that is visible to screen readers"
+                },
+                {
+                  "id": "aria-label",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "aria-label attribute does not exist or is empty"
+                },
+                {
+                  "id": "aria-labelledby",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty"
+                },
+                {
+                  "id": "non-empty-title",
+                  "data": {
+                    "messageKey": "noAttr"
+                  },
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "Element has no title attribute"
+                }
+              ],
+              "all": [],
+              "none": [
+                {
+                  "id": "focusable-no-name",
+                  "data": null,
+                  "relatedNodes": [],
+                  "impact": "serious",
+                  "message": "Element is in tab order and does not have accessible text"
+                }
+              ],
+              "impact": "serious",
+              "html": "<a href=\"https://cashgalicia.net\">",
+              "target": [
+                ".elementor-widget-container > a[href$=\"cashgalicia.net\"]"
+              ],
+              "failureSummary": "Fix all of the following:\n  Element is in tab order and does not have accessible text\n\nFix any of the following:\n  Element does not have text that is visible to screen readers\n  aria-label attribute does not exist or is empty\n  aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty\n  Element has no title attribute"
+            }
+          ]
+        }
+      ],
+      "system": "macOS + Electron/Chrome (Cypress) + axe-core"
+    }
+  ]
+]

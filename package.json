@@ -17,14 +17,15 @@
     "audit:sitemap": "npx cypress run --spec 'cypress/e2e/accesibilidad-sitemap.cy.js' --browser chrome --headless"
   },
   "dependencies": {
+    "archiver": "^7.0.0",
     "axe-core": "^4.10.0",
     "axios": "^1.7.2",
     "chalk": "^5.3.0",
     "cheerio": "^1.0.0-rc.12",
     "date-fns": "^3.6.0",
     "exceljs": "^4.4.0",
-    "puppeteer": "^23.6.0",
-    "archiver": "^7.0.0"
+    "open": "^10.2.0",
+    "puppeteer": "^23.6.0"
   },
   "devDependencies": {
     "cypress": "^13.13.0",

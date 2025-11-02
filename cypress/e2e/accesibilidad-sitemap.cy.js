@@ -1,81 +1,75 @@
 /// <reference types="cypress" />
+
 import 'cypress-axe';
-import dayjs from 'dayjs';
-import urls from '../../scripts/urls.json';
-import fs from 'fs';
-import path from 'path';
 
-const AUDITORIAS_DIR = 'auditorias';
-if (!fs.existsSync(AUDITORIAS_DIR)) {
-  fs.mkdirSync(AUDITORIAS_DIR, { recursive: true });
-}
+describe('♿ Auditoría de accesibilidad - axe-core (detallada)', () => {
+  let urls = [];
+  const allResults = [];
 
-describe('♿ Auditoría completa de accesibilidad – axe-core', () => {
-  urls.forEach((url) => {
-    it(`Audita: ${url}`, () => {
-      cy.visit(url, { failOnStatusCode: false });
+  before(() => {
+    // 🔹 Cargar las URLs desde la task del config (ya no usamos fs directamente)
+    cy.task('readUrls').then((urlsRaw) => {
+      urls = [...new Set(urlsRaw.map((u) => u.trim()))];
+      cy.task('log', `🌐 Total de URLs únicas a auditar: ${urls.length}`);
+    });
+  });
+
+  it('Audita todas las páginas del sitio', () => {
+    cy.wrap(urls).each((url) => {
+      cy.task('log', `🚀 Analizando: ${url}`);
+
+      // Visitar página
+      cy.visit(url, { timeout: 90000 });
+
+      // Inyectar axe-core
       cy.injectAxe();
 
-      cy.checkA11y(null, null, (violations) => {
-        const total = violations.length;
+      // Ejecutar auditoría de accesibilidad
+      cy.checkA11y(
+        null,
+        null,
+        (violations) => {
+          const dateNow = new Date().toISOString();
 
-        if (total === 0) {
-          cy.task('log', `✅ ${url} — sin violaciones detectadas`);
-          return;
-        }
-
-        const summary = {
-          critical: violations.filter(v => v.impact === 'critical').length,
-          serious: violations.filter(v => v.impact === 'serious').length,
-          moderate: violations.filter(v => v.impact === 'moderate').length,
-          minor: violations.filter(v => v.impact === 'minor').length,
-        };
-
-        cy.task(
-          'log',
-          `♿ ${url} — ${total} violaciones (🔴 ${summary.critical}, 🟠 ${summary.serious}, 🟡 ${summary.moderate}, 🟢 ${summary.minor})`
-        );
-
-        // Estructura detallada
-        const detailedResults = violations.map((v) => ({
-          url,
-          id: v.id,
-          impact: v.impact,
-          description: v.description,
-          help: v.help,
-          helpUrl: v.helpUrl,
-          tags: v.tags.join(', '),
-          nodes: v.nodes.map((node) => ({
-            selector: node.target?.join(' > ') || '(sin selector)',
-            html: node.html?.trim().substring(0, 500) || '(sin HTML)',
-            failureSummary: node.failureSummary,
-          })),
-        }));
-
-        // 📦 Guardar resultados en archivo
-        const fileName = `${dayjs().format('YYYY-MM-DD')}-results.json`;
-        const filePath = path.join(AUDITORIAS_DIR, fileName);
-
-        let existing = [];
-        if (fs.existsSync(filePath)) {
-          try {
-            existing = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-          } catch {
-            existing = [];
+          // 📸 Captura solo si hay violaciones
+          if (violations.length > 0) {
+            cy.screenshot(`${url.replace(/https?:\/\//, '').replace(/[^\w-]/g, '_')}-a11y`);
           }
-        }
 
-        existing.push(...detailedResults);
-        fs.writeFileSync(filePath, JSON.stringify(existing, null, 2));
+          // 🧩 Guardar resultado completo de la URL
+          allResults.push({
+            url,
+            date: dateNow,
+            pageTitle: document.title || '',
+            violations,
+            system: 'macOS + Electron/Chrome (Cypress) + axe-core',
+          });
 
-        cy.task('saveA11yResults', { url, violations: detailedResults });
-      });
+          cy.task(
+            'log',
+            `♿ ${url} — ${violations.length} violaciones detectadas (${violations.filter(
+              (v) => v.impact === 'critical'
+            ).length} críticas)`
+          );
+        },
+        { skipFailures: true } // ⚙️ Evita que Cypress marque el test como fallido
+      );
+    });
+  });
 
-      // 💾 Importante: no romper flujo por violaciones
-      cy.then(() => {
-        expect(true).to.equal(true); // fuerza que el test siempre pase
-      });
+  after(() => {
+    const outputDir = `auditorias/${new Date().toISOString().replace(/[:.]/g, '-')}-auditoria`;
+
+    // Crear carpeta si no existe
+    cy.task('createFolder', outputDir);
+
+    // Guardar resultados finales
+    cy.task('writeResults', { dir: outputDir, data: allResults }).then(() => {
+      cy.task('log', `✅ Resultados guardados correctamente en: ${outputDir}/results.json`);
     });
   });
 });
+
+
+
 
