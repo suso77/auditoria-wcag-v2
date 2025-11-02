@@ -4,14 +4,14 @@
   "type": "commonjs",
   "description": "Auditoría de accesibilidad automatizada con Cypress + axe-core + Puppeteer + ExcelJS + GitHub Actions",
   "scripts": {
-    "crawl": "node crawler/crawl.js",
-    "crawl:js": "node crawler/crawl-puppeteer.js",
-    "auditoria": "npx cypress run --browser chrome --headless || true",
-    "merge": "node scripts/merge-results.js",
-    "export": "node scripts/export-to-xlsx.js",
-    "quality": "node scripts/quality-gate.js",
-    "audit:full": "npm run crawl:js && npm run auditoria && npm run merge && npm run export && npm run quality"
-  },
+  "crawl": "node crawler/crawl.js",
+  "crawl:js": "node crawler/crawl-puppeteer.mjs",
+  "auditoria": "npx cypress run --browser chrome --headless || true",
+  "merge": "node scripts/merge-results.js",
+  "export": "node scripts/export-to-xlsx.js",
+  "quality": "node scripts/quality-gate.cjs",
+  "audit:full": "npm run crawl:js && npm run auditoria && npm run merge && npm run export && npm run quality"
+},
   "dependencies": {
     "axe-core": "^4.10.0",
     "axios": "^1.7.2",
