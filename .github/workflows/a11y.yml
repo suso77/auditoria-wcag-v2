@@ -35,9 +35,11 @@ jobs:
           cache: 'npm'
           cache-dependency-path: '**/package-lock.json'
 
-      # 3️⃣ Instalar dependencias
+      # 3️⃣ Instalar dependencias (sin usar npm cache previa para evitar residuos)
       - name: 📦 Instalar dependencias
-        run: npm ci
+        run: |
+          rm -rf node_modules package-lock.json
+          npm install --no-audit --no-fund
 
       # 4️⃣ Rastreo automático de URLs (crawler con Puppeteer)
       - name: 🌐 Rastreo de URLs (crawler con JS)
@@ -48,7 +50,6 @@ jobs:
           echo "🔗 Rastreando sitio: $SITE_URL"
           echo ""
           
-          # Ejecutar el crawler en formato .mjs
           if [ -f "crawler/crawl-puppeteer.mjs" ]; then
             node crawler/crawl-puppeteer.mjs
           else
@@ -76,14 +77,14 @@ jobs:
       - name: 🧩 Combinar resultados de auditoría
         run: |
           echo "🔄 Combinando results.json en un solo archivo..."
-          node scripts/merge-results.cjs
+          node scripts/merge-results.cjs || exit 1
           echo "✅ Archivo combinado creado correctamente."
 
       # 7️⃣ Generar informe Excel profesional + ZIP con evidencias
       - name: 📊 Generar informe Excel y ZIP
         run: |
           echo "📄 Generando informe WCAG + evidencias..."
-          node scripts/export-to-xlsx.cjs
+          node scripts/export-to-xlsx.cjs || exit 1
           echo "✅ Informe Excel y ZIP generados correctamente."
 
       # 8️⃣ Control de calidad (Quality Gate - modo auditoría)
@@ -92,19 +93,13 @@ jobs:
           echo "==============================================="
           echo "🚦 INICIO DEL CONTROL DE CALIDAD (QUALITY GATE)"
           echo "==============================================="
-          echo "🧩 Ejecutando Quality Gate en modo CommonJS..."
-          echo "📁 Archivo: scripts/quality-gate.cjs"
-          echo ""
-
           if [ -f "scripts/quality-gate.cjs" ]; then
             node scripts/quality-gate.cjs || echo "⚠️ Quality Gate detectó violaciones, pero continuamos el flujo."
           else
             echo "❌ ERROR: El archivo scripts/quality-gate.cjs no existe o no se encontró."
             exit 1
           fi
-
           echo ""
-          echo "==============================================="
           echo "✅ FIN DEL CONTROL DE CALIDAD (QUALITY GATE)"
           echo "==============================================="
         continue-on-error: true
