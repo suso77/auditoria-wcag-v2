@@ -60,23 +60,32 @@ jobs:
         env:
           SITE_URL: ${{ env.SITE_URL }}
 
-      # 5️⃣ Auditoría con Cypress + axe-core
-      - name: ♿ Ejecutar auditoría de accesibilidad
+      # 5️⃣ Auditoría principal con Cypress + axe-core (sitio completo)
+      - name: ♿ Auditoría principal de accesibilidad (Sitemap)
         uses: cypress-io/github-action@v6
         with:
           install-command: npm ci
-          command: npm run auditoria || echo "⚠️ Violaciones detectadas (continuamos para generar informes)..."
+          command: npm run audit:sitemap || echo "⚠️ Violaciones detectadas (continuamos para generar informes)..."
         env:
           SITE_URL: ${{ env.SITE_URL }}
 
-      # 6️⃣ Combinar resultados (results.json → merged)
+      # 6️⃣ Auditoría interactiva (modales, banners, menús, etc.)
+      - name: 🧠 Auditoría de componentes interactivos
+        uses: cypress-io/github-action@v6
+        with:
+          install-command: npm ci
+          command: npm run audit:interactiva || echo "⚠️ Violaciones detectadas (continuamos para generar informes)..."
+        env:
+          SITE_URL: ${{ env.SITE_URL }}
+
+      # 7️⃣ Combinar resultados de ambas auditorías
       - name: 🧩 Combinar resultados de auditoría
         run: |
           echo "🔄 Combinando resultados..."
           npm run merge || npm run fix || echo "⚠️ Error combinando resultados, continuamos..."
           echo "✅ Archivo combinado creado correctamente."
 
-      # 7️⃣ Validar integridad del archivo combinado
+      # 8️⃣ Validar integridad del archivo combinado
       - name: 🔍 Validar integridad del archivo combinado
         run: |
           echo "🔎 Verificando contenido de auditorias/results-merged-*.json ..."
@@ -91,7 +100,7 @@ jobs:
             echo "✅ Archivo válido detectado: $FILE"
           fi
 
-      # 8️⃣ Generar informe Excel + ZIP con evidencias
+      # 9️⃣ Generar informe Excel + ZIP con evidencias
       - name: 📊 Generar informe Excel y ZIP
         run: |
           echo "📄 Generando informe profesional..."
@@ -104,7 +113,7 @@ jobs:
           echo "📁 Archivos generados en auditorias:"
           find auditorias -type f \( -name "*.xlsx" -o -name "*.zip" -o -name "results-merged*.json" \) -print || echo "⚠️ Ningún archivo encontrado."
 
-      # 9️⃣ Control de calidad (Quality Gate)
+      # 🔟 Control de calidad (Quality Gate)
       - name: 🚦 Control de calidad – WCAG (Quality Gate)
         run: |
           echo "==============================================="
@@ -116,7 +125,7 @@ jobs:
           echo "==============================================="
         continue-on-error: true
 
-      # 🔟 Subir artefactos finales (Excel + ZIP + evidencias)
+      # 11️⃣ Subir artefactos finales (Excel + ZIP + evidencias)
       - name: 📤 Subir artefactos finales
         if: always()
         uses: actions/upload-artifact@v4
@@ -128,7 +137,7 @@ jobs:
             auditorias/*-evidencias/**
           retention-days: 30
 
-      # 11️⃣ Resumen final
+      # 12️⃣ Resumen final
       - name: ✅ Resumen de ejecución
         if: always()
         run: |
