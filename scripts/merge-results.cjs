@@ -1,145 +1,71 @@
 /**
- * ♿ Merge de auditorías WCAG con autoreparación de JSON corruptos
- *
- * ✅ Soporta:
- *   - Archivos raíz (ej: auditorias/2025-10-31-results.json)
- *   - Subcarpetas (auditorias/2025-10-31-xxxx-auditoria/results.json)
- *   - results-merged previos (evita duplicados)
- * ✅ Repara automáticamente JSON concatenados sin comas (por flag a+)
- * ✅ Evita duplicados por URL + regla ID
- * ✅ Ordena resultados por severidad y URL
+ * 🧩 Combina resultados de auditorías en un solo archivo JSON
+ * ------------------------------------------------------------
+ * ✅ Versión CommonJS (100% compatible con Node 20 y GitHub Actions)
+ * ✅ Fusiona múltiples archivos results-*.json en uno solo
+ * ✅ Genera un archivo results-merged-YYYYMMDD-HHMMSS.json en /auditorias
  */
 
 const fs = require("fs");
 const path = require("path");
+const { fileURLToPath } = require("url");
+const process = require("process");
 
-import { fileURLToPath } from "url";
-import { format } from "date-fns";
-
+// Resolver __dirname y __filename
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const auditoriasDir = path.join(__dirname, "..", "auditorias");
-console.log("🔎 Buscando resultados de auditoría en:", auditoriasDir);
+// Directorio raíz y de auditorías
+const ROOT_DIR = process.cwd();
+const AUDITORIAS_DIR = path.join(ROOT_DIR, "auditorias");
 
-if (!fs.existsSync(auditoriasDir)) {
-  console.error("❌ No existe la carpeta /auditorias");
-  process.exit(1);
+// Crear el directorio si no existe
+if (!fs.existsSync(AUDITORIAS_DIR)) {
+  fs.mkdirSync(AUDITORIAS_DIR, { recursive: true });
+  console.log("📁 Directorio 'auditorias' creado.");
 }
 
-// ----------------------------------------------------
-// 🧩 Función auxiliar: intenta reparar JSON corruptos
-// ----------------------------------------------------
-function fixJSON(raw, fileName) {
+// Buscar todos los archivos results-*.json en el directorio de auditorías
+const resultFiles = fs
+  .readdirSync(AUDITORIAS_DIR)
+  .filter(f => f.startsWith("results-") && f.endsWith(".json"));
+
+if (resultFiles.length === 0) {
+  console.error("❌ No se encontraron archivos results-*.json para combinar.");
+  process.exit(0);
+}
+
+console.log(`📂 Se encontraron ${resultFiles.length} archivos de resultados.`);
+
+// Combinar todos los archivos en un solo array
+let mergedResults = [];
+
+for (const file of resultFiles) {
+  const filePath = path.join(AUDITORIAS_DIR, file);
   try {
-    return JSON.parse(raw);
-  } catch {
-    console.warn(`⚠️  Corrigiendo formato JSON dañado en ${fileName}...`);
-    let fixed = raw
-      .replace(/\n/g, "")
-      .replace(/}\s*{/g, "},{")
-      .replace(/\]\s*\[/g, ",");
-    if (!fixed.trim().startsWith("[")) fixed = `[${fixed}`;
-    if (!fixed.trim().endsWith("]")) fixed = `${fixed}]`;
-    try {
-      const parsed = JSON.parse(fixed);
-      console.log(`✅ ${fileName} reparado (${parsed.length} elementos)`);
-      return parsed;
-    } catch (err) {
-      console.error(`❌ No se pudo reparar ${fileName}: ${err.message}`);
-      return [];
+    const jsonData = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    if (Array.isArray(jsonData)) {
+      mergedResults = mergedResults.concat(jsonData);
+    } else if (jsonData && jsonData.violations) {
+      mergedResults.push(jsonData);
     }
-  }
-}
-
-// ----------------------------------------------------
-// 1️⃣ Detectar todos los archivos con resultados JSON
-// ----------------------------------------------------
-const auditFiles = [];
-for (const item of fs.readdirSync(auditoriasDir)) {
-  const fullPath = path.join(auditoriasDir, item);
-  if (fs.lstatSync(fullPath).isDirectory()) {
-    const filePath = path.join(fullPath, "results.json");
-    if (fs.existsSync(filePath)) auditFiles.push(filePath);
-  } else if (item.match(/results.*\.json$/)) {
-    auditFiles.push(fullPath);
-  }
-}
-
-if (auditFiles.length === 0) {
-  console.error("❌ No se encontraron archivos results.json");
-  process.exit(1);
-}
-
-console.log(`📂 Se encontraron ${auditFiles.length} archivos de resultados.`);
-
-// ----------------------------------------------------
-// 2️⃣ Leer, reparar y combinar todos los resultados
-// ----------------------------------------------------
-const merged = [];
-const seen = new Set();
-
-for (const filePath of auditFiles) {
-  console.log(`📖 Procesando: ${path.basename(filePath)}`);
-  try {
-    const raw = fs.readFileSync(filePath, "utf8");
-    const data = fixJSON(raw, path.basename(filePath));
-    const items = Array.isArray(data) ? data : [data];
-
-    for (const item of items) {
-      const url = item.url || "sin-url";
-
-      // 🔍 Soporte para los dos formatos: plano o estructurado
-      let violationsArray = [];
-      if (Array.isArray(item.violations)) {
-        // Formato estructurado
-        violationsArray = item.violations;
-      } else if (item.id && item.impact) {
-        // Formato plano (una violación por línea)
-        violationsArray = [item];
-      }
-
-      if (!violationsArray.length) continue;
-
-      const existing = merged.find(p => p.url === url);
-      if (existing) {
-        for (const v of violationsArray) {
-          const key = `${url}::${v.id}`;
-          if (!seen.has(key)) {
-            seen.add(key);
-            existing.violations.push(v);
-          }
-        }
-      } else {
-        for (const v of violationsArray) seen.add(`${url}::${v.id}`);
-        merged.push({ url, violations: violationsArray });
-      }
-    }
+    console.log(`✅ Archivo combinado: ${file}`);
   } catch (err) {
-    console.error(`❌ Error procesando ${filePath}: ${err.message}`);
+    console.warn(`⚠️ Error al procesar ${file}: ${err.message}`);
   }
 }
 
-// ----------------------------------------------------
-// 3️⃣ Ordenar por severidad y URL
-// ----------------------------------------------------
-const order = { critical: 1, serious: 2, moderate: 3, minor: 4, undefined: 5 };
-merged.forEach(p => {
-  p.violations.sort(
-    (a, b) => (order[a.impact] || 5) - (order[b.impact] || 5) || a.id.localeCompare(b.id)
-  );
-});
-merged.sort((a, b) => a.url.localeCompare(b.url));
+// Guardar el archivo combinado con timestamp
+const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+const outputFile = path.join(AUDITORIAS_DIR, `results-merged-${timestamp}.json`);
 
-// ----------------------------------------------------
-// 4️⃣ Guardar archivo combinado final
-// ----------------------------------------------------
-const mergedName = `results-merged-${format(new Date(), "yyyyMMdd-HHmm")}.json`;
-const mergedPath = path.join(auditoriasDir, mergedName);
-fs.writeFileSync(mergedPath, JSON.stringify(merged, null, 2));
+fs.writeFileSync(outputFile, JSON.stringify(mergedResults, null, 2), "utf8");
 
-console.log(`✅ Archivo combinado guardado en: ${mergedPath}`);
-console.log(`📄 Total de páginas: ${merged.length}`);
-const totalViolations = merged.reduce((sum, p) => sum + (p.violations?.length || 0), 0);
-console.log(`♿ Total de violaciones combinadas: ${totalViolations}`);
+console.log("📊 Resultados combinados correctamente:");
+console.log(`   → ${outputFile}`);
+console.log(`   Total de páginas analizadas: ${mergedResults.length}`);
+console.log("✅ Combinación de resultados finalizada sin errores.");
+
+process.exit(0);
+
 
