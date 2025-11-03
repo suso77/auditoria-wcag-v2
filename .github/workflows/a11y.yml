@@ -27,7 +27,7 @@ jobs:
       SERIOUS_MAX: 20
       TZ: Europe/Madrid
       NODE_ENV: production
-      NODE_OPTIONS: "--experimental-specifier-resolution=node"
+      NODE_OPTIONS: "--max-old-space-size=4096 --experimental-specifier-resolution=node"
 
     steps:
       # 1️⃣ Clonar repositorio
@@ -54,8 +54,8 @@ jobs:
       # 🧹 Limpieza previa
       - name: 🧹 Limpiar resultados antiguos
         run: |
-          rm -rf auditorias/* || true
           mkdir -p auditorias
+          rm -rf auditorias/* || true
 
       # 3️⃣ Instalar dependencias
       - name: 📦 Instalar dependencias
@@ -92,7 +92,7 @@ jobs:
         continue-on-error: true
         with:
           install-command: npm ci
-          command: npm run audit:sitemap
+          command: npx cypress run --spec "cypress/e2e/accesibilidad-sitemap.cy.js" --browser chrome
         env:
           SITE_URL: ${{ env.SITE_URL }}
 
@@ -101,15 +101,14 @@ jobs:
         continue-on-error: true
         run: |
           echo "🧠 Detectando script de auditoría interactiva..."
-          if npm run | grep -q "audit:interactiva"; then
-            echo "🌐 Ejecutando auditoría interactiva (modo español)"
+          if [ -f "cypress/e2e/accesibilidad-interactiva.cy.js" ]; then
+            echo "🌐 Ejecutando accesibilidad-interactiva.cy.js"
+            npx cypress run --spec "cypress/e2e/accesibilidad-interactiva.cy.js" --browser chrome
+          elif npm run | grep -q "audit:interactiva"; then
+            echo "🌐 Ejecutando auditoría interactiva (modo npm)"
             npm run audit:interactiva
-          elif npm run | grep -q "audit:interactive"; then
-            echo "🌐 Ejecutando auditoría interactiva (modo inglés)"
-            npm run audit:interactive
           else
-            echo "⚠️ No se encontró ningún script interactivo (audit:interactiva o audit:interactive)."
-            echo "🟡 Saltando auditoría interactiva..."
+            echo "⚠️ No se encontró script interactivo. Saltando auditoría..."
           fi
         env:
           SITE_URL: ${{ env.SITE_URL }}
@@ -123,7 +122,7 @@ jobs:
         run: |
           set -e
           echo "::group::🔄 Combinando resultados de auditorías"
-          npm run merge || npm run fix
+          node scripts/merge-results.mjs
           echo "::endgroup::"
           echo "✅ Archivo combinado generado correctamente."
 
@@ -134,10 +133,10 @@ jobs:
           FILE=$(ls auditorias/results-merged-*.json 2>/dev/null | tail -n 1 || true)
           if [ -z "$FILE" ]; then
             echo "❌ No se encontró results-merged.json, intentando regenerar..."
-            npm run merge || npm run fix
+            node scripts/merge-results.mjs
           elif [ ! -s "$FILE" ]; then
             echo "⚠️ Archivo vacío, intentando reparar..."
-            npm run fix || true
+            node scripts/merge-results.mjs || true
           else
             echo "✅ Archivo válido detectado: $FILE"
           fi
@@ -149,17 +148,17 @@ jobs:
           jq -r '[.[].violations[].impact] | group_by(.) | map({nivel: .[0], total: length})' auditorias/results-merged-*.json || echo "⚠️ jq no disponible o sin datos"
           echo "::endgroup::"
 
-      # 11️⃣ Quality Gate
+      # 11️⃣ Quality Gate (control de umbrales)
       - name: 🚦 Quality Gate – WCAG
+        continue-on-error: true
         run: |
           echo "==============================================="
           echo "🚦 INICIO DEL CONTROL DE CALIDAD"
           echo "==============================================="
-          npm run quality || true
+          npm run quality || echo "⚠️ Control de calidad con advertencias"
           echo "==============================================="
           echo "✅ FIN DEL CONTROL DE CALIDAD"
           echo "==============================================="
-        continue-on-error: true
 
       # 12️⃣ Exportar informe profesional
       - name: 📊 Exportar informe Excel + ZIP (IAAP / W3C)
@@ -173,7 +172,7 @@ jobs:
             exit 1
           fi
           echo "📄 Archivo combinado detectado: $FILE"
-          node --experimental-specifier-resolution=node scripts/export-to-xlsx.mjs
+          node --max-old-space-size=4096 --experimental-specifier-resolution=node scripts/export-to-xlsx.mjs
           echo "::endgroup::"
           echo "✅ Informe Excel y ZIP generados correctamente."
           echo "📂 Contenido de /auditorias:"
@@ -189,7 +188,7 @@ jobs:
             auditorias/results-merged-*.json
             auditorias/Informe-WCAG-Profesional.xlsx
             auditorias/Informe-WCAG.zip
-            auditorias/*-evidencias/**
+            auditorias/capturas/**/*.png
           retention-days: 30
 
       # 15️⃣ Resumen final
@@ -200,6 +199,6 @@ jobs:
           echo "♿ RESUMEN FINAL DE LA AUDITORÍA"
           echo "==============================================="
           echo "🌍 Sitio auditado: $SITE_URL"
-          echo "📊 Resultados combinados + informe Excel profesional generados"
+          echo "📊 Informe generado: auditorias/Informe-WCAG-Profesional.xlsx"
           echo "🚦 Quality Gate: Critical <= $CRITICAL_MAX, Serious <= $SERIOUS_MAX"
-          echo "✅ Pipeline finalizado correctamente."
+          echo "✅ Pipeline completado correctamente."
