@@ -21,9 +21,10 @@ jobs:
       LANG: C.UTF-8
       CRITICAL_MAX: 0
       SERIOUS_MAX: 5
+      TZ: Europe/Madrid
 
     steps:
-      # 1️⃣ Clonar el repositorio
+      # 1️⃣ Clonar repositorio
       - name: 🧩 Checkout del repositorio
         uses: actions/checkout@v4
 
@@ -35,105 +36,94 @@ jobs:
           cache: 'npm'
           cache-dependency-path: '**/package-lock.json'
 
-      # 3️⃣ Instalar dependencias (robusto)
+      # 3️⃣ Instalar dependencias
       - name: 📦 Instalar dependencias
         run: |
-          echo "📦 Instalando dependencias (modo seguro)..."
+          echo "📦 Instalando dependencias..."
           npm ci || npm install
           echo "✅ Dependencias instaladas correctamente."
-          echo ""
           npm list --depth=0 || true
 
-      # 4️⃣ Rastreo de URLs con Puppeteer
-      - name: 🌐 Rastreo de URLs
+      # 4️⃣ Rastreo de URLs
+      - name: 🌐 Rastreo de URLs con Puppeteer
         run: |
-          echo "==============================================="
-          echo "🌍 INICIO DEL RASTREO DE URLs"
-          echo "==============================================="
-          echo "🔗 Sitio: $SITE_URL"
-          echo ""
-          npm run crawl:js || echo "⚠️ Error menor en el rastreo (continuamos)..."
-          echo ""
-          echo "✅ Rastreo completado correctamente"
-          echo "📁 Archivo generado: scripts/urls.json"
-          echo "==============================================="
-        env:
-          SITE_URL: ${{ env.SITE_URL }}
+          echo "🌍 Iniciando rastreo de URLs en $SITE_URL"
+          npm run crawl:js || echo "⚠️ Error menor en rastreo (continuamos)..."
+          echo "✅ Rastreo completado. Archivo: scripts/urls.json"
 
-      # 5️⃣ Auditoría principal con Cypress + axe-core (sitio completo)
-      - name: ♿ Auditoría principal de accesibilidad (Sitemap)
+      # 5️⃣ Auditoría principal (sitemap)
+      - name: ♿ Auditoría de accesibilidad – Sitemap
         uses: cypress-io/github-action@v6
         with:
           install-command: npm ci
-          command: npm run audit:sitemap || echo "⚠️ Violaciones detectadas (continuamos para generar informes)..."
+          command: npm run audit:sitemap || echo "⚠️ Violaciones detectadas (continuamos para informes)..."
         env:
           SITE_URL: ${{ env.SITE_URL }}
 
-      # 6️⃣ Auditoría interactiva (modales, banners, menús, etc.)
-      - name: 🧠 Auditoría de componentes interactivos
+      # 6️⃣ Auditoría interactiva (modales, menús, banners)
+      - name: 🧠 Auditoría de accesibilidad – Componentes interactivos
         uses: cypress-io/github-action@v6
         with:
           install-command: npm ci
-          command: npm run audit:interactiva || echo "⚠️ Violaciones detectadas (continuamos para generar informes)..."
+          command: npm run audit:interactive || echo "⚠️ Violaciones detectadas (continuamos para informes)..."
         env:
           SITE_URL: ${{ env.SITE_URL }}
 
-      # 7️⃣ Combinar resultados de ambas auditorías
-      - name: 🧩 Combinar resultados de auditoría
+      # 7️⃣ Combinar resultados (merge)
+      - name: 🧩 Combinar resultados de auditorías
         run: |
           echo "🔄 Combinando resultados..."
-          npm run merge || npm run fix || echo "⚠️ Error combinando resultados, continuamos..."
-          echo "✅ Archivo combinado creado correctamente."
+          npm run merge || npm run fix
+          echo "✅ Archivo combinado generado correctamente."
 
       # 8️⃣ Validar integridad del archivo combinado
-      - name: 🔍 Validar integridad del archivo combinado
+      - name: 🔍 Validar archivo combinado
         run: |
-          echo "🔎 Verificando contenido de auditorias/results-merged-*.json ..."
           FILE=$(ls auditorias/results-merged-*.json 2>/dev/null | tail -n 1 || true)
           if [ -z "$FILE" ]; then
-            echo "❌ No se encontró ningún results-merged.json. Intentando fusionar..."
-            npm run merge || npm run fix || echo "⚠️ No se pudo crear el archivo combinado."
+            echo "❌ No se encontró results-merged.json, intentando regenerar..."
+            npm run merge || npm run fix
           elif [ ! -s "$FILE" ]; then
-            echo "⚠️ Archivo combinado vacío. Intentando reparar..."
-            npm run fix || echo "⚠️ Reparación no completada, se continuará igualmente."
+            echo "⚠️ Archivo vacío, intentando reparar..."
+            npm run fix || true
           else
             echo "✅ Archivo válido detectado: $FILE"
           fi
 
-      # 9️⃣ Generar informe Excel + ZIP con evidencias
-      - name: 📊 Generar informe Excel y ZIP
-        run: |
-          echo "📄 Generando informe profesional..."
-          npm run report || exit 1
-          echo "✅ Informe Excel generado correctamente."
-          echo ""
-          echo "📂 Contenido del directorio auditorias/:"
-          ls -lh auditorias/ || echo "⚠️ No se encontró la carpeta auditorias."
-          echo ""
-          echo "📁 Archivos generados en auditorias:"
-          find auditorias -type f \( -name "*.xlsx" -o -name "*.zip" -o -name "results-merged*.json" \) -print || echo "⚠️ Ningún archivo encontrado."
-
-      # 🔟 Control de calidad (Quality Gate)
-      - name: 🚦 Control de calidad – WCAG (Quality Gate)
+      # 9️⃣ Control de calidad (Quality Gate)
+      - name: 🚦 Quality Gate – WCAG
         run: |
           echo "==============================================="
           echo "🚦 INICIO DEL CONTROL DE CALIDAD"
           echo "==============================================="
-          npm run quality || echo "⚠️ Violaciones fuera de umbrales (modo auditoría continua)"
-          echo ""
+          npm run quality
+          echo "==============================================="
           echo "✅ FIN DEL CONTROL DE CALIDAD"
           echo "==============================================="
         continue-on-error: true
 
-      # 11️⃣ Subir artefactos finales (Excel + ZIP + evidencias)
+      # 🔟 Exportar informe Excel + ZIP
+      - name: 📊 Exportar informe Excel + ZIP
+        if: always()
+        run: |
+          echo "📄 Generando informe Excel..."
+          npm run report
+          echo "✅ Informe Excel generado correctamente."
+          echo ""
+          echo "📂 Contenido de /auditorias:"
+          ls -lh auditorias/ || echo "⚠️ Carpeta no encontrada."
+
+      # 11️⃣ Subir artefactos
       - name: 📤 Subir artefactos finales
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Auditoría-WCAG-${{ github.run_number }}
           path: |
-            auditorias/*.xlsx
-            auditorias/*.zip
+            auditorias/results-merged-*.json
+            auditorias/quality-report.json
+            auditorias/Informe-WCAG.xlsx
+            auditorias/Informe-WCAG.zip
             auditorias/*-evidencias/**
           retention-days: 30
 
@@ -142,9 +132,9 @@ jobs:
         if: always()
         run: |
           echo "==============================================="
-          echo "♿ RESUMEN FINAL DE LA AUDITORÍA DE ACCESIBILIDAD"
+          echo "♿ RESUMEN FINAL DE LA AUDITORÍA"
           echo "==============================================="
           echo "🌍 Sitio auditado: $SITE_URL"
-          echo "📊 Informe Excel y ZIP subidos como artefactos"
+          echo "📊 Resultados combinados + informe Excel generados"
           echo "🚦 Umbrales Quality Gate: Critical <= $CRITICAL_MAX, Serious <= $SERIOUS_MAX"
-          echo "✅ Auditoría finalizada correctamente."
+          echo "✅ Pipeline finalizado correctamente."
