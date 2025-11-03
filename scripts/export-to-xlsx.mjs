@@ -1,7 +1,8 @@
-// ✅ scripts/export-to-xlsx.mjs
-// Genera informe Excel profesional (formato IAAP / W3C) + ZIP con evidencias
-// Crea tres hojas: Sitemap, Interactiva y Resumen
-// Traduce al español, añade explicación WCAG y enlaces clicables a capturas
+// ✅ scripts/export-to-xlsx.mjs (v4.0 profesional)
+// Genera informe Excel profesional (formato IAAP/W3C) + ZIP con evidencias
+// - Usa capturas detectadas en merge-results (campo capturePath)
+// - Crea hojas: Sitemap, Interactiva, Resumen
+// - Traduce, normaliza, colorea y enlaza capturas y WCAG
 
 import fs from "fs";
 import path from "path";
@@ -9,38 +10,30 @@ import ExcelJS from "exceljs";
 import archiver from "archiver";
 import { fileURLToPath } from "url";
 import { execSync } from "child_process";
-import { getWcagInfo } from "./wcag-map.mjs"; // 🧠 Fuente principal (mapa maestro)
+import { getWcagInfo } from "./wcag-map.mjs"; // 🧠 Mapa maestro WCAG
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// 🌐 Traducción automática de fallback (solo inglés → español)
+// 🧠 Traducción automática inglés → español (fallback con DeepLx)
 async function traducirTexto(texto) {
   if (!texto || texto.trim().length < 4) return texto;
-
   const esIngles =
     /^[a-zA-Z0-9 ,.'":;!?()_-]+$/.test(texto) &&
-    /the|ensures|accessible|aria|contrast|element|page|role|content|must|should/i.test(texto);
+    /the|ensures|accessible|aria|contrast|element|page|role|must|should/i.test(texto);
 
   if (!esIngles) return texto;
-
   try {
     const respuesta = execSync(
       `curl -s -X POST "https://api-free.deeplx.org/translate" -H "Content-Type: application/json" -d '{"text": ${JSON.stringify(
         texto
       )}, "source_lang": "EN", "target_lang": "ES"}'`
     ).toString();
-
     const json = JSON.parse(respuesta);
-    if (json?.data?.translations?.[0]?.text) {
-      return json.data.translations[0].text;
-    }
+    return json?.data?.translations?.[0]?.text || texto;
   } catch {
-    // fallback silencioso si falla la API
     return texto;
   }
-
-  return texto;
 }
 
 // 🧠 Traducciones de descripciones de axe-core al español
@@ -326,6 +319,9 @@ const wcagMap = {
 "aria-textbox-name": "4.1.2 Nombre, función, valor (A)",
 };
 
+// ===========================================================
+// 🧾 Generador de Excel profesional
+// ===========================================================
 async function generateExcel() {
   console.log("📊 Iniciando exportación profesional de resultados WCAG...");
 
@@ -335,6 +331,7 @@ async function generateExcel() {
     process.exit(1);
   }
 
+  // Cargar último results-merged
   const mergedFiles = fs
     .readdirSync(auditoriasDir)
     .filter((f) => f.startsWith("results-merged") && f.endsWith(".json"))
@@ -348,221 +345,189 @@ async function generateExcel() {
 
   const latestMerged = path.join(auditoriasDir, mergedFiles[0]);
   console.log(`📄 Cargando resultados combinados desde: ${latestMerged}`);
-
   const results = JSON.parse(fs.readFileSync(latestMerged, "utf-8"));
-  if (!Array.isArray(results) || results.length === 0) {
-    console.error("❌ El archivo results-merged está vacío o mal formado.");
-    process.exit(1);
-  }
 
   const sitemapResults = results.filter((r) => r.origen === "sitemap");
   const interactivaResults = results.filter((r) => r.origen === "interactiva");
 
   const workbook = new ExcelJS.Workbook();
 
-  // 🎨 Crear hoja profesional
-  async function createAuditSheet(name, data) {
-    const sheet = workbook.addWorksheet(name);
+  // ===========================================================
+// 🎨 Generar hoja de auditoría (versión profesional integrada con wcag-map)
+// ===========================================================
+async function createAuditSheet(name, data) {
+  console.log(`📋 Generando hoja de auditoría ${name}...`);
+  const sheet = workbook.addWorksheet(name);
 
-    sheet.columns = [
-      { header: "ID", key: "id", width: 25 },
-      { header: "Sistema operativo, navegador y tecnología asistiva", key: "system", width: 45 },
-      { header: "Resumen (en español)", key: "summary", width: 70 },
-      { header: "Elemento afectado", key: "element", width: 80 },
-      { header: "Página analizada", key: "page", width: 60 },
-      { header: "Resultado actual", key: "actual", width: 80 },
-      { header: "Resultado esperado", key: "expected", width: 85 },
-      { header: "Metodología de testing", key: "method", width: 40 },
-      { header: "Severidad", key: "impact", width: 15 },
-      { header: "Criterio WCAG", key: "wcag", width: 35 },
-      { header: "Captura de pantalla", key: "screenshot", width: 25 },
-      { header: "Recomendación (W3C)", key: "recommendation", width: 70 },
-    ];
+  sheet.columns = [
+    { header: "ID", key: "id", width: 20 },
+    { header: "Criterio WCAG", key: "wcag", width: 30 },
+    { header: "Severidad", key: "impact", width: 15 },
+    { header: "Resumen (en español)", key: "summary", width: 70 },
+    { header: "Elemento afectado", key: "element", width: 70 },
+    { header: "Página analizada", key: "page", width: 60 },
+    { header: "Resultado actual", key: "actual", width: 80 },
+    { header: "Resultado esperado", key: "expected", width: 80 },
+    { header: "Recomendación (W3C)", key: "recommendation", width: 60 },
+    { header: "Captura de pantalla", key: "screenshot", width: 30 },
+    { header: "Sistema", key: "system", width: 40 },
+    { header: "Metodología", key: "method", width: 40 },
+  ];
 
-    const headerRow = sheet.getRow(1);
-    headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
-    headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F4E78" } };
-    headerRow.alignment = { vertical: "middle", horizontal: "center" };
-    sheet.views = [{ state: "frozen", ySplit: 1 }];
-    sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: sheet.columnCount } };
+  // 🧱 Estilo del encabezado
+  const headerRow = sheet.getRow(1);
+  headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+  headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F4E78" } };
+  headerRow.alignment = { vertical: "middle", horizontal: "center" };
+  sheet.views = [{ state: "frozen", ySplit: 1 }];
+  sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: sheet.columnCount } };
 
-    const impactColors = {
-      critical: "FFFF0000",
-      serious: "FFFF6600",
-      moderate: "FFFFC000",
-      minor: "FF92D050",
-    };
+  const impactColors = {
+    critical: "FFFF0000",
+    serious: "FFFF6600",
+    moderate: "FFFFC000",
+    minor: "FF92D050",
+  };
 
-    const counters = { total: 0, critical: 0, serious: 0, moderate: 0, minor: 0 };
+  const counters = { total: 0, critical: 0, serious: 0, moderate: 0, minor: 0 };
 
-    for (const page of data) {
-      if (!Array.isArray(page.violations)) continue;
+  for (const page of data) {
+    if (!Array.isArray(page.violations)) continue;
 
-      for (const v of page.violations) {
-        const node = v.nodes?.[0] || {};
-        const selector = node.target?.join(", ") || "(no especificado)";
+    for (const v of page.violations) {
+      const node = v.nodes?.[0] || {};
+      const selector = node.target?.join(", ") || page.selector || "(sin selector)";
 
-        // 🔍 Mapa maestro + fallback
-        const wcagInfo = getWcagInfo(v.id) || {};
+      // 🧠 Información enriquecida desde el mapa WCAG
+      const wcagInfo = getWcagInfo(v.id) || {};
+      const criterio = wcagInfo.criterio || "WCAG 2.1 / 2.2";
+      const helpUrl =
+        wcagInfo.url ||
+        v.helpUrl ||
+        "https://www.w3.org/WAI/WCAG22/Understanding/";
 
-        let resumen =
-          wcagInfo.resumen ||
-          traducciones[v.description] ||
-          v.help ||
-          v.description ||
-          "(sin descripción)";
+      // 🗣️ Resumen traducido o preexistente
+      let resumen =
+        wcagInfo.resumen ||
+        v.help ||
+        v.description ||
+        "(sin descripción disponible)";
 
-        // 🚀 Traducción automática si aún está en inglés
-        if (!wcagInfo.resumen && !traducciones[v.description]) {
-          resumen = await traducirTexto(resumen);
-        }
+      if (!traducciones[resumen]) resumen = await traducirTexto(resumen);
 
-        const impact = v.impact || "—";
+      // 🧾 Resultado actual y esperado (formato descriptivo)
+      const resultadoActual = `Descripción: ${resumen}\nSelector: ${selector}\nHTML: ${
+        node.html || "(no disponible)"
+      }\n${node.failureSummary ? "Error: " + node.failureSummary : ""}`;
 
-        const criterio =
-          wcagInfo.criterio ||
-          wcagMap[v.id] ||
-          v.tags?.find((t) => t.startsWith("wcag"))?.replace("wcag", "WCAG ") ||
-          "WCAG 2.1 / 2.2 AA";
+      const resultadoEsperado =
+        wcagInfo.esperado ||
+        `El elemento afectado debería cumplir el criterio "${criterio}".`;
 
-        const helpUrl =
-          wcagInfo.url ||
-          v.helpUrl ||
-          "https://www.w3.org/WAI/WCAG22/Understanding/";
+      const impact = v.impact || "—";
 
-        const resultadoActual =
-          wcagInfo.actual ||
-          `${resumen} — Selector: ${selector} — HTML: ${node.html || ""}`;
+      // ➕ Añadir fila al Excel
+      const row = sheet.addRow({
+        id: v.id,
+        wcag: criterio,
+        impact,
+        summary: resumen,
+        element: selector,
+        page: page.url,
+        actual: resultadoActual,
+        expected: resultadoEsperado,
+        recommendation: helpUrl,
+        system: page.system || "macOS + Chrome (Cypress + axe-core)",
+        method: "WCAG 2.1 / 2.2 (axe-core)",
+      });
 
-        const resultadoEsperado =
-          wcagInfo.esperado ||
-          `El elemento "${selector}" debe cumplir con el criterio "${criterio}".`;
-const html = node.html || "";
-const failure = node.failureSummary || "";
-const wcag = wcagInfo?.criterio || criterio || "Sin criterio identificado";
-        // 🖼️ Detección dinámica de capturas
-        const safeName = page.url
-  .replace(/https?:\/\//, "")
-  .replace(/[^\w-]/g, "_")
-  .substring(0, 80); // limitar largo para evitar nombres excesivos
-
-const possibleScreens = fs
-  .readdirSync(auditoriasDir)
-  .filter((f) => f.includes(safeName) && f.endsWith(".png"));
-
-let screenshotPath = null;
-
-if (possibleScreens.length > 0) {
-  // Toma la más reciente si hay varias
-  screenshotPath = `./auditorias/${possibleScreens.sort().reverse()[0]}`;
-}
-
-const row = sheet.addRow({
-  id: v.id,
-  system: page.system || "Windows / Chrome / NVDA",
-  summary: resumen,
-  element: `${selector} ${failure ? `texto="${failure}"` : ""}`,
-  page: page.url,
-  actual: `${resumen} — Selector: ${selector} — HTML: ${html}`,
-  expected: resultadoEsperado,
-  method: "WCAG 2.1 / 2.2 AA (axe-core)",
-  impact,
-  wcag,
-  recommendation: helpUrl,
-});
-
-// 🧩 Añade enlace solo si existe captura (última columna disponible)
-const lastCol = sheet.columns.length + 1;
-if (screenshotPath && fs.existsSync(screenshotPath)) {
-  row.getCell(lastCol).value = { text: "Ver captura", hyperlink: screenshotPath };
-  row.getCell(lastCol).font = { color: { argb: "FF0563C1" }, underline: true };
-} else {
-  row.getCell(lastCol).value = "(sin captura disponible)";
-  row.getCell(lastCol).font = { color: { argb: "FF7F7F7F" }, italic: true };
-}
-
-
-        if (impactColors[v.impact]) {
-          row.getCell("impact").fill = {
-            type: "pattern",
-            pattern: "solid",
-            fgColor: { argb: impactColors[v.impact] },
-          };
-        }
-
-        counters.total++;
-        if (impact in counters) counters[impact]++;
+      // 🎨 Colorear severidad
+      if (impactColors[impact]) {
+        row.getCell("impact").fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: impactColors[impact] },
+        };
       }
-    }
 
-    return counters;
+      // 🔗 Enlace a captura
+      const screenshotCell = row.getCell("screenshot");
+      if (page.capturePath && fs.existsSync(path.join(auditoriasDir, page.capturePath))) {
+        screenshotCell.value = {
+          text: "Ver captura",
+          hyperlink: `./${page.capturePath}`,
+        };
+        screenshotCell.font = { color: { argb: "FF0563C1" }, underline: true };
+      } else {
+        screenshotCell.value = "(sin captura)";
+        screenshotCell.font = { color: { argb: "FF7F7F7F" }, italic: true };
+      }
+
+      counters.total++;
+      if (impact in counters) counters[impact]++;
+    }
   }
 
-  console.log("📋 Generando hoja de auditoría Sitemap...");
-  const sitemapCounters = await createAuditSheet("Auditoría Sitemap", sitemapResults);
+  return counters;
+}
 
-  console.log("📋 Generando hoja de auditoría Interactiva...");
+  // ===========================================================
+  // 🧾 Crear hojas principales
+  // ===========================================================
+  const sitemapCounters = await createAuditSheet("Auditoría Sitemap", sitemapResults);
   const interactivaCounters = await createAuditSheet("Auditoría Interactiva", interactivaResults);
 
+  // ===========================================================
+  // 📊 Resumen global
+  // ===========================================================
   const resumen = workbook.addWorksheet("Resumen de Severidades");
   resumen.columns = [
     { header: "Origen", key: "origen", width: 25 },
     { header: "Total", key: "total", width: 10 },
-    { header: "Críticas", key: "critical", width: 10 },
-    { header: "Graves", key: "serious", width: 10 },
+    { header: "Críticas", key: "critical", width: 12 },
+    { header: "Graves", key: "serious", width: 12 },
     { header: "Moderadas", key: "moderate", width: 12 },
-    { header: "Menores", key: "minor", width: 10 },
+    { header: "Menores", key: "minor", width: 12 },
   ];
-
   const header = resumen.getRow(1);
   header.font = { bold: true, color: { argb: "FFFFFFFF" } };
   header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF305496" } };
-
   resumen.addRow({ origen: "Sitemap", ...sitemapCounters });
   resumen.addRow({ origen: "Interactiva", ...interactivaCounters });
 
-    const excelPath = path.join(auditoriasDir, "Informe-WCAG-Profesional.xlsx");
+  // ===========================================================
+  // 💾 Guardar Excel y crear ZIP profesional
+  // ===========================================================
+  const excelPath = path.join(auditoriasDir, "Informe-WCAG-Profesional.xlsx");
   await workbook.xlsx.writeFile(excelPath);
   console.log(`✅ Archivo Excel profesional generado: ${excelPath}`);
 
-  // 🗜️ Crear ZIP profesional con Excel + JSON + evidencias + capturas
   const zipPath = path.join(auditoriasDir, "Informe-WCAG.zip");
   const output = fs.createWriteStream(zipPath);
   const archive = archiver("zip", { zlib: { level: 9 } });
-
   archive.pipe(output);
 
-  // 1️⃣ Añadir el Excel y el JSON principal
   archive.file(excelPath, { name: path.basename(excelPath) });
   archive.file(latestMerged, { name: path.basename(latestMerged) });
 
-  // 2️⃣ Incluir todas las capturas PNG que existan en /auditorias
-  const captures = fs
-    .readdirSync(auditoriasDir)
-    .filter((f) => f.endsWith(".png"))
-    .map((f) => path.join(auditoriasDir, f));
-
-  if (captures.length > 0) {
-    console.log(`📸 Añadiendo ${captures.length} capturas al ZIP...`);
-    captures.forEach((file) => {
-      const name = path.basename(file);
-      archive.file(file, { name: `capturas/${name}` });
-    });
-  } else {
-    console.log("⚠️ No se encontraron capturas PNG para añadir al ZIP.");
+  // Capturas
+  const capturasDir = path.join(auditoriasDir, "capturas");
+  if (fs.existsSync(capturasDir)) {
+    const captures = fs.readdirSync(capturasDir).filter((f) => f.endsWith(".png"));
+    if (captures.length > 0) {
+      console.log(`📸 Añadiendo ${captures.length} capturas al ZIP...`);
+      captures.forEach((file) => {
+        archive.file(path.join(capturasDir, file), { name: `capturas/${file}` });
+      });
+    } else console.log("⚠️ No se encontraron capturas PNG para añadir al ZIP.");
   }
 
-  // 3️⃣ Incluir carpetas de evidencias si existen
-  const evidencias = fs.readdirSync(auditoriasDir).filter((d) => d.endsWith("-evidencias"));
-  evidencias.forEach((dir) => archive.directory(path.join(auditoriasDir, dir), dir));
-
-  // 4️⃣ Finalizar ZIP
   await archive.finalize();
-
   console.log(`🗜️ ZIP generado correctamente: ${zipPath}`);
   console.log("✅ Exportación profesional completada con éxito.");
 }
 
+// 🚀 Ejecutar
 generateExcel().catch((err) => {
   console.error("❌ Error generando informe Excel:", err);
   process.exit(1);

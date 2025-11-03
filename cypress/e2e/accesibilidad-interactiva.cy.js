@@ -2,18 +2,18 @@
 import "cypress-axe";
 
 /**
- * ♿ Auditoría de accesibilidad – Componentes interactivos (versión profesional estable)
+ * ♿ Auditoría de accesibilidad – Componentes interactivos (profesional con capturas)
  * ----------------------------------------------------------------------------
- * - Carga todas las URLs desde scripts/urls.json (crawler).
- * - Audita solo una vez los componentes globales (menús, cookies, header, footer...).
- * - Detecta y registra TODAS las violaciones WCAG sin bloquear la ejecución.
- * - Reintenta automáticamente si una página falla o se bloquea.
- * - Elimina falsos errores “Falla definitiva” manteniendo trazabilidad.
- * - Guarda capturas y resultados solo con violaciones reales.
- * - Compatible con merge automático (campo "origen": "interactiva").
+ * - Carga URLs desde scripts/urls.json (crawler).
+ * - Audita componentes interactivos (acordeones, menús, modales...).
+ * - Omitir componentes globales (header, cookies, footer) tras la primera URL.
+ * - Reintenta en modo simplificado si hay bloqueos.
+ * - Guarda capturas por página y capturas por componente con violaciones.
+ * - Libera memoria entre URLs para evitar OOM.
+ * - Compatible con merge y exportación a Excel/ZIP.
  */
 
-describe("♿ Auditoría de accesibilidad – Componentes interactivos (profesional estable)", () => {
+describe("♿ Auditoría de accesibilidad – Componentes interactivos (profesional con capturas)", () => {
   let urls = [];
   const allResults = [];
 
@@ -28,7 +28,7 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (profesio
     "footer",
   ];
 
-  // 🚫 Evita que Cypress falle al detectar violaciones
+  // 🚫 Evita que Cypress falle por violaciones detectadas
   Cypress.on("fail", (error) => {
     if (error.message && error.message.includes("accessibility violation")) {
       console.log("⚠️ Violación de accesibilidad detectada (registrada, sin bloquear).");
@@ -37,7 +37,9 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (profesio
     throw error;
   });
 
+  // 🧹 Limpia capturas anteriores antes de empezar
   before(() => {
+    cy.task("clearCaptures");
     cy.task("readUrls").then((urlsRaw) => {
       urls = urlsRaw.map((p) => p.url).filter(Boolean);
       cy.task("log", `🌍 Iniciando auditoría interactiva: ${urls.length} URLs detectadas.`);
@@ -48,9 +50,14 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (profesio
     cy.wrap(urls).each((page, index) => {
       cy.task("log", `🚀 Analizando componentes interactivos en: ${page}`);
 
+      const slug = page.replace(/https?:\/\/|\/$/g, "").replace(/\W+/g, "-");
+
       cy.visit(page, { timeout: 90000, failOnStatusCode: false })
         .then(() => {
           cy.injectAxe();
+
+          // 📸 Captura completa de la página antes de auditar
+          cy.screenshot(`captura-${slug}`, { capture: "viewport", overwrite: true });
 
           // 🎯 Selectores base
           let selectors = [
@@ -66,7 +73,7 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (profesio
             "header, footer",
           ];
 
-          // 🔁 Omitir los globales tras la primera URL
+          // 🔁 Omitir globales después de la primera URL
           if (index > 0) {
             cy.task("log", "🧠 Omitiendo componentes globales ya auditados (header, cookies, footer)");
             selectors = selectors.filter(
@@ -126,7 +133,10 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (profesio
 
                         if (violations.length > 0) {
                           const safeName = selector.replace(/[^\w-]/g, "_");
-                          cy.screenshot(`interactivo-${safeName}-a11y`);
+                          cy.screenshot(`interactivo-${slug}-${safeName}-a11y`, {
+                            capture: "viewport",
+                            overwrite: true,
+                          });
 
                           allResults.push({
                             page,
@@ -160,6 +170,17 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (profesio
               });
             });
           });
+
+          // ♻️ Liberar memoria tras auditar cada página
+          cy.window().then((win) => {
+            try {
+              win.document.body.innerHTML = "";
+              win.close?.();
+              cy.task("log", "🧠 Memoria liberada tras auditoría de la página.");
+            } catch {
+              cy.task("log", "⚠️ No se pudo liberar memoria (win).");
+            }
+          });
         })
         // 🔁 Reintento si la página falla
         .then(null, (err) => {
@@ -171,6 +192,10 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (profesio
           cy.visit(page, { failOnStatusCode: false, timeout: 120000 })
             .then(() => {
               cy.injectAxe();
+
+              // 📸 Captura en modo simplificado también
+              cy.screenshot(`captura-${slug}-reintento`, { capture: "viewport", overwrite: true });
+
               cy.checkA11y(
                 "body",
                 null,
@@ -196,27 +221,17 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (profesio
                 { skipFailures: true }
               );
             })
-            // 🔧 Reemplazo del bloque “falla definitiva”
             .then(null, (finalErr) => {
-              if (
-                finalErr?.message?.includes("cannot visit") ||
-                finalErr?.message?.includes("timeout")
-              ) {
-                cy.task(
-                  "log",
-                  `⚠️ Falla leve (timeout o redirección) en ${page}, pero la auditoría ya registró resultados.`
-                );
-              } else {
-                cy.task(
-                  "log",
-                  `ℹ️ Finalizado con advertencias menores en ${page} — sin impacto en los resultados.`
-                );
-              }
+              cy.task(
+                "log",
+                `ℹ️ Finalizado con advertencias menores en ${page} — ${finalErr?.message || "sin impacto en resultados"}`
+              );
             });
         });
     });
   });
 
+  // 🧾 Guardado final
   after(() => {
     const outputDir = `auditorias/auditoria-interactiva`;
     cy.task("createFolder", outputDir);

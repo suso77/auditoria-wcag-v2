@@ -2,22 +2,22 @@
 import "cypress-axe";
 
 /**
- * ♿ Auditoría de accesibilidad - axe-core (versión profesional estable)
- * -------------------------------------------------------------------
+ * ♿ Auditoría de accesibilidad – Sitemap completo (profesional con capturas)
+ * -------------------------------------------------------------------------
  * - Audita todas las URLs HTML listadas en scripts/urls.json.
  * - Ignora recursos no HTML (PDF, imágenes, etc.).
- * - Detecta y guarda TODAS las violaciones (sin interrumpir la ejecución).
- * - Reintenta las páginas que fallan en modo simplificado.
- * - Evita que Cypress marque el test como fallido.
- * - Limpia los falsos errores “Falla definitiva” y deja trazas más claras.
- * - Compatible con merge automático (campo "origen": "sitemap").
+ * - Guarda capturas por página y en reintentos.
+ * - Detecta y guarda TODAS las violaciones (sin bloquear la ejecución).
+ * - Reintenta páginas fallidas en modo simplificado.
+ * - Libera memoria tras cada auditoría de URL (evita OOM).
+ * - Totalmente compatible con merge y exportación profesional.
  */
 
-describe("♿ Auditoría de accesibilidad - axe-core (profesional estable)", () => {
+describe("♿ Auditoría de accesibilidad – Sitemap completo (profesional con capturas)", () => {
   let pages = [];
   const allResults = [];
 
-  // 🚫 Evitar que Cypress falle por violaciones detectadas
+  // 🚫 Evita que Cypress marque el test como fallido por violaciones
   Cypress.on("fail", (error) => {
     if (error.message && error.message.includes("accessibility violation")) {
       console.log("⚠️ Violación de accesibilidad detectada (registrada, sin bloquear).");
@@ -26,14 +26,16 @@ describe("♿ Auditoría de accesibilidad - axe-core (profesional estable)", () 
     throw error;
   });
 
+  // 🧹 Limpia capturas anteriores antes de comenzar
   before(() => {
+    cy.task("clearCaptures");
     cy.task("readUrls").then((urlsRaw) => {
       pages = urlsRaw.filter((p) => p && p.url);
       cy.task("log", `🌐 Total de páginas únicas a auditar: ${pages.length}`);
     });
   });
 
-  it("Audita todas las páginas del sitio", () => {
+  it("Audita todas las páginas del sitemap con axe-core", () => {
     cy.wrap(pages).each((page) => {
       const { url, title } = page;
 
@@ -48,6 +50,7 @@ describe("♿ Auditoría de accesibilidad - axe-core (profesional estable)", () 
       }
 
       cy.task("log", `🚀 Analizando: ${url} (${title || "sin título"})`);
+      const slug = url.replace(/https?:\/\/|\/$/g, "").replace(/\W+/g, "-");
 
       cy.visit(url, { timeout: 90000, failOnStatusCode: false })
         .then((win) => {
@@ -64,7 +67,10 @@ describe("♿ Auditoría de accesibilidad - axe-core (profesional estable)", () 
           cy.wait(1000);
           cy.injectAxe();
 
-          // ♿ Auditoría principal con axe-core
+          // 📸 Captura de pantalla general antes de la auditoría
+          cy.screenshot(`captura-${slug}`, { capture: "viewport", overwrite: true });
+
+          // ♿ Auditoría principal
           cy.checkA11y(
             null,
             null,
@@ -72,9 +78,6 @@ describe("♿ Auditoría de accesibilidad - axe-core (profesional estable)", () 
               const dateNow = new Date().toISOString();
 
               if (violations.length > 0) {
-                const safeName = url.replace(/https?:\/\//, "").replace(/[^\w-]/g, "_");
-                cy.screenshot(`${safeName}-a11y`);
-
                 allResults.push({
                   url,
                   pageTitle: safeTitle,
@@ -93,7 +96,7 @@ describe("♿ Auditoría de accesibilidad - axe-core (profesional estable)", () 
 
                 cy.task(
                   "log",
-                  `♿ ${url} — ${violations.length} violaciones (🔴 ${counts.critical} críticas, 🟠 ${counts.serious} serias, 🟡 ${counts.moderate} moderadas, 🟢 ${counts.minor} menores)`
+                  `♿ ${url} — ${violations.length} violaciones (🔴 ${counts.critical} críticas, 🟠 ${counts.serious} graves, 🟡 ${counts.moderate} moderadas, 🟢 ${counts.minor} menores)`
                 );
               } else {
                 cy.task("log", `✅ ${url} — Sin violaciones detectadas`);
@@ -103,17 +106,35 @@ describe("♿ Auditoría de accesibilidad - axe-core (profesional estable)", () 
             },
             { skipFailures: true }
           );
+
+          // ♻️ Liberar memoria tras auditar cada página
+          cy.window().then((win) => {
+            try {
+              win.document.body.innerHTML = "";
+              win.close?.();
+              cy.task("log", "🧠 Memoria liberada tras auditoría de la página.");
+            } catch {
+              cy.task("log", "⚠️ No se pudo liberar memoria (win).");
+            }
+          });
         })
-        // ⚙️ Reintento automático si hay error de carga
+        // 🔁 Reintento automático si la página falla
         .then(null, (err) => {
           cy.task(
             "log",
-            `⚠️ Error al analizar ${url}: ${err?.message || "sin mensaje de error"}. Reintentando en modo simplificado...`
+            `⚠️ Error al analizar ${url}: ${err?.message || "sin mensaje"}. Reintentando en modo simplificado...`
           );
 
           cy.visit(url, { failOnStatusCode: false, timeout: 120000 })
             .then(() => {
               cy.injectAxe();
+
+              // 📸 Captura también en reintento
+              cy.screenshot(`captura-${slug}-reintento`, {
+                capture: "viewport",
+                overwrite: true,
+              });
+
               cy.checkA11y(
                 "body",
                 null,
@@ -129,15 +150,9 @@ describe("♿ Auditoría de accesibilidad - axe-core (profesional estable)", () 
                       violations,
                       system: "macOS + Chrome (Cypress) + axe-core",
                     });
-                    cy.task(
-                      "log",
-                      `♿ (Reintento) ${url} — ${violations.length} violaciones detectadas tras error`
-                    );
+                    cy.task("log", `♿ (Reintento) ${url} — ${violations.length} violaciones detectadas`);
                   } else {
-                    cy.task(
-                      "log",
-                      `⚠️ (Reintento) ${url} — Página accesible o sin contenido auditable`
-                    );
+                    cy.task("log", `⚠️ (Reintento) ${url} — Sin violaciones detectadas`);
                   }
 
                   cy.wrap(null).should("not.equal", "fail");
@@ -145,7 +160,7 @@ describe("♿ Auditoría de accesibilidad - axe-core (profesional estable)", () 
                 { skipFailures: true }
               );
             })
-            // 🔧 Reemplazo del bloque de “falla definitiva”
+            // 🔧 Limpieza final de errores leves
             .then(null, (finalErr) => {
               if (
                 finalErr?.message?.includes("cannot visit") ||
@@ -166,40 +181,37 @@ describe("♿ Auditoría de accesibilidad - axe-core (profesional estable)", () 
     });
   });
 
+  // 📦 Guardado y resumen final
   after(() => {
-    // 📁 Crear carpeta de resultados con timestamp
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const outputDir = `auditorias/${timestamp}-auditoria`;
-
+    const outputDir = `auditorias/auditoria-sitemap`;
     cy.task("createFolder", outputDir);
 
-    // 🧹 Solo guardar URLs con violaciones reales
     const onlyViolations = allResults.filter(
       (r) => Array.isArray(r.violations) && r.violations.length > 0
     );
 
-    // 💾 Guardar resultados JSON
     cy.task("writeResults", { dir: outputDir, data: onlyViolations }).then(() => {
-      cy.task(
-        "log",
-        `✅ Resultados guardados correctamente en: ${outputDir}/results.json`
-      );
-
-      // 📊 Resumen global
-      const totalViolations = onlyViolations.flatMap((r) => r.violations || []);
-      const counts = {
-        critical: totalViolations.filter((v) => v.impact === "critical").length,
-        serious: totalViolations.filter((v) => v.impact === "serious").length,
-        moderate: totalViolations.filter((v) => v.impact === "moderate").length,
-        minor: totalViolations.filter((v) => v.impact === "minor").length,
-      };
-
-      cy.task(
-        "log",
-        `📊 Resumen global: ${totalViolations.length} violaciones (🔴 ${counts.critical} críticas, 🟠 ${counts.serious} serias, 🟡 ${counts.moderate} moderadas, 🟢 ${counts.minor} menores)`
-      );
+      cy.task("log", `✅ Resultados guardados correctamente en: ${outputDir}/results.json`);
     });
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const archiveDir = `auditorias/${timestamp}-auditoria-sitemap`;
+    cy.task("createFolder", archiveDir);
+    cy.task("writeResults", { dir: archiveDir, data: onlyViolations }).then(() => {
+      cy.task("log", `📦 Copia archivada: ${archiveDir}/results.json`);
+    });
+
+    const totalViolations = onlyViolations.flatMap((r) => r.violations || []);
+    const counts = {
+      critical: totalViolations.filter((v) => v.impact === "critical").length,
+      serious: totalViolations.filter((v) => v.impact === "serious").length,
+      moderate: totalViolations.filter((v) => v.impact === "moderate").length,
+      minor: totalViolations.filter((v) => v.impact === "minor").length,
+    };
+
+    cy.task(
+      "log",
+      `📊 Resumen global (sitemap): ${totalViolations.length} violaciones (🔴 ${counts.critical} críticas, 🟠 ${counts.serious} graves, 🟡 ${counts.moderate} moderadas, 🟢 ${counts.minor} menores)`
+    );
   });
 });
-
-
