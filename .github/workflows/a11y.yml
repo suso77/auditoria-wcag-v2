@@ -11,7 +11,6 @@ on:
   push:
     branches: [ main, master, principal ]
   pull_request:
-  # ⚡ (Opcional) Ejecutar automáticamente cada lunes a las 03:00 UTC
   # schedule:
   #   - cron: "0 3 * * 1"
 
@@ -49,12 +48,12 @@ jobs:
           path: |
             ~/.cache/Cypress
             ~/.cache/puppeteer
-          key: ${{ runner.os }}-a11y-cache-${{ hashFiles('package-lock.json', 'package.json') }}
+          key: ${{ runner.os }}-a11y-${{ hashFiles('package-lock.json', 'cypress.config.js') }}
 
       # 🧹 Limpieza previa
       - name: 🧹 Limpiar resultados antiguos
         run: |
-          mkdir -p auditorias
+          mkdir -p auditorias/capturas
           rm -rf auditorias/* || true
 
       # 3️⃣ Instalar dependencias
@@ -72,12 +71,15 @@ jobs:
           npx cypress verify || (echo "⚠️ Cypress verification fallida, reinstalando..." && npx cypress install)
           echo "::endgroup::"
 
-      # 5️⃣ Rastreo de URLs
-      - name: 🌐 Rastreo de URLs con Puppeteer
+      # 4️⃣.5 Verificación previa de entorno
+      - name: 🧾 Validar entorno base
+        run: node scripts/check-env.cjs
+
+      # 5️⃣ Rastreo de URLs con Puppeteer
+      - name: 🌐 Rastreo de URLs
         run: |
           set -e
-          echo "::group::🌍 Rastreo de URLs"
-          echo "🌍 Iniciando rastreo en $SITE_URL"
+          echo "::group::🌍 Rastreo de URLs en $SITE_URL"
           npm run crawl:js
           if [ ! -s scripts/urls.json ]; then
             echo "❌ No se generó scripts/urls.json. Abortando auditoría."
@@ -92,35 +94,30 @@ jobs:
         continue-on-error: true
         with:
           install-command: npm ci
-          command: npx cypress run --spec "cypress/e2e/accesibilidad-sitemap.cy.js" --browser chrome
+          command: npm run audit:sitemap
         env:
           SITE_URL: ${{ env.SITE_URL }}
 
-      # 7️⃣ Auditoría interactiva (automática según idioma)
+      # 7️⃣ Auditoría interactiva
       - name: 🧠 Auditoría de accesibilidad – Componentes interactivos
         continue-on-error: true
         run: |
-          echo "🧠 Detectando script de auditoría interactiva..."
-          if [ -f "cypress/e2e/accesibilidad-interactiva.cy.js" ]; then
-            echo "🌐 Ejecutando accesibilidad-interactiva.cy.js"
-            npx cypress run --spec "cypress/e2e/accesibilidad-interactiva.cy.js" --browser chrome
-          elif npm run | grep -q "audit:interactiva"; then
-            echo "🌐 Ejecutando auditoría interactiva (modo npm)"
-            npm run audit:interactiva
-          else
-            echo "⚠️ No se encontró script interactivo. Saltando auditoría..."
-          fi
+          echo "🧠 Ejecutando auditoría de componentes interactivos..."
+          npm run audit:interactiva || echo "⚠️ Script de auditoría interactiva no encontrado. Saltando..."
         env:
           SITE_URL: ${{ env.SITE_URL }}
 
-      # 🏷️ Etiquetar resultados
+      # 🏷️ Añadir campo "origen" a resultados
       - name: 🏷️ Añadir campo "origen" a los resultados
-        run: node scripts/tag-origen.cjs
+        run: |
+          mkdir -p auditorias
+          node scripts/tag-origen.cjs
 
       # 8️⃣ Combinar resultados
-      - name: 🧩 Combinar resultados de auditorías
+      - name: 🧩 Combinar resultados
         run: |
           set -e
+          mkdir -p auditorias
           echo "::group::🔄 Combinando resultados de auditorías"
           node scripts/merge-results.mjs
           echo "::endgroup::"
@@ -132,10 +129,10 @@ jobs:
           set -e
           FILE=$(ls auditorias/results-merged-*.json 2>/dev/null | tail -n 1 || true)
           if [ -z "$FILE" ]; then
-            echo "❌ No se encontró results-merged.json, intentando regenerar..."
+            echo "❌ No se encontró results-merged.json. Regenerando..."
             node scripts/merge-results.mjs
           elif [ ! -s "$FILE" ]; then
-            echo "⚠️ Archivo vacío, intentando reparar..."
+            echo "⚠️ Archivo vacío. Intentando reparar..."
             node scripts/merge-results.mjs || true
           else
             echo "✅ Archivo válido detectado: $FILE"
@@ -148,7 +145,7 @@ jobs:
           jq -r '[.[].violations[].impact] | group_by(.) | map({nivel: .[0], total: length})' auditorias/results-merged-*.json || echo "⚠️ jq no disponible o sin datos"
           echo "::endgroup::"
 
-      # 11️⃣ Quality Gate (control de umbrales)
+      # 11️⃣ Quality Gate
       - name: 🚦 Quality Gate – WCAG
         continue-on-error: true
         run: |
@@ -168,7 +165,7 @@ jobs:
           echo "::group::📊 Generando informe profesional IAAP / W3C"
           FILE=$(ls auditorias/results-merged-*.json 2>/dev/null | tail -n 1 || true)
           if [ -z "$FILE" ]; then
-            echo "❌ No se encontró archivo de resultados combinados. Abortando exportación."
+            echo "❌ No se encontró archivo combinado. Abortando exportación."
             exit 1
           fi
           echo "📄 Archivo combinado detectado: $FILE"
@@ -177,6 +174,17 @@ jobs:
           echo "✅ Informe Excel y ZIP generados correctamente."
           echo "📂 Contenido de /auditorias:"
           ls -lh auditorias/ || echo "⚠️ Carpeta no encontrada."
+
+      # 12.5️⃣ Validar informe Excel antes de subir
+      - name: 🔍 Validar informe generado
+        if: always()
+        run: |
+          if [ ! -f auditorias/Informe-WCAG-Profesional.xlsx ]; then
+            echo "❌ No se generó el informe Excel. Abortando subida."
+            exit 1
+          else
+            echo "✅ Informe Excel detectado correctamente."
+          fi
 
       # 13️⃣ Subir artefactos finales
       - name: 📤 Subir artefactos finales
@@ -191,8 +199,8 @@ jobs:
             auditorias/capturas/**/*.png
           retention-days: 30
 
-      # 15️⃣ Resumen final
-      - name: ✅ Resumen de ejecución
+      # 14️⃣ Resumen final
+      - name: ✅ Resumen final de ejecución
         if: always()
         run: |
           echo "==============================================="
