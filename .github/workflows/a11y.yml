@@ -48,7 +48,7 @@ jobs:
           path: |
             ~/.cache/Cypress
             ~/.cache/puppeteer
-          key: ${{ runner.os }}-a11y-${{ hashFiles('package-lock.json', 'cypress.config.js') }}
+          key: ${{ runner.os }}-a11y-${{ hashFiles('package-lock.json', 'cypress.config.*') }}
 
       # 🧹 Limpieza previa
       - name: 🧹 Limpiar resultados antiguos
@@ -74,6 +74,13 @@ jobs:
       # 4️⃣.5 Verificación previa de entorno
       - name: 🧾 Validar entorno base
         run: node scripts/check-env.cjs
+
+      # 🧠 Mostrar entorno detectado (bloque visual en logs)
+      - name: 🧠 Mostrar entorno detectado
+        run: |
+          echo "::group::🧠 Variables de entorno activas"
+          node -p "({ SITE_URL: process.env.SITE_URL, NODE_ENV: process.env.NODE_ENV, CRITICAL_MAX: process.env.CRITICAL_MAX, SERIOUS_MAX: process.env.SERIOUS_MAX, TZ: process.env.TZ })"
+          echo "::endgroup::"
 
       # 5️⃣ Rastreo de URLs con Puppeteer
       - name: 🌐 Rastreo de URLs
