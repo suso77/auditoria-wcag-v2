@@ -37,9 +37,9 @@ jobs:
       - name: ⚙️ Configurar Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: '**/package-lock.json'
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: "**/package-lock.json"
 
       # ✅ 2.1 Cachear dependencias de Cypress y Puppeteer
       - name: 🧠 Cachear dependencias de Cypress y Puppeteer
@@ -74,34 +74,41 @@ jobs:
       # 5️⃣ Rastreo de URLs (Puppeteer)
       - name: 🌐 Rastreo de URLs con Puppeteer
         run: |
+          set -e
           echo "::group::🌍 Rastreo de URLs"
           echo "🌍 Iniciando rastreo de URLs en $SITE_URL"
-          npm run crawl:js || echo "⚠️ Error menor en rastreo (continuamos)..."
-          test -s scripts/urls.json || (echo "❌ No se generó scripts/urls.json" && exit 1)
+          npm run crawl:js
+          if [ ! -s scripts/urls.json ]; then
+            echo "❌ No se generó scripts/urls.json. Abortando auditoría."
+            exit 1
+          fi
           echo "✅ Rastreo completado. Archivo: scripts/urls.json"
           echo "::endgroup::"
 
       # 6️⃣ Auditoría general (Sitemap)
       - name: ♿ Auditoría de accesibilidad – Sitemap
         uses: cypress-io/github-action@v6
+        continue-on-error: true # ⚠️ No romper si hay violaciones WCAG
         with:
           install-command: npm ci
-          command: npm run audit:sitemap || echo "⚠️ Violaciones detectadas (continuamos para informes)..."
+          command: npm run audit:sitemap
         env:
           SITE_URL: ${{ env.SITE_URL }}
 
-      # 7️⃣ Auditoría interactiva (modales, menús, banners)
+      # 7️⃣ Auditoría interactiva (modales, menús, banners, cookies)
       - name: 🧠 Auditoría de accesibilidad – Componentes interactivos
         uses: cypress-io/github-action@v6
+        continue-on-error: true # ⚠️ No romper si hay violaciones WCAG
         with:
           install-command: npm ci
-          command: npm run audit:interactiva || echo "⚠️ Violaciones detectadas (continuamos para informes)..."
+          command: npm run audit:interactive
         env:
           SITE_URL: ${{ env.SITE_URL }}
 
       # 8️⃣ Combinar resultados
       - name: 🧩 Combinar resultados de auditorías
         run: |
+          set -e
           echo "::group::🔄 Combinando resultados de auditorías"
           npm run merge || npm run fix
           echo "::endgroup::"
@@ -110,6 +117,7 @@ jobs:
       # 9️⃣ Validar archivo combinado
       - name: 🔍 Validar archivo combinado
         run: |
+          set -e
           FILE=$(ls auditorias/results-merged-*.json 2>/dev/null | tail -n 1 || true)
           if [ -z "$FILE" ]; then
             echo "❌ No se encontró results-merged.json, intentando regenerar..."
