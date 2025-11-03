@@ -1,20 +1,36 @@
+/**
+ * ♿ Configuración universal de Cypress
+ * Compatible con proyectos ESM ("type": "module") o CommonJS
+ * ----------------------------------------------------------
+ * - Permite usar tanto `import` como `require` en los tests.
+ * - Incluye tareas personalizadas para accesibilidad (carpetas, resultados, logs...).
+ * - Aumenta timeouts para auditorías complejas.
+ * - Totalmente compatible con tu flujo actual de exportación y merge.
+ * ----------------------------------------------------------
+ */
+
 const { defineConfig } = require("cypress");
 const fs = require("fs");
 const path = require("path");
 
 module.exports = defineConfig({
   e2e: {
-    baseUrl: process.env.SITE_URL || "https://example.com",
+    baseUrl: process.env.SITE_URL || "https://www.hiexperience.es",
     video: false,
     screenshotOnRunFailure: true,
+    chromeWebSecurity: false,
+    defaultCommandTimeout: 20000,
+    pageLoadTimeout: 60000,
+    specPattern: "cypress/e2e/**/*.cy.{js,jsx,ts,tsx}",
+    supportFile: "cypress/support/e2e.js",
 
     setupNodeEvents(on, config) {
+      // =====================================================
+      // ✅ LOGS EN CONSOLA (para debug visual en CI/local)
+      // =====================================================
       on("task", {
-        // =====================================================
-        // ✅ LOGS EN CONSOLA
-        // =====================================================
         log(message) {
-          console.log(message);
+          console.log("🧠 [CYPRESS LOG]", message);
           return null;
         },
 
@@ -30,13 +46,12 @@ module.exports = defineConfig({
         },
 
         // =====================================================
-        // ✅ GUARDAR RESULTADOS DE VIOLACIONES AXE
+        // ✅ GUARDAR RESULTADOS DE VIOLACIONES AXE (WCAG)
         // =====================================================
         writeResults({ dir, data }) {
           const filePath = path.join(dir, "results.json");
           let existing = [];
 
-          // Leer archivo previo (si existe)
           if (fs.existsSync(filePath)) {
             try {
               existing = JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -46,7 +61,6 @@ module.exports = defineConfig({
             }
           }
 
-          // Fusionar correctamente (evitar duplicados)
           if (Array.isArray(data)) {
             existing = existing.concat(data);
           } else {
@@ -67,10 +81,10 @@ module.exports = defineConfig({
 
           const files = fs.readdirSync(auditoriasDir);
           for (const file of files) {
-            if (file.includes("auditoria")) {
+            if (file.includes("auditoria") || file.startsWith("results-")) {
               const fullPath = path.join(auditoriasDir, file);
               fs.rmSync(fullPath, { recursive: true, force: true });
-              console.log(`🧹 Carpeta eliminada: ${file}`);
+              console.log(`🧹 Carpeta o archivo eliminado: ${file}`);
             }
           }
           return null;
@@ -89,7 +103,6 @@ module.exports = defineConfig({
           const raw = fs.readFileSync(urlsPath, "utf8");
           const parsed = JSON.parse(raw);
 
-          // 🧠 Validar y limpiar URLs
           const urls = parsed
             .filter((item) => item && item.url)
             .map((item) => ({
@@ -102,7 +115,24 @@ module.exports = defineConfig({
         },
       });
 
+      // Devuelve configuración final a Cypress
       return config;
     },
   },
+
+  // =====================================================
+  // ✅ REPORTER BONITO EN TERMINAL Y CI
+  // =====================================================
+  reporter: "spec",
+  reporterOptions: {
+    toConsole: true,
+  },
+
+  // =====================================================
+  // ✅ VARIABLES DE ENTORNO
+  // =====================================================
+  env: {
+    SITE_URL: process.env.SITE_URL || "https://www.hiexperience.es",
+  },
 });
+

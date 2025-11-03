@@ -1,25 +1,37 @@
 {
   "name": "auditoria-wcag-v2",
-  "version": "1.1.4",
-  "type": "commonjs",
-  "description": "Auditoría de accesibilidad automatizada con Cypress + axe-core + Puppeteer + ExcelJS + GitHub Actions",
+  "version": "1.1.6",
+  "type": "module",
+  "description": "Auditoría de accesibilidad automatizada con Cypress + axe-core + Puppeteer + ExcelJS + GitHub Actions (IAAP/W3C)",
   "scripts": {
     "preaudit": "node -e \"if (!require('fs').existsSync('./scripts/urls.json')) { console.error('❌ No se encontró scripts/urls.json. Ejecuta npm run crawl:js'); process.exit(1) } else { console.log('✅ URLs detectadas, listo para auditar.') }\"",
+
     "crawl": "node crawler/crawl.js",
     "crawl:js": "node crawler/crawl-puppeteer.mjs",
+    "crawl:full": "MAX_DEPTH=5 CRAWL_DELAY=1200 node crawler/crawl-puppeteer.mjs",
+
     "audit:sitemap": "npx cypress run --spec 'cypress/e2e/accesibilidad-sitemap.cy.js' --browser chrome --headless",
-    "audit:interactive": "npx cypress run --spec 'cypress/e2e/accesibilidad-interactiva.cy.js' --browser chrome --headless",
+    "audit:interactiva": "npx cypress run --spec 'cypress/e2e/accesibilidad-interactiva.cy.js' --browser chrome --headless",
+
     "merge": "node scripts/merge-results.cjs",
-    "summary:analyze": "CRITICAL_MAX=5 SERIOUS_MAX=50 npm run summary",
-    "summary": "node scripts/post-merge-summary.cjs",
     "fix": "node scripts/fix-json.cjs",
+
+    "summary": "node scripts/post-merge-summary.cjs",
+    "summary:analyze": "CRITICAL_MAX=5 SERIOUS_MAX=50 npm run summary",
+
     "report": "node scripts/export-to-xlsx.mjs && ls -lh auditorias/",
+    "report:debug": "node --trace-warnings scripts/export-to-xlsx.mjs",
+
     "quality": "node scripts/quality-gate.cjs",
-    "audit:full": "npm run preaudit && npm run crawl:js && npm run audit:sitemap && npm run audit:interactive && npm run merge && npm run summary && npm run report && npm run quality",
+
+    "audit:full": "npm run preaudit && npm run crawl:full && npm run audit:sitemap && npm run audit:interactiva && npm run merge && npm run summary && npm run report && npm run quality",
     "audit:local": "CRITICAL_MAX=9999 SERIOUS_MAX=9999 npm run audit:full",
     "audit:ci": "CRITICAL_MAX=0 SERIOUS_MAX=5 npm run audit:full",
+
     "audit:dev": "npx cypress open --silent",
-    "audit:debug": "npx cypress run --spec 'cypress/e2e/accesibilidad-sitemap.cy.js' --browser chrome --headed"
+    "audit:debug": "npx cypress run --spec 'cypress/e2e/accesibilidad-sitemap.cy.js' --browser chrome --headed",
+
+    "audit:all": "npm run crawl:js && npm run audit:sitemap && npm run audit:interactiva && npm run merge && npm run report"
   },
   "dependencies": {
     "archiver": "^7.0.0",
@@ -48,7 +60,9 @@
     "auditoria",
     "github-actions",
     "automatizacion",
-    "en301549"
+    "en301549",
+    "iaap",
+    "w3c"
   ],
   "repository": {
     "type": "git",
@@ -61,3 +75,4 @@
   "author": "Suso (Ilúmina Media)",
   "license": "MIT"
 }
+

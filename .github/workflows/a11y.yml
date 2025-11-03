@@ -27,6 +27,7 @@ jobs:
       SERIOUS_MAX: 20
       TZ: Europe/Madrid
       NODE_ENV: production
+      NODE_OPTIONS: "--experimental-specifier-resolution=node"
 
     steps:
       # 1️⃣ Clonar repositorio
@@ -88,7 +89,7 @@ jobs:
       # 6️⃣ Auditoría general (Sitemap)
       - name: ♿ Auditoría de accesibilidad – Sitemap
         uses: cypress-io/github-action@v6
-        continue-on-error: true # ⚠️ No romper si hay violaciones WCAG
+        continue-on-error: true
         with:
           install-command: npm ci
           command: npm run audit:sitemap
@@ -98,12 +99,16 @@ jobs:
       # 7️⃣ Auditoría interactiva (modales, menús, banners, cookies)
       - name: 🧠 Auditoría de accesibilidad – Componentes interactivos
         uses: cypress-io/github-action@v6
-        continue-on-error: true # ⚠️ No romper si hay violaciones WCAG
+        continue-on-error: true
         with:
           install-command: npm ci
           command: npm run audit:interactive
         env:
           SITE_URL: ${{ env.SITE_URL }}
+
+      # 🏷️ Etiquetar resultados con origen antes del merge
+      - name: 🏷️ Añadir campo "origen" a los resultados
+        run: node scripts/tag-origen.cjs
 
       # 8️⃣ Combinar resultados
       - name: 🧩 Combinar resultados de auditorías
@@ -129,11 +134,12 @@ jobs:
             echo "✅ Archivo válido detectado: $FILE"
           fi
 
-      # 🔟 Resumen post-merge
-      - name: 🧾 Resumen global de auditoría
+      # 🔟 Resumen rápido de severidades
+      - name: 🧮 Resumen rápido de severidades
         run: |
-          echo "📊 Generando resumen post-merge..."
-          npm run summary || true
+          echo "::group::📊 Resumen de severidades detectadas"
+          jq -r '[.[].violations[].impact] | group_by(.) | map({nivel: .[0], total: length})' auditorias/results-merged-*.json || echo "⚠️ jq no disponible o sin datos"
+          echo "::endgroup::"
 
       # 11️⃣ Control de calidad (Quality Gate)
       - name: 🚦 Quality Gate – WCAG
@@ -147,14 +153,25 @@ jobs:
           echo "==============================================="
         continue-on-error: true
 
-      # 12️⃣ Exportar informe Excel + ZIP
-      - name: 📊 Exportar informe Excel + ZIP
+      # 12️⃣ Exportar informe Excel + ZIP (nuevo exportador profesional)
+      - name: 📊 Exportar informe Excel + ZIP (IAAP / W3C)
         if: always()
         run: |
-          echo "::group::📊 Exportando informe Excel"
-          npm run report || echo "⚠️ Error al generar Excel (continuamos)..."
+          set -e
+          echo "::group::📊 Generando informe profesional IAAP / W3C"
+
+          FILE=$(ls auditorias/results-merged-*.json 2>/dev/null | tail -n 1 || true)
+          if [ -z "$FILE" ]; then
+            echo "❌ No se encontró archivo de resultados combinados. Abortando exportación."
+            exit 1
+          fi
+
+          echo "📄 Archivo combinado detectado: $FILE"
+          echo "⚙️ Ejecutando exportador profesional..."
+          node --experimental-specifier-resolution=node scripts/export-to-xlsx.mjs
+
           echo "::endgroup::"
-          echo "✅ Informe Excel generado correctamente."
+          echo "✅ Informe Excel y ZIP generados correctamente."
           echo "📂 Contenido de /auditorias:"
           ls -lh auditorias/ || echo "⚠️ Carpeta no encontrada."
 
@@ -163,22 +180,13 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Auditoría-WCAG-${{ github.event.inputs.site_url || 'default' }}-${{ github.run_number }}
+          name: "WCAG-Informe-${{ github.run_number }}-${{ github.event.inputs.site_url || 'default' }}"
           path: |
             auditorias/results-merged-*.json
-            auditorias/quality-report.json
             auditorias/Informe-WCAG-Profesional.xlsx
             auditorias/Informe-WCAG.zip
             auditorias/*-evidencias/**
           retention-days: 30
-
-      # 14️⃣ (Opcional) Enviar informe a Make / Google Drive / Notion
-      # - name: 🚀 Subir informe a Google Drive (Make / Zapier)
-      #   if: always()
-      #   run: |
-      #     curl -X POST -H "Content-Type: application/json" \
-      #     -d '{"site":"'"$SITE_URL"'","report_url":"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
-      #     https://hook.integromat.com/${{ secrets.MAKE_WEBHOOK }}
 
       # 15️⃣ Resumen final
       - name: ✅ Resumen de ejecución
@@ -188,6 +196,7 @@ jobs:
           echo "♿ RESUMEN FINAL DE LA AUDITORÍA"
           echo "==============================================="
           echo "🌍 Sitio auditado: $SITE_URL"
-          echo "📊 Resultados combinados + informe Excel generados"
-          echo "🚦 Umbrales Quality Gate: Critical <= $CRITICAL_MAX, Serious <= $SERIOUS_MAX"
+          echo "📊 Resultados combinados + informe Excel profesional generados"
+          echo "🚦 Quality Gate: Critical <= $CRITICAL_MAX, Serious <= $SERIOUS_MAX"
           echo "✅ Pipeline finalizado correctamente."
+

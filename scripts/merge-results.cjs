@@ -1,17 +1,15 @@
 /**
- * 🧩 merge-results.cjs (versión final con resumen automático)
- * ------------------------------------------------------------
+ * 🧩 merge-results.cjs (versión limpia y robusta)
+ * --------------------------------------------------------------
  * Combina resultados de auditorías WCAG:
  *   - Auditoría general (sitemap)
  *   - Auditoría interactiva (modales, menús, banners)
  *
- * ✅ Detección automática del origen según ruta
- * ✅ Normaliza estructura y filtra duplicados
- * ✅ Elimina registros vacíos o corruptos
- * ✅ Acepta campos "url" o "page"
- * ✅ Ordena resultados y muestra estadísticas por origen y severidad
- * ✅ Calcula cobertura total de URLs auditadas
- * ✅ Compatible con Node 20+ y GitHub Actions
+ * ✅ Incluye páginas con errores de carga (errorMessage)
+ * ✅ Elimina URLs sin violaciones reales
+ * ✅ Normaliza estructura y elimina duplicados
+ * ✅ Muestra resumen estadístico por severidad y origen
+ * ✅ Compatible con export-to-xlsx.mjs y Node 20+
  */
 
 const fs = require("fs");
@@ -20,7 +18,7 @@ const path = require("path");
 const ROOT_DIR = process.cwd();
 const AUDITORIAS_DIR = path.join(ROOT_DIR, "auditorias");
 
-// 🔍 Buscar recursivamente results.json (excepto merged)
+// 🔍 Buscar recursivamente results.json (excepto los merged previos)
 function findResultFiles(dir) {
   let results = [];
   const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -64,15 +62,33 @@ for (const file of resultFiles) {
     let origen = "sitemap";
     if (relative.includes("interactiva")) origen = "interactiva";
 
-    // 🧩 Normalizar estructura
     const items = Array.isArray(jsonData) ? jsonData : [jsonData];
+
     items.forEach((item) => {
       if (!item) return;
+
       const url = item.url || item.page;
-      if (!url || !Array.isArray(item.violations)) return;
       item.origen = item.origen || origen;
       item.url = url;
-      mergedResults.push(item);
+
+      // 🔸 Si hay error de carga, incluirlo como violación simbólica
+      if (item.error) {
+        item.violations = [
+          {
+            id: "error-carga",
+            impact: "minor",
+            description:
+              "Error de análisis — No se pudo cargar o auditar el contenido de esta página.",
+            help: item.errorMessage || "Verifica la disponibilidad del sitio o CORS.",
+            nodes: [],
+          },
+        ];
+      }
+
+      // 🧹 Solo guardar si hay violaciones reales (o simbólicas por error)
+      if (url && Array.isArray(item.violations) && item.violations.length > 0) {
+        mergedResults.push(item);
+      }
     });
 
     console.log(`✅ Archivo combinado: ${relative} (${origen})`);
@@ -81,17 +97,7 @@ for (const file of resultFiles) {
   }
 }
 
-// 🧹 Eliminar registros vacíos o corruptos
-mergedResults = mergedResults.filter(
-  (r) => r.url && Array.isArray(r.violations) && r.violations.length > 0
-);
-
-if (mergedResults.length === 0) {
-  console.error("❌ No se encontraron datos válidos para combinar.");
-  process.exit(1);
-}
-
-// 🧽 Deduplicar por URL + ID de violación + origen
+// 🧽 Eliminar duplicados exactos (misma URL + mismo set de violaciones)
 const uniqueResults = mergedResults.filter(
   (item, index, self) =>
     index ===
@@ -99,18 +105,12 @@ const uniqueResults = mergedResults.filter(
       (t) =>
         t.url === item.url &&
         t.origen === item.origen &&
-        t.violations?.map((v) => v.id).join(",") ===
-          item.violations?.map((v) => v.id).join(",")
+        JSON.stringify(t.violations.map((v) => v.id).sort()) ===
+          JSON.stringify(item.violations.map((v) => v.id).sort())
     )
 );
 
-// 🗂️ Ordenar resultados (por origen > URL)
-uniqueResults.sort((a, b) => {
-  if (a.origen === b.origen) return a.url.localeCompare(b.url);
-  return a.origen.localeCompare(b.origen);
-});
-
-// 📊 Estadísticas de severidades y cobertura
+// 📊 Generar estadísticas por origen
 const stats = {
   sitemap: { urls: new Set(), total: 0, critical: 0, serious: 0, moderate: 0, minor: 0 },
   interactiva: { urls: new Set(), total: 0, critical: 0, serious: 0, moderate: 0, minor: 0 },
@@ -129,14 +129,12 @@ uniqueResults.forEach((page) => {
   });
 });
 
-// 🕒 Crear nombre con timestamp
+// 🕒 Crear archivo final con timestamp
 const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 const outputFile = path.join(AUDITORIAS_DIR, `results-merged-${timestamp}.json`);
-
-// 💾 Guardar resultado combinado
 fs.writeFileSync(outputFile, JSON.stringify(uniqueResults, null, 2), "utf8");
 
-// 🧠 Mostrar resumen en consola
+// 🧠 Mostrar resumen
 console.log("===============================================");
 console.log("📊 RESULTADOS COMBINADOS DE AUDITORÍA WCAG");
 console.log(`→ Archivo generado: ${outputFile}`);
@@ -146,7 +144,7 @@ for (const origen of Object.keys(stats)) {
   const s = stats[origen];
   if (s.total === 0) continue;
   console.log(`🔹 ${origen.toUpperCase()}:`);
-  console.log(`   • URLs auditadas: ${s.urls.size}`);
+  console.log(`   • URLs con violaciones: ${s.urls.size}`);
   console.log(`   • Violaciones totales: ${s.total}`);
   console.log(`     - critical: ${s.critical}`);
   console.log(`     - serious: ${s.serious}`);
@@ -158,9 +156,9 @@ for (const origen of Object.keys(stats)) {
 const totalUrls = new Set([...stats.sitemap.urls, ...stats.interactiva.urls]).size;
 const totalViolations = stats.sitemap.total + stats.interactiva.total;
 
-console.log(`🌍 Cobertura total: ${totalUrls} URLs auditadas`);
-console.log(`♿ Violaciones totales: ${totalViolations}`);
-console.log("✅ Combinación finalizada sin errores.");
+console.log(`🌍 Cobertura total: ${totalUrls} URLs con violaciones`);
+console.log(`♿ Violaciones totales combinadas: ${totalViolations}`);
+console.log("✅ Combinación finalizada correctamente.");
 console.log("===============================================");
 
 process.exit(0);
