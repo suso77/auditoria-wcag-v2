@@ -1,0 +1,37 @@
+[
+  {
+    "page": "https://www.hiexperience.es",
+    "selector": "(error)",
+    "date": "2025-11-03T10:39:25.932Z",
+    "origen": "interactiva",
+    "error": true
+  },
+  {
+    "page": "https://www.hiexperience.es/servicios-agencia-ux-ui",
+    "selector": "(error)",
+    "date": "2025-11-03T10:39:29.805Z",
+    "origen": "interactiva",
+    "error": true
+  },
+  {
+    "page": "https://www.hiexperience.es/nosotros",
+    "selector": "(error)",
+    "date": "2025-11-03T10:39:34.233Z",
+    "origen": "interactiva",
+    "error": true
+  },
+  {
+    "page": "https://www.hiexperience.es/proyectos",
+    "selector": "(error)",
+    "date": "2025-11-03T10:39:37.774Z",
+    "origen": "interactiva",
+    "error": true
+  },
+  {
+    "page": "https://www.hiexperience.es/contacto",
+    "selector": "(error)",
+    "date": "2025-11-03T10:39:42.255Z",
+    "origen": "interactiva",
+    "error": true
+  }
+]

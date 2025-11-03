@@ -1,0 +1,42 @@
+[
+  {
+    "page": "https://www.hiexperience.es",
+    "selector": "(error)",
+    "date": "2025-11-03T10:48:21.581Z",
+    "origen": "interactiva",
+    "error": true,
+    "errorMessage": "Error desconocido durante la carga"
+  },
+  {
+    "page": "https://www.hiexperience.es/servicios-agencia-ux-ui",
+    "selector": "(error)",
+    "date": "2025-11-03T10:48:25.461Z",
+    "origen": "interactiva",
+    "error": true,
+    "errorMessage": "Error desconocido durante la carga"
+  },
+  {
+    "page": "https://www.hiexperience.es/nosotros",
+    "selector": "(error)",
+    "date": "2025-11-03T10:48:29.871Z",
+    "origen": "interactiva",
+    "error": true,
+    "errorMessage": "Error desconocido durante la carga"
+  },
+  {
+    "page": "https://www.hiexperience.es/proyectos",
+    "selector": "(error)",
+    "date": "2025-11-03T10:48:33.471Z",
+    "origen": "interactiva",
+    "error": true,
+    "errorMessage": "Error desconocido durante la carga"
+  },
+  {
+    "page": "https://www.hiexperience.es/contacto",
+    "selector": "(error)",
+    "date": "2025-11-03T10:48:38.006Z",
+    "origen": "interactiva",
+    "error": true,
+    "errorMessage": "Error desconocido durante la carga"
+  }
+]

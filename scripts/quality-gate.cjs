@@ -1,10 +1,11 @@
 /**
- * 🚦 quality-gate.cjs (versión CommonJS mejorada)
+ * 🚦 quality-gate.cjs (versión avanzada con resumen por origen)
  * -----------------------------------------------------------------
- * ✅ Busca recursivamente el último results-merged-*.json
- * ✅ Evalúa violaciones críticas y serias contra umbrales
- * ✅ Genera informe JSON + resumen visual para GitHub Actions
- * ✅ 100% compatible con Node.js 20+ y GitHub Actions
+ * ✅ Analiza el último results-merged-*.json
+ * ✅ Calcula violaciones por severidad y origen (sitemap / interactiva)
+ * ✅ Evalúa umbrales configurables vía env (CRITICAL_MAX / SERIOUS_MAX)
+ * ✅ Genera resumen JSON y visual para GitHub Actions
+ * ✅ 100% compatible con Node.js 20+ y CI/CD profesional
  */
 
 const fs = require("fs");
@@ -33,7 +34,7 @@ async function main() {
   }
 
   const mergedFiles = findMergedResults(AUDITORIAS_DIR)
-    .map(f => ({ path: f, time: fs.statSync(f).mtime.getTime() }))
+    .map((f) => ({ path: f, time: fs.statSync(f).mtime.getTime() }))
     .sort((a, b) => b.time - a.time);
 
   if (!mergedFiles.length) {
@@ -57,27 +58,53 @@ async function main() {
     process.exit(1);
   }
 
-  // 📈 Contadores globales
-  const stats = { critical: 0, serious: 0, moderate: 0, minor: 0, total: 0 };
+  // 📈 Contadores globales y por origen
+  const statsGlobal = { critical: 0, serious: 0, moderate: 0, minor: 0, total: 0 };
+  const statsByOrigen = {
+    sitemap: { urls: new Set(), critical: 0, serious: 0, moderate: 0, minor: 0, total: 0 },
+    interactiva: { urls: new Set(), critical: 0, serious: 0, moderate: 0, minor: 0, total: 0 },
+  };
 
   for (const page of data) {
+    const origen = page.origen === "interactiva" ? "interactiva" : "sitemap";
+    statsByOrigen[origen].urls.add(page.url);
+
     for (const v of page.violations || []) {
-      stats.total++;
-      if (v.impact && stats[v.impact] !== undefined) stats[v.impact]++;
+      statsGlobal.total++;
+      statsByOrigen[origen].total++;
+
+      if (v.impact && statsGlobal[v.impact] !== undefined) {
+        statsGlobal[v.impact]++;
+        statsByOrigen[origen][v.impact]++;
+      }
     }
   }
 
-  // 🚦 Mostrar resumen
+  // 🚦 Mostrar resumen global
   console.log("===============================================");
   console.log("🚦 Quality Gate – Auditoría de Accesibilidad");
   console.log("===============================================");
   console.log(`🧾 Archivo analizado: ${path.basename(latestFile)}`);
-  console.log(`🔴 Críticas : ${stats.critical}`);
-  console.log(`🟠 Serias   : ${stats.serious}`);
-  console.log(`🟡 Moderadas: ${stats.moderate}`);
-  console.log(`🟢 Menores  : ${stats.minor}`);
+  console.log(`🔴 Críticas : ${statsGlobal.critical}`);
+  console.log(`🟠 Serias   : ${statsGlobal.serious}`);
+  console.log(`🟡 Moderadas: ${statsGlobal.moderate}`);
+  console.log(`🟢 Menores  : ${statsGlobal.minor}`);
   console.log(`⚙️ Umbrales → Critical <= ${CRITICAL_MAX}, Serious <= ${SERIOUS_MAX}`);
   console.log("===============================================");
+
+  // 📊 Resumen por origen
+  for (const origen of Object.keys(statsByOrigen)) {
+    const s = statsByOrigen[origen];
+    if (s.total === 0) continue;
+    console.log(`🔹 ${origen.toUpperCase()}:`);
+    console.log(`   • URLs auditadas: ${s.urls.size}`);
+    console.log(`   • Violaciones totales: ${s.total}`);
+    console.log(`     - critical: ${s.critical}`);
+    console.log(`     - serious: ${s.serious}`);
+    console.log(`     - moderate: ${s.moderate}`);
+    console.log(`     - minor: ${s.minor}`);
+    console.log("-----------------------------------------------");
+  }
 
   // 🧾 Guardar resumen JSON local
   const summaryJson = path.join(AUDITORIAS_DIR, "quality-report.json");
@@ -86,7 +113,17 @@ async function main() {
     JSON.stringify(
       {
         file: path.basename(latestFile),
-        ...stats,
+        global: statsGlobal,
+        byOrigen: {
+          sitemap: {
+            urls: statsByOrigen.sitemap.urls.size,
+            ...statsByOrigen.sitemap,
+          },
+          interactiva: {
+            urls: statsByOrigen.interactiva.urls.size,
+            ...statsByOrigen.interactiva,
+          },
+        },
         thresholds: { critical: CRITICAL_MAX, serious: SERIOUS_MAX },
         date: new Date().toISOString(),
       },
@@ -99,22 +136,29 @@ async function main() {
   // 🧭 Añadir resumen visual en GitHub Actions
   const summaryPath = process.env.GITHUB_STEP_SUMMARY;
   if (summaryPath) {
-    const summary = `
+    let summary = `
 ## ♿ Informe de Control de Calidad – WCAG
 
+### 📊 Resumen global
 | Severidad | Conteo | Límite | Estado |
 |------------|--------|--------|--------|
-| 🔴 Críticas | ${stats.critical} | ≤ ${CRITICAL_MAX} | ${
-      stats.critical > CRITICAL_MAX ? "❌" : "✅"
+| 🔴 Críticas | ${statsGlobal.critical} | ≤ ${CRITICAL_MAX} | ${
+      statsGlobal.critical > CRITICAL_MAX ? "❌" : "✅"
     } |
-| 🟠 Serias | ${stats.serious} | ≤ ${SERIOUS_MAX} | ${
-      stats.serious > SERIOUS_MAX ? "❌" : "✅"
+| 🟠 Serias | ${statsGlobal.serious} | ≤ ${SERIOUS_MAX} | ${
+      statsGlobal.serious > SERIOUS_MAX ? "❌" : "✅"
     } |
-| 🟡 Moderadas | ${stats.moderate} | — | ℹ️ |
-| 🟢 Menores | ${stats.minor} | — | ℹ️ |
-| 📄 **Total** | **${stats.total}** | — | ✅ |
+| 🟡 Moderadas | ${statsGlobal.moderate} | — | ℹ️ |
+| 🟢 Menores | ${statsGlobal.minor} | — | ℹ️ |
+| 📄 **Total** | **${statsGlobal.total}** | — | ✅ |
 
-📊 **Archivo analizado:** \`${path.basename(latestFile)}\`
+### 🧩 Resultados por origen
+| Origen | URLs | Critical | Serious | Moderate | Minor |
+|--------|------|-----------|----------|-----------|--------|
+| Sitemap | ${statsByOrigen.sitemap.urls.size} | ${statsByOrigen.sitemap.critical} | ${statsByOrigen.sitemap.serious} | ${statsByOrigen.sitemap.moderate} | ${statsByOrigen.sitemap.minor} |
+| Interactiva | ${statsByOrigen.interactiva.urls.size} | ${statsByOrigen.interactiva.critical} | ${statsByOrigen.interactiva.serious} | ${statsByOrigen.interactiva.moderate} | ${statsByOrigen.interactiva.minor} |
+
+📊 **Archivo analizado:** \`${path.basename(latestFile)}\`  
 📅 **Fecha:** ${new Date().toLocaleString("es-ES")}
 `;
     fs.appendFileSync(summaryPath, summary, "utf8");
@@ -123,12 +167,12 @@ async function main() {
 
   // 🚨 Evaluar umbrales
   let exitCode = 0;
-  if (stats.critical > CRITICAL_MAX) {
-    console.error(`❌ Exceso de violaciones críticas (${stats.critical}).`);
+  if (statsGlobal.critical > CRITICAL_MAX) {
+    console.error(`❌ Exceso de violaciones críticas (${statsGlobal.critical}).`);
     exitCode = 1;
   }
-  if (stats.serious > SERIOUS_MAX) {
-    console.error(`❌ Exceso de violaciones serias (${stats.serious}).`);
+  if (statsGlobal.serious > SERIOUS_MAX) {
+    console.error(`❌ Exceso de violaciones serias (${statsGlobal.serious}).`);
     exitCode = 1;
   }
 
@@ -146,4 +190,5 @@ main().catch((err) => {
   console.error("❌ Error en Quality Gate:", err);
   process.exit(1);
 });
+
 

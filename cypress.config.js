@@ -36,6 +36,7 @@ module.exports = defineConfig({
           const filePath = path.join(dir, "results.json");
           let existing = [];
 
+          // Leer archivo previo (si existe)
           if (fs.existsSync(filePath)) {
             try {
               existing = JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -45,8 +46,13 @@ module.exports = defineConfig({
             }
           }
 
-          // Añadir nuevos datos
-          existing.push(data);
+          // Fusionar correctamente (evitar duplicados)
+          if (Array.isArray(data)) {
+            existing = existing.concat(data);
+          } else {
+            existing.push(data);
+          }
+
           fs.writeFileSync(filePath, JSON.stringify(existing, null, 2));
           console.log(`🧩 Resultados guardados en ${filePath}`);
           return null;
@@ -71,7 +77,7 @@ module.exports = defineConfig({
         },
 
         // =====================================================
-        // ✅ NUEVO: LEER URLs DESDE scripts/urls.json (sin usar fs en el navegador)
+        // ✅ LEER URLs DESDE scripts/urls.json
         // =====================================================
         readUrls() {
           const urlsPath = path.join(__dirname, "scripts", "urls.json");
@@ -81,7 +87,15 @@ module.exports = defineConfig({
           }
 
           const raw = fs.readFileSync(urlsPath, "utf8");
-          const urls = JSON.parse(raw);
+          const parsed = JSON.parse(raw);
+
+          // 🧠 Validar y limpiar URLs
+          const urls = parsed
+            .filter((item) => item && item.url)
+            .map((item) => ({
+              url: item.url.trim(),
+              title: item.title?.trim() || "(sin título)",
+            }));
 
           console.log(`🌐 URLs cargadas desde ${urlsPath}: ${urls.length}`);
           return urls;
@@ -92,8 +106,3 @@ module.exports = defineConfig({
     },
   },
 });
-
-
-
-
-
