@@ -51,7 +51,7 @@ jobs:
             ~/.cache/puppeteer
           key: ${{ runner.os }}-a11y-cache-${{ hashFiles('package-lock.json', 'package.json') }}
 
-      # 🧹 Limpieza previa de auditorías antiguas
+      # 🧹 Limpieza previa
       - name: 🧹 Limpiar resultados antiguos
         run: |
           rm -rf auditorias/* || true
@@ -72,12 +72,12 @@ jobs:
           npx cypress verify || (echo "⚠️ Cypress verification fallida, reinstalando..." && npx cypress install)
           echo "::endgroup::"
 
-      # 5️⃣ Rastreo de URLs (Puppeteer)
+      # 5️⃣ Rastreo de URLs
       - name: 🌐 Rastreo de URLs con Puppeteer
         run: |
           set -e
           echo "::group::🌍 Rastreo de URLs"
-          echo "🌍 Iniciando rastreo de URLs en $SITE_URL"
+          echo "🌍 Iniciando rastreo en $SITE_URL"
           npm run crawl:js
           if [ ! -s scripts/urls.json ]; then
             echo "❌ No se generó scripts/urls.json. Abortando auditoría."
@@ -96,17 +96,25 @@ jobs:
         env:
           SITE_URL: ${{ env.SITE_URL }}
 
-      # 7️⃣ Auditoría interactiva (modales, menús, banners, cookies)
+      # 7️⃣ Auditoría interactiva (automática según idioma)
       - name: 🧠 Auditoría de accesibilidad – Componentes interactivos
-        uses: cypress-io/github-action@v6
         continue-on-error: true
-        with:
-          install-command: npm ci
-          command: npm run audit:interactive
+        run: |
+          echo "🧠 Detectando script de auditoría interactiva..."
+          if npm run | grep -q "audit:interactiva"; then
+            echo "🌐 Ejecutando auditoría interactiva (modo español)"
+            npm run audit:interactiva
+          elif npm run | grep -q "audit:interactive"; then
+            echo "🌐 Ejecutando auditoría interactiva (modo inglés)"
+            npm run audit:interactive
+          else
+            echo "⚠️ No se encontró ningún script interactivo (audit:interactiva o audit:interactive)."
+            echo "🟡 Saltando auditoría interactiva..."
+          fi
         env:
           SITE_URL: ${{ env.SITE_URL }}
 
-      # 🏷️ Etiquetar resultados con origen antes del merge
+      # 🏷️ Etiquetar resultados
       - name: 🏷️ Añadir campo "origen" a los resultados
         run: node scripts/tag-origen.cjs
 
@@ -141,7 +149,7 @@ jobs:
           jq -r '[.[].violations[].impact] | group_by(.) | map({nivel: .[0], total: length})' auditorias/results-merged-*.json || echo "⚠️ jq no disponible o sin datos"
           echo "::endgroup::"
 
-      # 11️⃣ Control de calidad (Quality Gate)
+      # 11️⃣ Quality Gate
       - name: 🚦 Quality Gate – WCAG
         run: |
           echo "==============================================="
@@ -153,23 +161,19 @@ jobs:
           echo "==============================================="
         continue-on-error: true
 
-      # 12️⃣ Exportar informe Excel + ZIP (nuevo exportador profesional)
+      # 12️⃣ Exportar informe profesional
       - name: 📊 Exportar informe Excel + ZIP (IAAP / W3C)
         if: always()
         run: |
           set -e
           echo "::group::📊 Generando informe profesional IAAP / W3C"
-
           FILE=$(ls auditorias/results-merged-*.json 2>/dev/null | tail -n 1 || true)
           if [ -z "$FILE" ]; then
             echo "❌ No se encontró archivo de resultados combinados. Abortando exportación."
             exit 1
           fi
-
           echo "📄 Archivo combinado detectado: $FILE"
-          echo "⚙️ Ejecutando exportador profesional..."
           node --experimental-specifier-resolution=node scripts/export-to-xlsx.mjs
-
           echo "::endgroup::"
           echo "✅ Informe Excel y ZIP generados correctamente."
           echo "📂 Contenido de /auditorias:"
@@ -199,4 +203,3 @@ jobs:
           echo "📊 Resultados combinados + informe Excel profesional generados"
           echo "🚦 Quality Gate: Critical <= $CRITICAL_MAX, Serious <= $SERIOUS_MAX"
           echo "✅ Pipeline finalizado correctamente."
-
