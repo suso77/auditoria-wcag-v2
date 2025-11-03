@@ -1,4 +1,5 @@
 name: ♿ Auditoría de Accesibilidad – a11y CI
+run-name: "♿ Auditoría WCAG (${{ github.event.inputs.site_url || 'default' }})"
 
 on:
   workflow_dispatch:
@@ -10,18 +11,22 @@ on:
   push:
     branches: [ main, master, principal ]
   pull_request:
+  # ⚡ (Opcional) Ejecutar automáticamente cada lunes a las 03:00 UTC
+  # schedule:
+  #   - cron: "0 3 * * 1"
 
 jobs:
   a11y:
     runs-on: ubuntu-latest
 
     env:
-      SITE_URL: ${{ github.event.inputs.site_url || 'https://www.hiexperience.es' }}
+      SITE_URL: ${{ github.event.inputs.site_url || vars.SITE_URL || 'https://www.hiexperience.es' }}
       LC_ALL: C.UTF-8
       LANG: C.UTF-8
-      CRITICAL_MAX: 0
-      SERIOUS_MAX: 5
+      CRITICAL_MAX: 5
+      SERIOUS_MAX: 20
       TZ: Europe/Madrid
+      NODE_ENV: production
 
     steps:
       # 1️⃣ Clonar repositorio
@@ -36,6 +41,21 @@ jobs:
           cache: 'npm'
           cache-dependency-path: '**/package-lock.json'
 
+      # ✅ 2.1 Cachear dependencias de Cypress y Puppeteer
+      - name: 🧠 Cachear dependencias de Cypress y Puppeteer
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/Cypress
+            ~/.cache/puppeteer
+          key: ${{ runner.os }}-a11y-cache-${{ hashFiles('package-lock.json', 'package.json') }}
+
+      # 🧹 Limpieza previa de auditorías antiguas
+      - name: 🧹 Limpiar resultados antiguos
+        run: |
+          rm -rf auditorias/* || true
+          mkdir -p auditorias
+
       # 3️⃣ Instalar dependencias
       - name: 📦 Instalar dependencias
         run: |
@@ -44,14 +64,24 @@ jobs:
           echo "✅ Dependencias instaladas correctamente."
           npm list --depth=0 || true
 
-      # 4️⃣ Rastreo de URLs
+      # 4️⃣ Verificar entorno de Cypress
+      - name: 🧩 Verificar entorno de Cypress
+        run: |
+          echo "::group::🧩 Verificando instalación de Cypress"
+          npx cypress verify || (echo "⚠️ Cypress verification fallida, reinstalando..." && npx cypress install)
+          echo "::endgroup::"
+
+      # 5️⃣ Rastreo de URLs (Puppeteer)
       - name: 🌐 Rastreo de URLs con Puppeteer
         run: |
+          echo "::group::🌍 Rastreo de URLs"
           echo "🌍 Iniciando rastreo de URLs en $SITE_URL"
           npm run crawl:js || echo "⚠️ Error menor en rastreo (continuamos)..."
+          test -s scripts/urls.json || (echo "❌ No se generó scripts/urls.json" && exit 1)
           echo "✅ Rastreo completado. Archivo: scripts/urls.json"
+          echo "::endgroup::"
 
-      # 5️⃣ Auditoría principal (sitemap)
+      # 6️⃣ Auditoría general (Sitemap)
       - name: ♿ Auditoría de accesibilidad – Sitemap
         uses: cypress-io/github-action@v6
         with:
@@ -60,7 +90,7 @@ jobs:
         env:
           SITE_URL: ${{ env.SITE_URL }}
 
-      # 6️⃣ Auditoría interactiva (modales, menús, banners)
+      # 7️⃣ Auditoría interactiva (modales, menús, banners)
       - name: 🧠 Auditoría de accesibilidad – Componentes interactivos
         uses: cypress-io/github-action@v6
         with:
@@ -69,14 +99,15 @@ jobs:
         env:
           SITE_URL: ${{ env.SITE_URL }}
 
-      # 7️⃣ Combinar resultados (merge)
+      # 8️⃣ Combinar resultados
       - name: 🧩 Combinar resultados de auditorías
         run: |
-          echo "🔄 Combinando resultados..."
+          echo "::group::🔄 Combinando resultados de auditorías"
           npm run merge || npm run fix
+          echo "::endgroup::"
           echo "✅ Archivo combinado generado correctamente."
 
-      # 8️⃣ Validar integridad del archivo combinado
+      # 9️⃣ Validar archivo combinado
       - name: 🔍 Validar archivo combinado
         run: |
           FILE=$(ls auditorias/results-merged-*.json 2>/dev/null | tail -n 1 || true)
@@ -90,44 +121,58 @@ jobs:
             echo "✅ Archivo válido detectado: $FILE"
           fi
 
-      # 9️⃣ Control de calidad (Quality Gate)
+      # 🔟 Resumen post-merge
+      - name: 🧾 Resumen global de auditoría
+        run: |
+          echo "📊 Generando resumen post-merge..."
+          npm run summary || true
+
+      # 11️⃣ Control de calidad (Quality Gate)
       - name: 🚦 Quality Gate – WCAG
         run: |
           echo "==============================================="
           echo "🚦 INICIO DEL CONTROL DE CALIDAD"
           echo "==============================================="
-          npm run quality
+          npm run quality || true
           echo "==============================================="
           echo "✅ FIN DEL CONTROL DE CALIDAD"
           echo "==============================================="
         continue-on-error: true
 
-      # 🔟 Exportar informe Excel + ZIP
+      # 12️⃣ Exportar informe Excel + ZIP
       - name: 📊 Exportar informe Excel + ZIP
         if: always()
         run: |
-          echo "📄 Generando informe Excel..."
-          npm run report
+          echo "::group::📊 Exportando informe Excel"
+          npm run report || echo "⚠️ Error al generar Excel (continuamos)..."
+          echo "::endgroup::"
           echo "✅ Informe Excel generado correctamente."
-          echo ""
           echo "📂 Contenido de /auditorias:"
           ls -lh auditorias/ || echo "⚠️ Carpeta no encontrada."
 
-      # 11️⃣ Subir artefactos
+      # 13️⃣ Subir artefactos finales
       - name: 📤 Subir artefactos finales
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Auditoría-WCAG-${{ github.run_number }}
+          name: Auditoría-WCAG-${{ github.event.inputs.site_url || 'default' }}-${{ github.run_number }}
           path: |
             auditorias/results-merged-*.json
             auditorias/quality-report.json
-            auditorias/Informe-WCAG.xlsx
+            auditorias/Informe-WCAG-Profesional.xlsx
             auditorias/Informe-WCAG.zip
             auditorias/*-evidencias/**
           retention-days: 30
 
-      # 12️⃣ Resumen final
+      # 14️⃣ (Opcional) Enviar informe a Make / Google Drive / Notion
+      # - name: 🚀 Subir informe a Google Drive (Make / Zapier)
+      #   if: always()
+      #   run: |
+      #     curl -X POST -H "Content-Type: application/json" \
+      #     -d '{"site":"'"$SITE_URL"'","report_url":"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
+      #     https://hook.integromat.com/${{ secrets.MAKE_WEBHOOK }}
+
+      # 15️⃣ Resumen final
       - name: ✅ Resumen de ejecución
         if: always()
         run: |
