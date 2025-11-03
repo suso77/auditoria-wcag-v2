@@ -95,7 +95,7 @@ jobs:
         uses: cypress-io/github-action@v6
         with:
           install-command: npm ci
-          command: npm run audit:interactive || echo "⚠️ Violaciones detectadas (continuamos para informes)..."
+          command: npm run audit:interactiva || echo "⚠️ Violaciones detectadas (continuamos para informes)..."
         env:
           SITE_URL: ${{ env.SITE_URL }}
 
