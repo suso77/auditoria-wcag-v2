@@ -8,10 +8,14 @@
     "crawl": "node crawler/crawl.js",
     "crawl:js": "node crawler/crawl-puppeteer.mjs",
     "crawl:full": "MAX_DEPTH=5 CRAWL_DELAY=1200 node crawler/crawl-puppeteer.mjs",
+
+    "validate:urls": "ts-node scripts/validate-urls.ts",
+
     "audit:sitemap": "cypress run --spec cypress/e2e/accesibilidad-sitemap.cy.js --browser chrome --headless",
     "audit:interactiva": "cypress run --spec cypress/e2e/accesibilidad-interactiva.cy.js --browser chrome --headless",
     "audit:dev": "cypress open --browser chrome",
     "audit:debug": "cypress run --spec cypress/e2e/accesibilidad-sitemap.cy.js --browser chrome --headed",
+
     "merge": "node scripts/merge-results.mjs",
     "fix": "node scripts/fix-json.cjs",
     "summary": "node scripts/post-merge-summary.cjs",
@@ -19,8 +23,9 @@
     "report": "node --experimental-specifier-resolution=node scripts/export-to-xlsx.mjs && ls -lh auditorias/",
     "report:debug": "node --trace-warnings scripts/export-to-xlsx.mjs",
     "quality": "node scripts/quality-gate.cjs",
-    "audit:all": "npm run crawl:js && npm run audit:sitemap && npm run audit:interactiva && npm run merge && npm run report",
-    "audit:full": "npm run preaudit && npm run crawl:full && npm run audit:sitemap && npm run audit:interactiva && npm run merge && npm run summary && npm run report && npm run quality",
+
+    "audit:all": "npm run validate:urls && npm run crawl:js && npm run audit:sitemap && npm run audit:interactiva && npm run merge && npm run report",
+    "audit:full": "npm run preaudit && npm run crawl:full && npm run validate:urls && npm run audit:sitemap && npm run audit:interactiva && npm run merge && npm run summary && npm run report && npm run quality",
     "audit:local": "CRITICAL_MAX=9999 SERIOUS_MAX=9999 npm run audit:full",
     "audit:ci": "CRITICAL_MAX=0 SERIOUS_MAX=5 npm run audit:full"
   },
@@ -37,6 +42,10 @@
     "fs-extra": "^11.2.0",
     "open": "^10.2.0",
     "puppeteer": "^23.6.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "ts-node": "^10.9.2"
   },
   "engines": {
     "node": ">=20"
@@ -66,6 +75,8 @@
   "author": "Suso (Ilúmina Media)",
   "license": "MIT"
 }
+
+
 
 
 

@@ -1,11 +1,10 @@
 /**
- * ♿ Configuración universal de Cypress (versión profesional optimizada)
+ * ♿ Configuración universal de Cypress (versión profesional completa)
  * --------------------------------------------------------------------
- * - Totalmente compatible con el flujo de auditorías WCAG + capturas + exportación XLSX.
- * - Guarda automáticamente capturas en /auditorias/capturas.
- * - Limpia auditorías y capturas antiguas antes de ejecutar.
- * - Define tareas personalizadas para lectura de URLs, escritura de resultados, logs, etc.
- * - Optimizada para Chrome Headless y auditorías largas.
+ * - Compatible con flujo de auditorías WCAG + capturas + exportación XLSX.
+ * - Crea y limpia automáticamente carpetas de auditorías.
+ * - Incluye tareas personalizadas para lectura, escritura y logs.
+ * - Optimizada para CI/CD (GitHub Actions) y auditorías largas.
  * --------------------------------------------------------------------
  */
 
@@ -23,15 +22,15 @@ module.exports = defineConfig({
     screenshotsFolder: "auditorias/capturas",
     screenshotOnRunFailure: true,
 
-    // 🎥 Videos opcionales (recomendado desactivar para evitar crashes)
+    // 🎥 Desactivar vídeos para auditorías CI (más estabilidad)
     video: false,
 
-    // ⚙️ Estabilidad y rendimiento
+    // ⚙️ Configuración de tiempo y rendimiento
     chromeWebSecurity: false,
     defaultCommandTimeout: 20000,
     pageLoadTimeout: 90000,
-    requestTimeout: 15000,
-    responseTimeout: 15000,
+    requestTimeout: 20000,
+    responseTimeout: 20000,
     viewportWidth: 1366,
     viewportHeight: 768,
     retries: { runMode: 1, openMode: 0 },
@@ -40,60 +39,58 @@ module.exports = defineConfig({
       // =====================================================
       // 🧩 TAREAS PERSONALIZADAS WCAG
       // =====================================================
-      on("task", {
-        log(message) {
-          console.log("🧠 [CYPRESS LOG]", message);
-          return null;
-        },
 
-        // 📁 Crear carpetas de salida
-        createFolder(dirPath) {
-          fs.mkdirpSync(dirPath);
-          console.log(`📁 Carpeta creada: ${dirPath}`);
-          return null;
-        },
+      /**
+       * 📄 Función auxiliar: crear carpeta si no existe
+       */
+      function ensureDir(dirPath) {
+        if (!fs.existsSync(dirPath)) {
+          fs.mkdirSync(dirPath, { recursive: true });
+        }
+      }
 
-        // 🧾 Guardar resultados de violaciones Axe/WCAG
-        writeResults({ dir, data }) {
-          const filePath = path.join(dir, "results.json");
-          let existing = [];
+      /**
+       * 🧹 Limpiar capturas previas
+       */
+      function clearCaptures() {
+        const dir = path.join(__dirname, "auditorias", "capturas");
+        try {
+          fs.emptyDirSync(dir);
+          console.log("🧹 Capturas anteriores eliminadas correctamente.");
+        } catch (err) {
+          console.warn("⚠️ Error al limpiar capturas:", err.message);
+        }
+        return null;
+      }
 
-          if (fs.existsSync(filePath)) {
-            try {
-              existing = JSON.parse(fs.readFileSync(filePath, "utf8"));
-            } catch {
-              console.warn(`⚠️ Archivo JSON corrupto: ${filePath}, se recreará.`);
-            }
+      /**
+       * 🧹 Limpiar resultados antiguos
+       */
+      function cleanOldResults() {
+        const auditoriasDir = path.join(__dirname, "auditorias");
+        if (!fs.existsSync(auditoriasDir)) return null;
+
+        const files = fs.readdirSync(auditoriasDir);
+        for (const file of files) {
+          if (file.startsWith("results-") || file.includes("auditoria")) {
+            fs.rmSync(path.join(auditoriasDir, file), { recursive: true, force: true });
+            console.log(`🧹 Eliminado archivo antiguo: ${file}`);
           }
+        }
+        return null;
+      }
 
-          if (Array.isArray(data)) existing = existing.concat(data);
-          else existing.push(data);
+      /**
+       * 🌐 Leer URLs desde scripts/urls.json
+       */
+      function readUrls() {
+        const urlsPath = path.join(__dirname, "scripts", "urls.json");
+        if (!fs.existsSync(urlsPath)) {
+          console.warn("⚠️ No se encontró scripts/urls.json — se devolverá vacío.");
+          return [];
+        }
 
-          fs.writeFileSync(filePath, JSON.stringify(existing, null, 2));
-          console.log(`🧩 Resultados guardados en ${filePath}`);
-          return null;
-        },
-
-        // 🧹 Limpiar resultados antiguos
-        cleanOldResults() {
-          const auditoriasDir = path.join(__dirname, "auditorias");
-          if (!fs.existsSync(auditoriasDir)) return null;
-
-          const files = fs.readdirSync(auditoriasDir);
-          for (const file of files) {
-            if (file.includes("auditoria") || file.startsWith("results-")) {
-              fs.rmSync(path.join(auditoriasDir, file), { recursive: true, force: true });
-              console.log(`🧹 Eliminado: ${file}`);
-            }
-          }
-          return null;
-        },
-
-        // 🌐 Leer URLs desde scripts/urls.json
-        readUrls() {
-          const urlsPath = path.join(__dirname, "scripts", "urls.json");
-          if (!fs.existsSync(urlsPath)) throw new Error(`❌ No se encontró ${urlsPath}`);
-
+        try {
           const raw = fs.readFileSync(urlsPath, "utf8");
           const parsed = JSON.parse(raw);
 
@@ -104,18 +101,66 @@ module.exports = defineConfig({
               title: u.title?.trim() || "(sin título)",
             }));
 
-          console.log(`🌐 URLs cargadas (${urls.length}) desde ${urlsPath}`);
+          console.log(`🌍 URLs cargadas (${urls.length}) desde ${urlsPath}`);
           return urls;
-        },
+        } catch (err) {
+          console.error("❌ Error leyendo scripts/urls.json:", err.message);
+          return [];
+        }
+      }
 
-        // 🧹 Limpiar capturas anteriores
-        clearCaptures() {
-          const capturesDir = path.join(__dirname, "auditorias", "capturas");
-          fs.rmSync(capturesDir, { recursive: true, force: true });
-          fs.mkdirpSync(capturesDir);
-          console.log("🧹 Capturas anteriores eliminadas");
-          return null;
-        },
+      /**
+       * 💾 Guardar resultados JSON
+       */
+      function writeResults({ dir, data }) {
+        ensureDir(dir);
+        const filePath = path.join(dir, "results.json");
+
+        try {
+          let existing = [];
+          if (fs.existsSync(filePath)) {
+            existing = JSON.parse(fs.readFileSync(filePath, "utf8"));
+          }
+
+          if (Array.isArray(data)) existing = existing.concat(data);
+          else existing.push(data);
+
+          fs.writeFileSync(filePath, JSON.stringify(existing, null, 2));
+          console.log(`💾 Resultados guardados: ${filePath}`);
+        } catch (err) {
+          console.error("❌ Error al guardar resultados:", err.message);
+        }
+        return null;
+      }
+
+      /**
+       * 🪵 Log seguro para CI
+       */
+      function safeLog(message) {
+        const text = typeof message === "string" ? message : JSON.stringify(message);
+        console.log(`🧭 ${text}`);
+        return null;
+      }
+
+      /**
+       * 📁 Crear carpeta recursiva
+       */
+      function createFolder(dir) {
+        ensureDir(dir);
+        console.log(`📁 Carpeta creada/verificada: ${dir}`);
+        return null;
+      }
+
+      // ============================
+      // Registrar todas las tareas
+      // ============================
+      on("task", {
+        log: safeLog,
+        clearCaptures,
+        cleanOldResults,
+        readUrls,
+        writeResults,
+        createFolder,
       });
 
       return config;

@@ -75,6 +75,11 @@ jobs:
           echo "✅ Dependencias instaladas correctamente."
           npm list --depth=0 || true
 
+      # 3️⃣.1 Verificar instalación de ts-node (para TypeScript)
+      - name: 🧩 Verificar ts-node
+        run: |
+          npx ts-node --version || npm install ts-node typescript --no-save
+
       # 4️⃣ Verificar entorno de Cypress
       - name: 🧩 Verificar entorno de Cypress
         run: |
@@ -97,7 +102,7 @@ jobs:
       - name: 🔍 Validar listado de URLs inicial
         run: |
           echo "::group::🔍 Validando scripts/urls.json"
-          npm run validate:urls || echo "⚠️ No existe aún scripts/urls.json (se generará en el siguiente paso)"
+          npx ts-node scripts/validate-urls.ts || echo "⚠️ No existe aún scripts/urls.json (se generará en el siguiente paso)"
           echo "::endgroup::"
 
       # 6️⃣ Rastreo de URLs con Puppeteer
@@ -110,13 +115,13 @@ jobs:
             echo "❌ No se generó scripts/urls.json. Abortando auditoría."
             exit 1
           fi
-          npm run validate:urls
+          npx ts-node scripts/validate-urls.ts
           echo "✅ Rastreo completado y URLs validadas."
           echo "::endgroup::"
 
       # 🧩 Validación final antes de auditorías
       - name: 🔁 Validar URLs antes de auditorías
-        run: npm run validate:urls
+        run: npx ts-node scripts/validate-urls.ts
 
       # 7️⃣ Auditoría general (Sitemap)
       - name: ♿ Auditoría de accesibilidad – Sitemap
@@ -125,7 +130,7 @@ jobs:
         with:
           install-command: npm ci
           command: |
-            npm run validate:urls
+            npx ts-node scripts/validate-urls.ts
             npm run audit:sitemap
         env:
           SITE_URL: ${{ env.SITE_URL }}
@@ -134,7 +139,7 @@ jobs:
       - name: 🧠 Auditoría de accesibilidad – Componentes interactivos
         continue-on-error: true
         run: |
-          npm run validate:urls
+          npx ts-node scripts/validate-urls.ts
           npm run audit:interactiva || echo "⚠️ Script de auditoría interactiva no encontrado. Saltando..."
         env:
           SITE_URL: ${{ env.SITE_URL }}
@@ -151,7 +156,7 @@ jobs:
           set -e
           mkdir -p auditorias
           echo "::group::🔄 Combinando resultados de auditorías"
-          node scripts/merge-results.cjs || node scripts/merge-results.mjs
+          node scripts/merge-results.mjs
           echo "::endgroup::"
           echo "✅ Archivo combinado generado correctamente."
 
@@ -162,10 +167,10 @@ jobs:
           FILE=$(ls auditorias/results-merged-*.json 2>/dev/null | tail -n 1 || true)
           if [ -z "$FILE" ]; then
             echo "❌ No se encontró results-merged.json. Regenerando..."
-            node scripts/merge-results.cjs || node scripts/merge-results.mjs
+            node scripts/merge-results.mjs
           elif [ ! -s "$FILE" ]; then
             echo "⚠️ Archivo vacío. Intentando reparar..."
-            node scripts/merge-results.cjs || node scripts/merge-results.mjs || true
+            node scripts/merge-results.mjs || true
           else
             echo "✅ Archivo válido detectado: $FILE"
           fi
@@ -174,7 +179,11 @@ jobs:
       - name: 🧮 Resumen rápido de severidades
         run: |
           echo "::group::📊 Resumen de severidades detectadas"
-          jq -r '[.[].violations[].impact] | group_by(.) | map({nivel: .[0], total: length})' auditorias/results-merged-*.json || echo "⚠️ jq no disponible o sin datos"
+          if command -v jq >/dev/null 2>&1; then
+            jq -r '[.[].violations[].impact] | group_by(.) | map({nivel: .[0], total: length})' auditorias/results-merged-*.json || echo "⚠️ jq no disponible o sin datos"
+          else
+            echo "⚠️ jq no instalado, omitiendo resumen rápido"
+          fi
           echo "::endgroup::"
 
       # 12️⃣ Quality Gate
@@ -194,6 +203,7 @@ jobs:
         if: always()
         run: |
           set -e
+          mkdir -p auditorias
           echo "::group::📊 Generando informe profesional IAAP / W3C"
           FILE=$(ls auditorias/results-merged-*.json 2>/dev/null | tail -n 1 || true)
           if [ -z "$FILE" ]; then

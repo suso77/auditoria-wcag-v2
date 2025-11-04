@@ -7,8 +7,8 @@ import "cypress-axe";
  * - Carga URLs desde scripts/urls.json (crawler).
  * - Audita componentes interactivos (acordeones, menús, modales...).
  * - Omitir componentes globales (header, cookies, footer) tras la primera URL.
- * - Reintenta en modo simplificado si hay bloqueos.
- * - Guarda capturas por página y capturas por componente con violaciones.
+ * - Guarda capturas por página, componente y violación detectada.
+ * - Reintenta páginas fallidas en modo simplificado.
  * - Libera memoria entre URLs para evitar OOM.
  * - Compatible con merge y exportación a Excel/ZIP.
  */
@@ -56,8 +56,11 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (profesio
         .then(() => {
           cy.injectAxe();
 
-          // 📸 Captura completa de la página antes de auditar
-          cy.screenshot(`captura-${slug}`, { capture: "viewport", overwrite: true });
+          // 📸 Captura general inicial
+          cy.screenshot(`auditorias/capturas/${slug}/pagina`, {
+            capture: "viewport",
+            overwrite: true,
+          });
 
           // 🎯 Selectores base
           let selectors = [
@@ -125,17 +128,28 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (profesio
                       }
                     }
 
+                    // ♿ Auditoría de accesibilidad del componente
                     cy.checkA11y(
                       selector,
                       null,
                       (violations) => {
                         const dateNow = new Date().toISOString();
+                        const safeSel = selector.replace(/[^\w-]/g, "_");
 
                         if (violations.length > 0) {
-                          const safeName = selector.replace(/[^\w-]/g, "_");
-                          cy.screenshot(`interactivo-${slug}-${safeName}-a11y`, {
+                          // 📸 Captura general del componente
+                          cy.screenshot(`auditorias/capturas/${slug}/${safeSel}/componente`, {
                             capture: "viewport",
                             overwrite: true,
+                          });
+
+                          // 📸 Capturas individuales por cada violación
+                          violations.forEach((v, i) => {
+                            const id = v.id || `violacion-${i}`;
+                            cy.screenshot(`auditorias/capturas/${slug}/${safeSel}/${id}`, {
+                              capture: "viewport",
+                              overwrite: true,
+                            });
                           });
 
                           allResults.push({
@@ -194,7 +208,10 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (profesio
               cy.injectAxe();
 
               // 📸 Captura en modo simplificado también
-              cy.screenshot(`captura-${slug}-reintento`, { capture: "viewport", overwrite: true });
+              cy.screenshot(`auditorias/capturas/${slug}/reintento`, {
+                capture: "viewport",
+                overwrite: true,
+              });
 
               cy.checkA11y(
                 "body",
@@ -211,6 +228,16 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (profesio
                       violations,
                       system: "macOS + Chrome (Cypress) + axe-core",
                     });
+
+                    // 📸 Capturas por violación (reintento)
+                    violations.forEach((v, i) => {
+                      const id = v.id || `violacion-${i}`;
+                      cy.screenshot(`auditorias/capturas/${slug}/reintento-${id}`, {
+                        capture: "viewport",
+                        overwrite: true,
+                      });
+                    });
+
                     cy.task("log", `♿ (Reintento) ${page} — ${violations.length} violaciones detectadas`);
                   } else {
                     cy.task("log", `⚠️ (Reintento) ${page} — Sin violaciones detectadas`);
@@ -265,3 +292,4 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (profesio
     );
   });
 });
+

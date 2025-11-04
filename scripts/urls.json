@@ -153,23 +153,33 @@
   },
   {
     "url": "https://www.hiexperience.es/estrategia-ux",
-    "title": "Hi Experience - Agencia de diseño UX en Barcelona"
+    "title": "(error de carga)",
+    "error": true,
+    "errorMessage": "No se pudo cargar la página después de 2 intentos."
   },
   {
     "url": "https://www.hiexperience.es/ux-ui-design",
-    "title": "Hi Experience - Agencia de diseño UX en Barcelona"
+    "title": "(error de carga)",
+    "error": true,
+    "errorMessage": "No se pudo cargar la página después de 2 intentos."
   },
   {
     "url": "https://www.hiexperience.es/cro-behavioral-design",
-    "title": "Hi Experience - Agencia de diseño UX en Barcelona"
+    "title": "(error de carga)",
+    "error": true,
+    "errorMessage": "No se pudo cargar la página después de 2 intentos."
   },
   {
     "url": "https://www.hiexperience.es/ux-talent",
-    "title": "Hi Experience - Agencia de diseño UX en Barcelona"
+    "title": "(error de carga)",
+    "error": true,
+    "errorMessage": "No se pudo cargar la página después de 2 intentos."
   },
   {
     "url": "https://www.hiexperience.es/tecnologia",
-    "title": "Hi Experience - Agencia de diseño UX en Barcelona"
+    "title": "(error de carga)",
+    "error": true,
+    "errorMessage": "No se pudo cargar la página después de 2 intentos."
   },
   {
     "url": "https://www.hiexperience.es/simon-electric",
@@ -240,6 +250,10 @@
     "title": "HUG #9 — Accesibilidad digital. Creando experiencias de usuario accesibles — Hi Experience"
   },
   {
+    "url": "https://www.hiexperience.es/podcast-hug/design-ops",
+    "title": "HUG #8 — DesignOps. De cero a uno — Hi Experience"
+  },
+  {
     "url": "https://www.hiexperience.es/podcast-hug/design-systems-design-ops",
     "title": "HUG #7 — Design Systems: De la visión estratégica al día a día — Hi Experience"
   },
@@ -288,10 +302,6 @@
     "title": "DesignOps — Blog sobre UX, Accesibilidad Web y Producto Digital - Hi Experience"
   },
   {
-    "url": "https://www.hiexperience.es/search",
-    "title": "Hi Experience - Agencia de diseño UX en Barcelona"
-  },
-  {
     "url": "https://www.hiexperience.es/blog/accesibilidad-digital-hoja-de-ruta",
     "title": "Accesibilidad digital: Hoja de ruta para diseñar productos y servicios inclusivos — Hi Experience"
   },
@@ -309,18 +319,26 @@
   },
   {
     "url": "https://www.hiexperience.es/hug/metaverso",
-    "title": "Hi Experience - Agencia de diseño UX en Barcelona"
+    "title": "(error de carga)",
+    "error": true,
+    "errorMessage": "No se pudo cargar la página después de 2 intentos."
   },
   {
     "url": "https://www.hiexperience.es/hug/narrativa-digital",
-    "title": "Hi Experience - Agencia de diseño UX en Barcelona"
+    "title": "(error de carga)",
+    "error": true,
+    "errorMessage": "No se pudo cargar la página después de 2 intentos."
   },
   {
     "url": "https://www.hiexperience.es/hug/economia-circular",
-    "title": "Hi Experience - Agencia de diseño UX en Barcelona"
+    "title": "(error de carga)",
+    "error": true,
+    "errorMessage": "No se pudo cargar la página después de 2 intentos."
   },
   {
     "url": "https://www.hiexperience.es/hug/hug-design-systems-ops",
-    "title": "Hi Experience - Agencia de diseño UX en Barcelona"
+    "title": "(error de carga)",
+    "error": true,
+    "errorMessage": "No se pudo cargar la página después de 2 intentos."
   }
 ]

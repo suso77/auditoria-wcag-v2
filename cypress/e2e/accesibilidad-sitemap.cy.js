@@ -6,11 +6,10 @@ import "cypress-axe";
  * -------------------------------------------------------------------------
  * - Audita todas las URLs HTML listadas en scripts/urls.json.
  * - Ignora recursos no HTML (PDF, imágenes, etc.).
- * - Guarda capturas por página y en reintentos.
- * - Detecta y guarda TODAS las violaciones (sin bloquear la ejecución).
+ * - Guarda capturas por página y por violación (evidencias visuales).
  * - Reintenta páginas fallidas en modo simplificado.
  * - Libera memoria tras cada auditoría de URL (evita OOM).
- * - Totalmente compatible con merge y exportación profesional.
+ * - Compatible con merge-results.mjs y exportación profesional.
  */
 
 describe("♿ Auditoría de accesibilidad – Sitemap completo (profesional con capturas)", () => {
@@ -67,10 +66,13 @@ describe("♿ Auditoría de accesibilidad – Sitemap completo (profesional con 
           cy.wait(1000);
           cy.injectAxe();
 
-          // 📸 Captura de pantalla general antes de la auditoría
-          cy.screenshot(`captura-${slug}`, { capture: "viewport", overwrite: true });
+          // 📸 Captura general inicial
+          cy.screenshot(`auditorias/capturas/${slug}/pagina`, {
+            capture: "viewport",
+            overwrite: true,
+          });
 
-          // ♿ Auditoría principal
+          // ♿ Auditoría principal con capturas de violaciones
           cy.checkA11y(
             null,
             null,
@@ -85,6 +87,15 @@ describe("♿ Auditoría de accesibilidad – Sitemap completo (profesional con 
                   origen: "sitemap",
                   violations,
                   system: "macOS + Chrome (Cypress) + axe-core",
+                });
+
+                // 📸 Captura por cada violación detectada
+                violations.forEach((v, i) => {
+                  const id = v.id || `violacion-${i}`;
+                  cy.screenshot(`auditorias/capturas/${slug}/${id}`, {
+                    capture: "viewport",
+                    overwrite: true,
+                  });
                 });
 
                 const counts = {
@@ -130,7 +141,7 @@ describe("♿ Auditoría de accesibilidad – Sitemap completo (profesional con 
               cy.injectAxe();
 
               // 📸 Captura también en reintento
-              cy.screenshot(`captura-${slug}-reintento`, {
+              cy.screenshot(`auditorias/capturas/${slug}/reintento`, {
                 capture: "viewport",
                 overwrite: true,
               });
@@ -150,6 +161,16 @@ describe("♿ Auditoría de accesibilidad – Sitemap completo (profesional con 
                       violations,
                       system: "macOS + Chrome (Cypress) + axe-core",
                     });
+
+                    // 📸 Captura por cada violación detectada (en reintento)
+                    violations.forEach((v, i) => {
+                      const id = v.id || `violacion-${i}`;
+                      cy.screenshot(`auditorias/capturas/${slug}/reintento-${id}`, {
+                        capture: "viewport",
+                        overwrite: true,
+                      });
+                    });
+
                     cy.task("log", `♿ (Reintento) ${url} — ${violations.length} violaciones detectadas`);
                   } else {
                     cy.task("log", `⚠️ (Reintento) ${url} — Sin violaciones detectadas`);
@@ -215,3 +236,4 @@ describe("♿ Auditoría de accesibilidad – Sitemap completo (profesional con 
     );
   });
 });
+
