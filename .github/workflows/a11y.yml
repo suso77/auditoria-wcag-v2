@@ -12,7 +12,7 @@ on:
     branches: [ main, master, principal ]
   pull_request:
   # schedule:
-  #   - cron: "0 3 * * 1"
+  #   - cron: "0 3 * * 1"  # (opcional) ejecución semanal automática
 
 jobs:
   a11y:
@@ -27,6 +27,15 @@ jobs:
       TZ: Europe/Madrid
       NODE_ENV: production
       NODE_OPTIONS: "--max-old-space-size=4096 --experimental-specifier-resolution=node"
+
+      # 🧩 Compatibilidad con ts-node / TypeScript
+      TS_NODE_TRANSPILE_ONLY: true
+      TS_NODE_PROJECT: tsconfig.json
+
+      # 📸 Configuración de Cypress para evidencias automáticas
+      CYPRESS_screenshotsFolder: auditorias/capturas
+      CYPRESS_video: false
+      CYPRESS_screenshotOnRunFailure: true
 
     steps:
       # 1️⃣ Clonar repositorio
@@ -61,6 +70,8 @@ jobs:
         run: |
           echo "📦 Instalando dependencias..."
           npm ci || npm install
+          mkdir -p scripts
+          if [ ! -f scripts/urls.json ]; then echo "[]" > scripts/urls.json; fi
           echo "✅ Dependencias instaladas correctamente."
           npm list --depth=0 || true
 
@@ -75,14 +86,21 @@ jobs:
       - name: 🧾 Validar entorno base
         run: node scripts/check-env.cjs
 
-      # 🧠 Mostrar entorno detectado (bloque visual en logs)
+      # 🧠 Mostrar entorno detectado
       - name: 🧠 Mostrar entorno detectado
         run: |
           echo "::group::🧠 Variables de entorno activas"
           node -p "({ SITE_URL: process.env.SITE_URL, NODE_ENV: process.env.NODE_ENV, CRITICAL_MAX: process.env.CRITICAL_MAX, SERIOUS_MAX: process.env.SERIOUS_MAX, TZ: process.env.TZ })"
           echo "::endgroup::"
 
-      # 5️⃣ Rastreo de URLs con Puppeteer
+      # 5️⃣ Validar URLs antes del rastreo
+      - name: 🔍 Validar listado de URLs inicial
+        run: |
+          echo "::group::🔍 Validando scripts/urls.json"
+          npm run validate:urls || echo "⚠️ No existe aún scripts/urls.json (se generará en el siguiente paso)"
+          echo "::endgroup::"
+
+      # 6️⃣ Rastreo de URLs con Puppeteer
       - name: 🌐 Rastreo de URLs
         run: |
           set -e
@@ -92,24 +110,31 @@ jobs:
             echo "❌ No se generó scripts/urls.json. Abortando auditoría."
             exit 1
           fi
-          echo "✅ Rastreo completado. Archivo: scripts/urls.json"
+          npm run validate:urls
+          echo "✅ Rastreo completado y URLs validadas."
           echo "::endgroup::"
 
-      # 6️⃣ Auditoría general (Sitemap)
+      # 🧩 Validación final antes de auditorías
+      - name: 🔁 Validar URLs antes de auditorías
+        run: npm run validate:urls
+
+      # 7️⃣ Auditoría general (Sitemap)
       - name: ♿ Auditoría de accesibilidad – Sitemap
         uses: cypress-io/github-action@v6
         continue-on-error: true
         with:
           install-command: npm ci
-          command: npm run audit:sitemap
+          command: |
+            npm run validate:urls
+            npm run audit:sitemap
         env:
           SITE_URL: ${{ env.SITE_URL }}
 
-      # 7️⃣ Auditoría interactiva
+      # 8️⃣ Auditoría interactiva
       - name: 🧠 Auditoría de accesibilidad – Componentes interactivos
         continue-on-error: true
         run: |
-          echo "🧠 Ejecutando auditoría de componentes interactivos..."
+          npm run validate:urls
           npm run audit:interactiva || echo "⚠️ Script de auditoría interactiva no encontrado. Saltando..."
         env:
           SITE_URL: ${{ env.SITE_URL }}
@@ -120,39 +145,39 @@ jobs:
           mkdir -p auditorias
           node scripts/tag-origen.cjs
 
-      # 8️⃣ Combinar resultados
+      # 9️⃣ Combinar resultados
       - name: 🧩 Combinar resultados
         run: |
           set -e
           mkdir -p auditorias
           echo "::group::🔄 Combinando resultados de auditorías"
-          node scripts/merge-results.mjs
+          node scripts/merge-results.cjs || node scripts/merge-results.mjs
           echo "::endgroup::"
           echo "✅ Archivo combinado generado correctamente."
 
-      # 9️⃣ Validar archivo combinado
+      # 🔟 Validar archivo combinado
       - name: 🔍 Validar archivo combinado
         run: |
           set -e
           FILE=$(ls auditorias/results-merged-*.json 2>/dev/null | tail -n 1 || true)
           if [ -z "$FILE" ]; then
             echo "❌ No se encontró results-merged.json. Regenerando..."
-            node scripts/merge-results.mjs
+            node scripts/merge-results.cjs || node scripts/merge-results.mjs
           elif [ ! -s "$FILE" ]; then
             echo "⚠️ Archivo vacío. Intentando reparar..."
-            node scripts/merge-results.mjs || true
+            node scripts/merge-results.cjs || node scripts/merge-results.mjs || true
           else
             echo "✅ Archivo válido detectado: $FILE"
           fi
 
-      # 🔟 Resumen rápido de severidades
+      # 11️⃣ Resumen rápido de severidades
       - name: 🧮 Resumen rápido de severidades
         run: |
           echo "::group::📊 Resumen de severidades detectadas"
           jq -r '[.[].violations[].impact] | group_by(.) | map({nivel: .[0], total: length})' auditorias/results-merged-*.json || echo "⚠️ jq no disponible o sin datos"
           echo "::endgroup::"
 
-      # 11️⃣ Quality Gate
+      # 12️⃣ Quality Gate
       - name: 🚦 Quality Gate – WCAG
         continue-on-error: true
         run: |
@@ -164,7 +189,7 @@ jobs:
           echo "✅ FIN DEL CONTROL DE CALIDAD"
           echo "==============================================="
 
-      # 12️⃣ Exportar informe profesional
+      # 13️⃣ Exportar informe profesional
       - name: 📊 Exportar informe Excel + ZIP (IAAP / W3C)
         if: always()
         run: |
@@ -182,7 +207,14 @@ jobs:
           echo "📂 Contenido de /auditorias:"
           ls -lh auditorias/ || echo "⚠️ Carpeta no encontrada."
 
-      # 12.5️⃣ Validar informe Excel antes de subir
+      # 14️⃣ Generar resumen ejecutivo (Markdown)
+      - name: 🧾 Generar resumen ejecutivo (Markdown)
+        if: always()
+        run: |
+          echo "🧾 Generando resumen ejecutivo WCAG..."
+          node scripts/generate-summary.mjs auditorias/results-merged-*.json > auditorias/Resumen-WCAG.md || echo "⚠️ No se pudo generar resumen (script opcional)."
+
+      # 15️⃣ Validar informe Excel antes de subir
       - name: 🔍 Validar informe generado
         if: always()
         run: |
@@ -193,7 +225,7 @@ jobs:
             echo "✅ Informe Excel detectado correctamente."
           fi
 
-      # 13️⃣ Subir artefactos finales
+      # 16️⃣ Subir artefactos finales
       - name: 📤 Subir artefactos finales
         if: always()
         uses: actions/upload-artifact@v4
@@ -203,10 +235,11 @@ jobs:
             auditorias/results-merged-*.json
             auditorias/Informe-WCAG-Profesional.xlsx
             auditorias/Informe-WCAG.zip
+            auditorias/Resumen-WCAG.md
             auditorias/capturas/**/*.png
           retention-days: 30
 
-      # 14️⃣ Resumen final
+      # 17️⃣ Resumen final
       - name: ✅ Resumen final de ejecución
         if: always()
         run: |
