@@ -1,11 +1,10 @@
 /**
- * ♻️ Validador de URLs antes de auditoría WCAG (versión TypeScript)
+ * ♻️ Validador de URLs antes de auditoría WCAG (v1.2 CI-safe)
  * --------------------------------------------------------------------
  * - Comprueba que scripts/urls.json existe y es un JSON válido.
- * - Elimina duplicados, líneas vacías y URLs sin formato correcto.
- * - Limpia títulos y normaliza URLs.
+ * - Elimina duplicados, líneas vacías y URLs mal formadas.
+ * - Limpia títulos, normaliza URLs y ordena alfabéticamente.
  * - Compatible con CI/CD (GitHub Actions, workflows WCAG).
- * - Tipado fuerte y mensajes claros para debugging.
  * --------------------------------------------------------------------
  */
 
@@ -23,6 +22,12 @@ const filePath = path.resolve("scripts/urls.json");
 if (!fs.existsSync(filePath)) {
   console.warn("⚠️ No existe scripts/urls.json. Se generará tras el rastreo (crawl).");
   process.exit(0);
+}
+
+const stats = fs.statSync(filePath);
+if (stats.size < 5) {
+  console.error("❌ scripts/urls.json está vacío o incompleto.");
+  process.exit(1);
 }
 
 console.log("🔍 Validando estructura de scripts/urls.json...");
@@ -45,10 +50,20 @@ if (!Array.isArray(data)) {
 
 const urls = data as UrlEntry[];
 
+// 🧠 Validar URL con new URL()
+function isValidHttpUrl(str: string): boolean {
+  try {
+    const u = new URL(str);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 // 🧹 Limpieza y normalización
 const unique = new Map<string, boolean>();
 const clean = urls
-  .filter((p) => p && typeof p.url === "string" && /^https?:\/\//.test(p.url))
+  .filter((p) => p && typeof p.url === "string" && isValidHttpUrl(p.url))
   .map((p) => ({
     url: p.url.trim().replace(/\/$/, ""), // 🔧 elimina el slash final
     title: p.title?.trim() || "(sin título)",
@@ -59,6 +74,9 @@ const clean = urls
     unique.set(key, true);
     return true;
   });
+
+// 🧾 Ordenar alfabéticamente
+clean.sort((a, b) => a.url.localeCompare(b.url));
 
 const removedCount = urls.length - clean.length;
 
@@ -85,3 +103,4 @@ try {
   console.error(`❌ Error al guardar scripts/urls.json: ${message}`);
   process.exit(1);
 }
+

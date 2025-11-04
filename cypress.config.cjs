@@ -1,10 +1,10 @@
 /**
- * ♿ Configuración universal de Cypress (versión profesional completa)
+ * ♿ Configuración universal de Cypress (versión profesional completa v2.1)
  * --------------------------------------------------------------------
  * - Compatible con flujo de auditorías WCAG + capturas + exportación XLSX.
- * - Crea y limpia automáticamente carpetas de auditorías.
  * - Incluye tareas personalizadas para lectura, escritura y logs.
- * - Optimizada para CI/CD (GitHub Actions) y auditorías largas.
+ * - Limpieza automática de carpetas y resultados antiguos.
+ * - Optimizada para CI/CD (GitHub Actions, Docker, local).
  * --------------------------------------------------------------------
  */
 
@@ -25,7 +25,7 @@ module.exports = defineConfig({
     // 🎥 Desactivar vídeos para auditorías CI (más estabilidad)
     video: false,
 
-    // ⚙️ Configuración de tiempo y rendimiento
+    // ⚙️ Configuración de tiempos y estabilidad
     chromeWebSecurity: false,
     defaultCommandTimeout: 20000,
     pageLoadTimeout: 90000,
@@ -37,11 +37,11 @@ module.exports = defineConfig({
 
     setupNodeEvents(on, config) {
       // =====================================================
-      // 🧩 TAREAS PERSONALIZADAS WCAG
+      // 🧩 TAREAS PERSONALIZADAS WCAG + OPCIONES PRO
       // =====================================================
 
       /**
-       * 📄 Función auxiliar: crear carpeta si no existe
+       * 📁 Asegura que una carpeta exista (crea si no)
        */
       function ensureDir(dirPath) {
         if (!fs.existsSync(dirPath)) {
@@ -50,7 +50,7 @@ module.exports = defineConfig({
       }
 
       /**
-       * 🧹 Limpiar capturas previas
+       * 🧹 Limpia capturas anteriores
        */
       function clearCaptures() {
         const dir = path.join(__dirname, "auditorias", "capturas");
@@ -64,7 +64,7 @@ module.exports = defineConfig({
       }
 
       /**
-       * 🧹 Limpiar resultados antiguos
+       * 🧹 Limpia resultados antiguos
        */
       function cleanOldResults() {
         const auditoriasDir = path.join(__dirname, "auditorias");
@@ -81,7 +81,7 @@ module.exports = defineConfig({
       }
 
       /**
-       * 🌐 Leer URLs desde scripts/urls.json
+       * 🌐 Lee URLs desde scripts/urls.json
        */
       function readUrls() {
         const urlsPath = path.join(__dirname, "scripts", "urls.json");
@@ -110,7 +110,7 @@ module.exports = defineConfig({
       }
 
       /**
-       * 💾 Guardar resultados JSON
+       * 💾 Guarda resultados JSON (acumula si existe)
        */
       function writeResults({ dir, data }) {
         ensureDir(dir);
@@ -134,10 +134,19 @@ module.exports = defineConfig({
       }
 
       /**
-       * 🪵 Log seguro para CI
+       * 🪵 Log seguro (consola + archivo logs.txt)
        */
       function safeLog(message) {
         const text = typeof message === "string" ? message : JSON.stringify(message);
+        const logPath = path.join(__dirname, "auditorias", "logs.txt");
+
+        try {
+          ensureDir(path.join(__dirname, "auditorias"));
+          fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${text}\n`);
+        } catch (err) {
+          console.warn("⚠️ No se pudo escribir en logs.txt:", err.message);
+        }
+
         console.log(`🧭 ${text}`);
         return null;
       }
@@ -150,6 +159,14 @@ module.exports = defineConfig({
         console.log(`📁 Carpeta creada/verificada: ${dir}`);
         return null;
       }
+
+      // 🚀 Flags extra para CI (sin sandbox en GitHub Actions)
+      on("before:browser:launch", (browser = {}, launchOptions) => {
+        if (browser.name === "chrome" || browser.family === "chromium") {
+          launchOptions.args.push("--no-sandbox", "--disable-gpu");
+        }
+        return launchOptions;
+      });
 
       // ============================
       // Registrar todas las tareas
@@ -182,3 +199,5 @@ module.exports = defineConfig({
     SITE_URL: process.env.SITE_URL || "https://www.hiexperience.es",
   },
 });
+
+

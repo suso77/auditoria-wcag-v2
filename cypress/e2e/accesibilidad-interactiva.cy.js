@@ -2,15 +2,15 @@
 import "cypress-axe";
 
 /**
- * ♿ Auditoría de accesibilidad – Componentes interactivos (profesional con capturas)
- * ----------------------------------------------------------------------------
- * - Carga URLs desde scripts/urls.json (crawler).
- * - Audita componentes interactivos (acordeones, menús, modales...).
- * - Omitir componentes globales (header, cookies, footer) tras la primera URL.
- * - Guarda capturas por página, componente y violación detectada.
- * - Reintenta páginas fallidas en modo simplificado.
- * - Libera memoria entre URLs para evitar OOM.
- * - Compatible con merge y exportación a Excel/ZIP.
+ * ♿ Auditoría de accesibilidad – Componentes interactivos (v2.1 profesional)
+ * -------------------------------------------------------------------------
+ * ✅ Carga URLs desde scripts/urls.json
+ * ✅ Audita componentes interactivos (acordeones, menús, modales, sliders, etc.)
+ * ✅ Evita duplicados globales (header, cookies, footer)
+ * ✅ Capturas automáticas por página, componente y violación
+ * ✅ Reintentos inteligentes en fallos o SPAs
+ * ✅ Viewport optimizado para CI (1280x720)
+ * ✅ Compatible con merge, evidencias y exportación Excel/ZIP
  */
 
 describe("♿ Auditoría de accesibilidad – Componentes interactivos (profesional con capturas)", () => {
@@ -37,8 +37,9 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (profesio
     throw error;
   });
 
-  // 🧹 Limpia capturas anteriores antes de empezar
+  // 🧹 Limpieza previa y configuración inicial
   before(() => {
+    cy.viewport(1280, 720); // Tamaño fijo para CI estable
     cy.task("clearCaptures");
     cy.task("readUrls").then((urlsRaw) => {
       urls = urlsRaw.map((p) => p.url).filter(Boolean);
@@ -46,6 +47,74 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (profesio
     });
   });
 
+  // 🔁 Helper con reintento automático
+  const runA11y = (selector, page, safeSel, slug) => {
+    let attempts = 0;
+    const execute = () => {
+      attempts++;
+      cy.checkA11y(
+        selector,
+        null,
+        (violations) => {
+          const dateNow = new Date().toISOString();
+
+          if (violations.length > 0) {
+            cy.screenshot(`auditorias/capturas/${slug}/${safeSel}/componente`, {
+              capture: "viewport",
+              overwrite: true,
+            });
+
+            violations.forEach((v, i) => {
+              const id = v.id || `violacion-${i}`;
+              cy.screenshot(`auditorias/capturas/${slug}/${safeSel}/${id}`, {
+                capture: "viewport",
+                overwrite: true,
+              });
+            });
+
+            allResults.push({
+              page,
+              selector,
+              date: dateNow,
+              origen: "interactiva",
+              violations,
+              system: "macOS + Chrome (Cypress) + axe-core",
+            });
+
+            const counts = {
+              critical: violations.filter((v) => v.impact === "critical").length,
+              serious: violations.filter((v) => v.impact === "serious").length,
+              moderate: violations.filter((v) => v.impact === "moderate").length,
+              minor: violations.filter((v) => v.impact === "minor").length,
+            };
+
+            cy.task(
+              "log",
+              `♿ ${selector} — ${violations.length} violaciones (🔴 ${counts.critical} críticas, 🟠 ${counts.serious} graves, 🟡 ${counts.moderate} moderadas, 🟢 ${counts.minor} menores)`
+            );
+          } else {
+            cy.task("log", `✅ ${selector} — Sin violaciones detectadas`);
+          }
+
+          cy.wrap(null).should("not.equal", "fail");
+        },
+        { skipFailures: true }
+      ).then(null, (err) => {
+        if (attempts < 2) {
+          cy.task("log", `🔁 Reintentando auditoría de ${selector} (${attempts})...`);
+          cy.wait(800);
+          execute();
+        } else {
+          cy.task("log", `⚠️ Auditoría fallida en ${selector}: ${err?.message || "sin mensaje"}`);
+        }
+      });
+    };
+    execute();
+  };
+
+  // ===========================================================
+  // 🧩 Test principal
+  // ===========================================================
   it("Audita todos los componentes interactivos detectados", () => {
     cy.wrap(urls).each((page, index) => {
       cy.task("log", `🚀 Analizando componentes interactivos en: ${page}`);
@@ -53,6 +122,7 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (profesio
       const slug = page.replace(/https?:\/\/|\/$/g, "").replace(/\W+/g, "-");
 
       cy.visit(page, { timeout: 90000, failOnStatusCode: false })
+        .wait(500)
         .then(() => {
           cy.injectAxe();
 
@@ -128,58 +198,8 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (profesio
                       }
                     }
 
-                    // ♿ Auditoría de accesibilidad del componente
-                    cy.checkA11y(
-                      selector,
-                      null,
-                      (violations) => {
-                        const dateNow = new Date().toISOString();
-                        const safeSel = selector.replace(/[^\w-]/g, "_");
-
-                        if (violations.length > 0) {
-                          // 📸 Captura general del componente
-                          cy.screenshot(`auditorias/capturas/${slug}/${safeSel}/componente`, {
-                            capture: "viewport",
-                            overwrite: true,
-                          });
-
-                          // 📸 Capturas individuales por cada violación
-                          violations.forEach((v, i) => {
-                            const id = v.id || `violacion-${i}`;
-                            cy.screenshot(`auditorias/capturas/${slug}/${safeSel}/${id}`, {
-                              capture: "viewport",
-                              overwrite: true,
-                            });
-                          });
-
-                          allResults.push({
-                            page,
-                            selector,
-                            date: dateNow,
-                            origen: "interactiva",
-                            violations,
-                            system: "macOS + Chrome (Cypress) + axe-core",
-                          });
-
-                          const counts = {
-                            critical: violations.filter((v) => v.impact === "critical").length,
-                            serious: violations.filter((v) => v.impact === "serious").length,
-                            moderate: violations.filter((v) => v.impact === "moderate").length,
-                            minor: violations.filter((v) => v.impact === "minor").length,
-                          };
-
-                          cy.task(
-                            "log",
-                            `♿ ${selector} — ${violations.length} violaciones (🔴 ${counts.critical} críticas, 🟠 ${counts.serious} graves, 🟡 ${counts.moderate} moderadas, 🟢 ${counts.minor} menores)`
-                          );
-                        } else {
-                          cy.task("log", `✅ ${selector} — Sin violaciones detectadas`);
-                        }
-
-                        cy.wrap(null).should("not.equal", "fail");
-                      },
-                      { skipFailures: true }
-                    );
+                    const safeSel = selector.replace(/[^\w-]/g, "_");
+                    runA11y(selector, page, safeSel, slug);
                   });
               });
             });
@@ -204,49 +224,17 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (profesio
           );
 
           cy.visit(page, { failOnStatusCode: false, timeout: 120000 })
+            .wait(1000)
             .then(() => {
               cy.injectAxe();
 
-              // 📸 Captura en modo simplificado también
+              // 📸 Captura en modo simplificado
               cy.screenshot(`auditorias/capturas/${slug}/reintento`, {
                 capture: "viewport",
                 overwrite: true,
               });
 
-              cy.checkA11y(
-                "body",
-                null,
-                (violations) => {
-                  const dateNow = new Date().toISOString();
-
-                  if (violations.length > 0) {
-                    allResults.push({
-                      page,
-                      selector: "body",
-                      date: dateNow,
-                      origen: "interactiva",
-                      violations,
-                      system: "macOS + Chrome (Cypress) + axe-core",
-                    });
-
-                    // 📸 Capturas por violación (reintento)
-                    violations.forEach((v, i) => {
-                      const id = v.id || `violacion-${i}`;
-                      cy.screenshot(`auditorias/capturas/${slug}/reintento-${id}`, {
-                        capture: "viewport",
-                        overwrite: true,
-                      });
-                    });
-
-                    cy.task("log", `♿ (Reintento) ${page} — ${violations.length} violaciones detectadas`);
-                  } else {
-                    cy.task("log", `⚠️ (Reintento) ${page} — Sin violaciones detectadas`);
-                  }
-
-                  cy.wrap(null).should("not.equal", "fail");
-                },
-                { skipFailures: true }
-              );
+              runA11y("body", page, "body_reintento", slug);
             })
             .then(null, (finalErr) => {
               cy.task(
@@ -258,7 +246,9 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (profesio
     });
   });
 
+  // ===========================================================
   // 🧾 Guardado final
+  // ===========================================================
   after(() => {
     const outputDir = `auditorias/auditoria-interactiva`;
     cy.task("createFolder", outputDir);
@@ -292,4 +282,3 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (profesio
     );
   });
 });
-

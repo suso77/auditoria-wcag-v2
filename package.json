@@ -1,39 +1,37 @@
 {
   "name": "auditoria-wcag-v2",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "type": "module",
   "description": "Auditoría de accesibilidad automatizada con Cypress + axe-core + Puppeteer + ExcelJS + GitHub Actions (IAAP/W3C)",
   "scripts": {
-    "preaudit": "node -e \"if (!require('fs').existsSync('./scripts/urls.json')) { console.error('❌ No se encontró scripts/urls.json. Ejecuta npm run crawl:js'); process.exit(1) } else { console.log('✅ URLs detectadas, listo para auditar.') }\"",
+    "check-env": "node scripts/check-env.cjs",
+    "validate:urls": "ts-node scripts/validate-urls.ts",
+    "tag-origen": "node scripts/tag-origen.cjs",
+    "merge-results": "node scripts/merge-results.mjs",
+    "fix": "node scripts/fix-json.cjs",
     "crawl": "node crawler/crawl.js",
     "crawl:js": "node crawler/crawl-puppeteer.mjs",
     "crawl:full": "MAX_DEPTH=5 CRAWL_DELAY=1200 node crawler/crawl-puppeteer.mjs",
-
-    "validate:urls": "ts-node scripts/validate-urls.ts",
-
+    "preaudit": "node -e \"if (!require('fs').existsSync('./scripts/urls.json')) { console.error('❌ No se encontró scripts/urls.json. Ejecuta npm run crawl:js'); process.exit(1) } else { console.log('✅ URLs detectadas, listo para auditar.') }\"",
     "audit:sitemap": "cypress run --spec cypress/e2e/accesibilidad-sitemap.cy.js --browser chrome --headless",
     "audit:interactiva": "cypress run --spec cypress/e2e/accesibilidad-interactiva.cy.js --browser chrome --headless",
     "audit:dev": "cypress open --browser chrome",
     "audit:debug": "cypress run --spec cypress/e2e/accesibilidad-sitemap.cy.js --browser chrome --headed",
-
-    "merge": "node scripts/merge-results.mjs",
-    "fix": "node scripts/fix-json.cjs",
-    "summary": "node scripts/post-merge-summary.cjs",
-    "summary:analyze": "CRITICAL_MAX=5 SERIOUS_MAX=50 npm run summary",
-    "report": "node --experimental-specifier-resolution=node scripts/export-to-xlsx.mjs && ls -lh auditorias/",
-    "report:debug": "node --trace-warnings scripts/export-to-xlsx.mjs",
+    "capture:evidence": "node --max-old-space-size=4096 --experimental-specifier-resolution=node scripts/capture-evidence.mjs",
+    "export:xlsx": "node --max-old-space-size=4096 --experimental-specifier-resolution=node scripts/export-to-xlsx.mjs",
+    "summary": "node scripts/generate-summary.mjs $(ls -t auditorias/results-merged-*.json | head -n1)",
     "quality": "node scripts/quality-gate.cjs",
-
-    "audit:all": "npm run validate:urls && npm run crawl:js && npm run audit:sitemap && npm run audit:interactiva && npm run merge && npm run report",
-    "audit:full": "npm run preaudit && npm run crawl:full && npm run validate:urls && npm run audit:sitemap && npm run audit:interactiva && npm run merge && npm run summary && npm run report && npm run quality",
+    "audit:all": "npm run check-env && npm run validate:urls && npm run crawl:js && npm run audit:sitemap && npm run audit:interactiva && npm run tag-origen && npm run merge-results && npm run capture:evidence && npm run export:xlsx && npm run summary && npm run quality",
+    "audit:full": "npm run preaudit && npm run audit:all",
     "audit:local": "CRITICAL_MAX=9999 SERIOUS_MAX=9999 npm run audit:full",
-    "audit:ci": "CRITICAL_MAX=0 SERIOUS_MAX=5 npm run audit:full"
+    "audit:ci": "CRITICAL_MAX=0 SERIOUS_MAX=5 npm run audit:full",
+    "local:ci": "bash scripts/run-local-ci.sh"
   },
   "dependencies": {
-    "archiver": "^7.0.0",
+    "archiver": "^7.0.1",
     "axe-core": "^4.10.0",
     "axios": "^1.7.2",
-    "chalk": "^5.3.0",
+    "chalk": "^5.6.2",
     "cheerio": "^1.0.0-rc.12",
     "cypress": "^13.17.0",
     "cypress-axe": "^1.5.0",
@@ -41,11 +39,13 @@
     "exceljs": "^4.4.0",
     "fs-extra": "^11.2.0",
     "open": "^10.2.0",
-    "puppeteer": "^23.6.0"
+    "puppeteer": "^23.6.0",
+    "sharp": "^0.34.4"
   },
   "devDependencies": {
-    "typescript": "^5.6.0",
-    "ts-node": "^10.9.2"
+    "@types/node": "^22.8.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
   },
   "engines": {
     "node": ">=20"
@@ -75,8 +75,3 @@
   "author": "Suso (Ilúmina Media)",
   "license": "MIT"
 }
-
-
-
-
-

@@ -1,16 +1,15 @@
 /**
- * 🧩 merge-results.mjs (versión 3.1 profesional final)
+ * 🧩 merge-results.mjs (v3.2 CI-safe)
  * --------------------------------------------------------------
  * Combina y normaliza resultados de auditorías WCAG:
  *   - Auditoría Sitemap (páginas completas)
  *   - Auditoría Interactiva (componentes, modales, menús...)
  *
  * ✅ Deduplica por URL + selector + origen + ID de violación.
- * ✅ Detecta automáticamente capturas PNG asociadas.
- * ✅ Añade campo `capturePath` relativo a /auditorias/capturas.
- * ✅ Limpia URLs rotas o sin violaciones reales.
- * ✅ Compatible con export-to-xlsx.mjs (IAAP/W3C).
+ * ✅ Detecta capturas PNG asociadas (campo capturePath).
+ * ✅ Limpia entradas vacías o sin violaciones reales.
  * ✅ Logs claros con totales por severidad y origen.
+ * ✅ Seguro para CI/CD (crea carpetas y valida salida).
  */
 
 import fs from "fs";
@@ -21,6 +20,17 @@ const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const ROOT_DIR = process.cwd();
 const AUDITORIAS_DIR = path.join(ROOT_DIR, "auditorias");
 const CAPTURAS_DIR = path.join(AUDITORIAS_DIR, "capturas");
+
+// ===========================================================
+// 🧱 Asegurar carpetas base
+// ===========================================================
+if (!fs.existsSync(AUDITORIAS_DIR)) {
+  fs.mkdirSync(AUDITORIAS_DIR, { recursive: true });
+  console.log("📁 Carpeta /auditorias creada automáticamente.");
+}
+if (!fs.existsSync(CAPTURAS_DIR)) {
+  fs.mkdirSync(CAPTURAS_DIR, { recursive: true });
+}
 
 // ===========================================================
 // 🔍 Buscar recursivamente todos los results.json (excepto merged previos)
@@ -39,14 +49,9 @@ function findResultFiles(dir) {
 // ===========================================================
 // ⚙️ Validación inicial
 // ===========================================================
-if (!fs.existsSync(AUDITORIAS_DIR)) {
-  console.error("❌ No existe el directorio /auditorias");
-  process.exit(1);
-}
-
 const resultFiles = findResultFiles(AUDITORIAS_DIR);
 if (resultFiles.length === 0) {
-  console.error("❌ No se encontraron archivos results.json para combinar.");
+  console.error("⚠️ No se encontraron archivos results.json para combinar.");
   process.exit(0);
 }
 
@@ -59,7 +64,13 @@ let merged = [];
 
 for (const file of resultFiles) {
   try {
-    const json = JSON.parse(fs.readFileSync(file, "utf8"));
+    const raw = fs.readFileSync(file, "utf8");
+    if (!raw.trim()) {
+      console.warn(`⚠️ ${file} está vacío, se omite.`);
+      continue;
+    }
+
+    const json = JSON.parse(raw);
     const relative = path.relative(AUDITORIAS_DIR, file);
     const origen = relative.includes("interactiva") ? "interactiva" : "sitemap";
 
@@ -77,7 +88,7 @@ for (const file of resultFiles) {
         pageTitle: item.pageTitle || item.title || "(sin título)",
         selector: item.selector || "body",
         date: item.date || new Date().toISOString(),
-        system: item.system || "macOS + Chrome (Cypress) + axe-core",
+        system: item.system || "macOS + Chrome (Cypress + axe-core)",
         violations,
       });
     });
@@ -89,7 +100,7 @@ for (const file of resultFiles) {
 }
 
 // ===========================================================
-// 🧽 Deduplicar resultados (misma URL + selector + origen + ID de violación)
+// 🧽 Deduplicar resultados (URL + selector + origen + IDs)
 // ===========================================================
 merged = merged.filter(
   (item, i, self) =>
@@ -115,7 +126,7 @@ function findCaptureFor(urlString, selector = "") {
     .substring(0, 150);
 
   const files = fs.readdirSync(CAPTURAS_DIR).filter((f) => f.endsWith(".png"));
-  const selectorSlug = selector ? selector.replace(/[^\w-]/g, "_").substring(0, 100) : "";
+  const selectorSlug = selector ? selector.replace(/[^\w-]/g, "_").substring(0, 80) : "";
 
   return (
     files.find((f) => f.includes(slug) && (!selectorSlug || f.includes(selectorSlug))) ||
@@ -127,7 +138,9 @@ function findCaptureFor(urlString, selector = "") {
 merged = merged.map((item) => {
   const capture =
     findCaptureFor(item.url, item.selector) || findCaptureFor(item.url, "body");
-  if (capture) item.capturePath = `capturas/${capture}`;
+  if (capture) {
+    item.capturePath = `capturas/${capture}`.substring(0, 250); // 🔒 evita paths largos
+  }
   return item;
 });
 
@@ -154,14 +167,25 @@ merged.forEach((r) => {
 // ===========================================================
 const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 const outputFile = path.join(AUDITORIAS_DIR, `results-merged-${timestamp}.json`);
-fs.writeFileSync(outputFile, JSON.stringify(merged, null, 2), "utf8");
+
+try {
+  fs.writeFileSync(outputFile, JSON.stringify(merged, null, 2), "utf8");
+
+  // Verificación rápida de integridad
+  const stat = fs.statSync(outputFile);
+  if (stat.size < 200) throw new Error("archivo demasiado pequeño o vacío");
+
+  console.log(`\n✅ Archivo final generado: ${outputFile} (${stat.size} bytes)`);
+} catch (err) {
+  console.error(`❌ Error guardando ${outputFile}: ${err.message}`);
+  process.exit(1);
+}
 
 // ===========================================================
 // 📈 Mostrar resumen profesional
 // ===========================================================
 console.log("\n===============================================");
 console.log("📊 RESULTADOS COMBINADOS DE AUDITORÍA WCAG");
-console.log(`→ Archivo generado: ${outputFile}`);
 console.log("--------------------------------------------------");
 
 for (const [origen, s] of Object.entries(stats)) {
@@ -184,3 +208,4 @@ console.log("✅ Fusión completada correctamente.");
 console.log("===============================================\n");
 
 process.exit(0);
+
