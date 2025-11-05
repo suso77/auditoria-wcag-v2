@@ -12,31 +12,34 @@ on:
     branches: [ main, master, principal ]
   pull_request:
   # schedule:
-  #   - cron: "0 3 * * 1"  # (opcional) ejecución semanal automática
+  #   - cron: "0 3 * * 1"  # (opcional) ejecución semanal automática (lunes 03:00)
 
 jobs:
   a11y:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }} # asegura rutas correctas
 
     env:
       SITE_URL: ${{ github.event.inputs.site_url || vars.SITE_URL || 'https://www.hiexperience.es' }}
       LC_ALL: C.UTF-8
       LANG: C.UTF-8
-      CRITICAL_MAX: 5
-      SERIOUS_MAX: 20
       TZ: Europe/Madrid
       NODE_ENV: production
       NODE_OPTIONS: "--max-old-space-size=4096 --experimental-specifier-resolution=node --no-warnings"
-
       TS_NODE_TRANSPILE_ONLY: true
       TS_NODE_PROJECT: tsconfig.json
-
+      TS_NODE_COMPILER_OPTIONS: '{"module":"esnext"}'
+      CRITICAL_MAX: 5
+      SERIOUS_MAX: 20
       CYPRESS_screenshotsFolder: auditorias/capturas
       CYPRESS_video: false
       CYPRESS_screenshotOnRunFailure: true
 
     steps:
-      # 1️⃣ Checkout del repositorio
+      # 1️⃣ Checkout
       - name: 🧩 Checkout del repositorio
         uses: actions/checkout@v4
 
@@ -45,6 +48,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+          check-latest: true
           cache: "npm"
           cache-dependency-path: "**/package-lock.json"
 
@@ -67,7 +71,7 @@ jobs:
       - name: 📦 Instalar dependencias
         run: |
           echo "📦 Instalando dependencias..."
-          npm ci || npm install
+          npm ci
           mkdir -p scripts
           if [ ! -f scripts/urls.json ]; then echo "[]" > scripts/urls.json; fi
           echo "✅ Dependencias instaladas correctamente."
@@ -98,7 +102,7 @@ jobs:
       - name: 🔍 Validar listado de URLs inicial
         run: |
           echo "::group::🔍 Validando scripts/urls.json"
-          npx ts-node --transpile-only scripts/validate-urls.ts || echo "⚠️ Se generará en el siguiente paso"
+          node --loader ts-node/esm scripts/validate-urls.ts || echo "⚠️ Se generará en el siguiente paso"
           echo "::endgroup::"
 
       # 11️⃣ Rastreo del sitio
@@ -108,7 +112,8 @@ jobs:
           set -e
           echo "::group::🌍 Rastreo en $SITE_URL"
           npm run crawl:js
-          npx ts-node --transpile-only scripts/validate-urls.ts
+          node --loader ts-node/esm scripts/validate-urls.ts
+          sleep 5
           echo "::endgroup::"
 
       # 12️⃣ Auditoría principal (Sitemap)
@@ -117,8 +122,9 @@ jobs:
         continue-on-error: true
         with:
           install-command: npm ci
-          command: |
-            npx cypress run --browser chrome --headless --config-file cypress.config.cjs --spec "cypress/e2e/sitemap/**/*.cy.js" || npm run audit:sitemap
+          command: >
+            npx cypress run --browser chrome --headless --config-file cypress.config.cjs 
+            --spec "cypress/e2e/accesibilidad-sitemap.cy.js" || npm run audit:sitemap
         env:
           SITE_URL: ${{ env.SITE_URL }}
 
@@ -126,7 +132,7 @@ jobs:
       - name: 🧠 Auditoría de accesibilidad – Componentes interactivos
         continue-on-error: true
         run: |
-          npx cypress run --browser chrome --headless --config-file cypress.config.cjs --spec "cypress/e2e/interactiva/**/*.cy.js" || npm run audit:interactiva || echo "⚠️ No hay specs interactivas."
+          npx cypress run --browser chrome --headless --config-file cypress.config.cjs --spec "cypress/e2e/accesibilidad-interactiva.cy.js" || npm run audit:interactiva || echo "⚠️ No hay specs interactivas."
 
       # 14️⃣ Añadir campo origen
       - name: 🏷️ Añadir campo "origen" a los resultados
@@ -198,6 +204,7 @@ jobs:
             auditorias/Informe-WCAG.zip
             auditorias/Resumen-WCAG.md
             auditorias/capturas/**/*.png
+            auditorias/logs/**/*.log
           retention-days: 30
 
       # 22️⃣ Resumen final
@@ -212,3 +219,4 @@ jobs:
           echo "📸 Capturas incluidas en ZIP"
           echo "🚦 Quality Gate: Critical <= $CRITICAL_MAX, Serious <= $SERIOUS_MAX"
           echo "✅ Pipeline completado correctamente."
+
