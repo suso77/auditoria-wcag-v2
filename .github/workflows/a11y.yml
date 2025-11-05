@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 60
     defaults:
       run:
-        working-directory: ${{ github.workspace }} # asegura rutas correctas
+        working-directory: ${{ github.workspace }}
 
     env:
       SITE_URL: ${{ github.event.inputs.site_url || vars.SITE_URL || 'https://www.hiexperience.es' }}
@@ -72,9 +72,17 @@ jobs:
         run: |
           echo "📦 Instalando dependencias..."
           npm ci
+          npm rebuild
           mkdir -p scripts
           if [ ! -f scripts/urls.json ]; then echo "[]" > scripts/urls.json; fi
           echo "✅ Dependencias instaladas correctamente."
+
+      # 5.1️⃣ Instalar ts-node y TypeScript (para scripts ESM)
+      - name: 🧩 Instalar ts-node y TypeScript (fallback seguro)
+        run: |
+          echo "🧩 Instalando ts-node y TypeScript (modo seguro)..."
+          npm install --no-save ts-node typescript @types/node
+          echo "✅ ts-node y TypeScript listos."
 
       # 6️⃣ Verificar ts-node
       - name: 🧩 Verificar ts-node
@@ -98,11 +106,11 @@ jobs:
           node -p "({ SITE_URL: process.env.SITE_URL, NODE_ENV: process.env.NODE_ENV, TZ: process.env.TZ })"
           echo "::endgroup::"
 
-      # 🔟 Validar URLs iniciales
+      # 10️⃣ Validar listado de URLs inicial
       - name: 🔍 Validar listado de URLs inicial
         run: |
           echo "::group::🔍 Validando scripts/urls.json"
-          node --loader ts-node/esm scripts/validate-urls.ts || echo "⚠️ Se generará en el siguiente paso"
+          npx ts-node scripts/validate-urls.ts || echo "⚠️ Se generará en el siguiente paso"
           echo "::endgroup::"
 
       # 11️⃣ Rastreo del sitio
@@ -112,7 +120,7 @@ jobs:
           set -e
           echo "::group::🌍 Rastreo en $SITE_URL"
           npm run crawl:js
-          node --loader ts-node/esm scripts/validate-urls.ts
+          npx ts-node scripts/validate-urls.ts
           sleep 5
           echo "::endgroup::"
 
@@ -219,4 +227,3 @@ jobs:
           echo "📸 Capturas incluidas en ZIP"
           echo "🚦 Quality Gate: Critical <= $CRITICAL_MAX, Serious <= $SERIOUS_MAX"
           echo "✅ Pipeline completado correctamente."
-
