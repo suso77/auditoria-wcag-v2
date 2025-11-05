@@ -39,7 +39,7 @@ jobs:
       CYPRESS_screenshotOnRunFailure: true
 
     steps:
-      # 1️⃣ Checkout
+      # 1️⃣ Checkout del repositorio
       - name: 🧩 Checkout del repositorio
         uses: actions/checkout@v4
 
@@ -70,30 +70,39 @@ jobs:
       # 5️⃣ Instalar dependencias
       - name: 📦 Instalar dependencias
         run: |
-          echo "📦 Instalando dependencias..."
-          npm ci
+          echo "📦 Instalando dependencias (incluyendo devDependencies)..."
+          npm ci --include=dev
           npm rebuild
           mkdir -p scripts
           if [ ! -f scripts/urls.json ]; then echo "[]" > scripts/urls.json; fi
           echo "✅ Dependencias instaladas correctamente."
 
-      # 5.1️⃣ Instalar ts-node y TypeScript (para scripts ESM)
+      # 5.1️⃣ Instalar ts-node y TypeScript (modo seguro)
       - name: 🧩 Instalar ts-node y TypeScript (fallback seguro)
         run: |
-          echo "🧩 Instalando ts-node y TypeScript (modo seguro)..."
-          npm install --no-save ts-node typescript @types/node
-          echo "✅ ts-node y TypeScript listos."
+          echo "🧩 Verificando ts-node y TypeScript..."
+          if ! npx ts-node --version >/dev/null 2>&1; then
+            npm install --no-save ts-node typescript @types/node
+            echo "✅ ts-node y TypeScript instalados."
+          else
+            echo "✅ ts-node ya está disponible."
+          fi
 
       # 6️⃣ Verificar ts-node
       - name: 🧩 Verificar ts-node
         run: npx ts-node --version || npm install ts-node typescript --no-save
 
       # 7️⃣ Verificar entorno de Cypress
-      - name: 🧩 Verificar entorno de Cypress
+      - name: 🧪 Verificar instalación de Cypress
         run: |
-          echo "::group::🧩 Verificando instalación de Cypress"
+          echo "::group::🧪 Verificando instalación de Cypress"
+          if ! npx cypress --version >/dev/null 2>&1; then
+            echo "⚠️ Cypress no detectado, reinstalando..."
+            npm install cypress --no-save
+          fi
           npx cypress verify || (echo "⚠️ Reinstalando Cypress..." && npx cypress install)
           echo "::endgroup::"
+          echo "✅ Cypress verificado correctamente."
 
       # 8️⃣ Validar entorno base
       - name: 🧾 Validar entorno base
@@ -106,7 +115,7 @@ jobs:
           node -p "({ SITE_URL: process.env.SITE_URL, NODE_ENV: process.env.NODE_ENV, TZ: process.env.TZ })"
           echo "::endgroup::"
 
-            # 10️⃣ Validar listado de URLs inicial
+      # 10️⃣ Validar listado de URLs inicial
       - name: 🔍 Validar listado de URLs inicial
         run: |
           echo "::group::🔍 Validando scripts/urls.json"
@@ -129,9 +138,14 @@ jobs:
         uses: cypress-io/github-action@v6
         continue-on-error: true
         with:
-          install-command: npm ci
+          install-command: npm ci --include=dev
           command: >
-            npx cypress run --browser chrome --headless --config-file cypress.config.cjs 
+            echo "🧪 Verificando versión de Cypress..." &&
+            NODE_OPTIONS="" npx cypress --version &&
+            echo "📄 Contenido de cypress.config.cjs:" &&
+            head -n 20 cypress.config.cjs || echo "(config resumido)" &&
+            echo "🚀 Ejecutando auditoría principal..." &&
+            NODE_OPTIONS="" npx cypress run --browser chrome --headless --config-file cypress.config.cjs 
             --spec "cypress/e2e/accesibilidad-sitemap.cy.js" || npm run audit:sitemap
         env:
           SITE_URL: ${{ env.SITE_URL }}
@@ -140,29 +154,40 @@ jobs:
       - name: 🧠 Auditoría de accesibilidad – Componentes interactivos
         continue-on-error: true
         run: |
-          npx cypress run --browser chrome --headless --config-file cypress.config.cjs --spec "cypress/e2e/accesibilidad-interactiva.cy.js" || npm run audit:interactiva || echo "⚠️ No hay specs interactivas."
+          echo "🚀 Ejecutando auditoría de componentes interactivos..."
+          NODE_OPTIONS="" npx cypress run --browser chrome --headless --config-file cypress.config.cjs \
+            --spec "cypress/e2e/accesibilidad-interactiva.cy.js" \
+            || npm run audit:interactiva || echo "⚠️ No hay specs interactivas o se omitieron."
 
       # 14️⃣ Añadir campo origen
       - name: 🏷️ Añadir campo "origen" a los resultados
         run: node scripts/tag-origen.cjs
 
-      # 15️⃣ Combinar resultados (merge-results.mjs)
-      - name: 🧩 Combinar resultados
+      # 15️⃣ Combinar resultados
+      - name: 🧩 Combinar resultados (merge-results.mjs)
         run: |
           set -e
+          echo "::group::🧩 Combinando resultados parciales"
           node scripts/merge-results.mjs
           echo "✅ Archivo combinado generado correctamente."
+          echo "::endgroup::"
 
       # 16️⃣ Generar resumen ejecutivo (Markdown)
       - name: 🧾 Generar resumen ejecutivo (Markdown)
         if: always()
         run: |
-          node scripts/generate-summary.mjs $(ls -t auditorias/results-merged-*.json | head -n1) > auditorias/Resumen-WCAG.md || echo "⚠️ No se pudo generar resumen."
+          echo "::group::🧾 Generando resumen ejecutivo"
+          node scripts/generate-summary.mjs $(ls -t auditorias/results-merged-*.json | head -n1) \
+            > auditorias/Resumen-WCAG.md || echo "⚠️ No se pudo generar resumen."
+          echo "::endgroup::"
 
       # 17️⃣ Quality Gate
       - name: 🚦 Quality Gate – WCAG
         continue-on-error: true
-        run: npm run quality || echo "⚠️ Quality Gate con advertencias"
+        run: |
+          echo "::group::🚦 Quality Gate (WCAG)"
+          npm run quality || echo "⚠️ Quality Gate con advertencias o fallos leves."
+          echo "::endgroup::"
 
       # 18️⃣ Generar evidencias visuales
       - name: 📸 Generar evidencias visuales (capturas WCAG)
@@ -194,11 +219,13 @@ jobs:
       - name: 🔍 Validar informe generado
         if: always()
         run: |
+          echo "::group::🔍 Validando informe final"
           if [ ! -f auditorias/Informe-WCAG-Profesional.xlsx ]; then
             echo "❌ No se generó el informe Excel."
             exit 1
           fi
           echo "✅ Informe Excel detectado correctamente."
+          echo "::endgroup::"
 
       # 21️⃣ Subir artefactos finales
       - name: 📤 Subir artefactos finales
