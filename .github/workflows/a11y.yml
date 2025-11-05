@@ -110,7 +110,7 @@ jobs:
       - name: 🔍 Validar listado de URLs inicial
         run: |
           echo "::group::🔍 Validando scripts/urls.json"
-          npx ts-node scripts/validate-urls.ts || echo "⚠️ Se generará en el siguiente paso"
+          node --loader ts-node/esm scripts/validate-urls.ts || echo "⚠️ Se generará en el siguiente paso"
           echo "::endgroup::"
 
       # 11️⃣ Rastreo del sitio
@@ -120,7 +120,7 @@ jobs:
           set -e
           echo "::group::🌍 Rastreo en $SITE_URL"
           npm run crawl:js
-          npx ts-node scripts/validate-urls.ts
+          node --loader ts-node/esm scripts/validate-urls.ts
           sleep 5
           echo "::endgroup::"
 
