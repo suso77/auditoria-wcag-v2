@@ -106,10 +106,12 @@ jobs:
           node -p "({ SITE_URL: process.env.SITE_URL, NODE_ENV: process.env.NODE_ENV, TZ: process.env.TZ })"
           echo "::endgroup::"
 
-      # 10️⃣ Validar listado de URLs inicial
+            # 10️⃣ Validar listado de URLs inicial
       - name: 🔍 Validar listado de URLs inicial
         run: |
           echo "::group::🔍 Validando scripts/urls.json"
+          node scripts/validate-urls.mjs || echo "⚠️ Se generará en el siguiente paso"
+          echo "::endgroup::"
 
       # 11️⃣ Rastreo del sitio
       - name: 🌐 Rastreo de URLs
@@ -118,6 +120,10 @@ jobs:
           set -e
           echo "::group::🌍 Rastreo en $SITE_URL"
           npm run crawl:js
+          node scripts/validate-urls.mjs
+          sleep 5
+          echo "::endgroup::"
+
       # 12️⃣ Auditoría principal (Sitemap)
       - name: ♿ Auditoría de accesibilidad – Sitemap
         uses: cypress-io/github-action@v6
@@ -140,8 +146,8 @@ jobs:
       - name: 🏷️ Añadir campo "origen" a los resultados
         run: node scripts/tag-origen.cjs
 
-      # 15️⃣ Combinar resultados
-      - name: 🧩 Combinar resultados (merge-results.mjs)
+      # 15️⃣ Combinar resultados (merge-results.mjs)
+      - name: 🧩 Combinar resultados
         run: |
           set -e
           node scripts/merge-results.mjs
@@ -151,7 +157,7 @@ jobs:
       - name: 🧾 Generar resumen ejecutivo (Markdown)
         if: always()
         run: |
-          node scripts/generate-summary.mjs $(cat auditorias/last-merged.txt) > auditorias/Resumen-WCAG.md || echo "⚠️ No se pudo generar resumen."
+          node scripts/generate-summary.mjs $(ls -t auditorias/results-merged-*.json | head -n1) > auditorias/Resumen-WCAG.md || echo "⚠️ No se pudo generar resumen."
 
       # 17️⃣ Quality Gate
       - name: 🚦 Quality Gate – WCAG
