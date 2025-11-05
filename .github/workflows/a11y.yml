@@ -110,8 +110,6 @@ jobs:
       - name: 🔍 Validar listado de URLs inicial
         run: |
           echo "::group::🔍 Validando scripts/urls.json"
-          node --loader ts-node/esm scripts/validate-urls.ts || echo "⚠️ Se generará en el siguiente paso"
-          echo "::endgroup::"
 
       # 11️⃣ Rastreo del sitio
       - name: 🌐 Rastreo de URLs
@@ -120,10 +118,6 @@ jobs:
           set -e
           echo "::group::🌍 Rastreo en $SITE_URL"
           npm run crawl:js
-          node --loader ts-node/esm scripts/validate-urls.ts
-          sleep 5
-          echo "::endgroup::"
-
       # 12️⃣ Auditoría principal (Sitemap)
       - name: ♿ Auditoría de accesibilidad – Sitemap
         uses: cypress-io/github-action@v6
@@ -147,18 +141,24 @@ jobs:
         run: node scripts/tag-origen.cjs
 
       # 15️⃣ Combinar resultados
-      - name: 🧩 Combinar resultados
+      - name: 🧩 Combinar resultados (merge-results.mjs)
         run: |
           set -e
           node scripts/merge-results.mjs
           echo "✅ Archivo combinado generado correctamente."
 
-      # 16️⃣ Quality Gate
+      # 16️⃣ Generar resumen ejecutivo (Markdown)
+      - name: 🧾 Generar resumen ejecutivo (Markdown)
+        if: always()
+        run: |
+          node scripts/generate-summary.mjs $(cat auditorias/last-merged.txt) > auditorias/Resumen-WCAG.md || echo "⚠️ No se pudo generar resumen."
+
+      # 17️⃣ Quality Gate
       - name: 🚦 Quality Gate – WCAG
         continue-on-error: true
         run: npm run quality || echo "⚠️ Quality Gate con advertencias"
 
-      # 17️⃣ Generar evidencias visuales
+      # 18️⃣ Generar evidencias visuales
       - name: 📸 Generar evidencias visuales (capturas WCAG)
         if: always()
         run: |
@@ -173,7 +173,7 @@ jobs:
         env:
           PUPPETEER_SKIP_DOWNLOAD: true
 
-      # 18️⃣ Exportar informe profesional
+      # 19️⃣ Exportar informe profesional
       - name: 📊 Exportar informe Excel + ZIP (IAAP / W3C)
         if: always()
         run: |
@@ -183,12 +183,6 @@ jobs:
           echo "::endgroup::"
           echo "✅ Informe Excel y ZIP generados correctamente."
           ls -lh auditorias/
-
-      # 19️⃣ Generar resumen ejecutivo
-      - name: 🧾 Generar resumen ejecutivo (Markdown)
-        if: always()
-        run: |
-          node scripts/generate-summary.mjs auditorias/results-merged-*.json > auditorias/Resumen-WCAG.md || echo "⚠️ No se pudo generar resumen."
 
       # 20️⃣ Validar informe final
       - name: 🔍 Validar informe generado
@@ -224,6 +218,7 @@ jobs:
           echo "==============================================="
           echo "🌍 Sitio auditado: $SITE_URL"
           echo "📊 Informe generado: auditorias/Informe-WCAG-Profesional.xlsx"
+          echo "📘 Resumen: auditorias/Resumen-WCAG.md"
           echo "📸 Capturas incluidas en ZIP"
           echo "🚦 Quality Gate: Critical <= $CRITICAL_MAX, Serious <= $SERIOUS_MAX"
           echo "✅ Pipeline completado correctamente."

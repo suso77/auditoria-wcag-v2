@@ -10,24 +10,43 @@ yarn-error.log*
 *.log
 *.tmp
 
-# 🧪 Resultados de auditoría locales
+# 🧪 Resultados de auditoría locales (JSON, ZIP, XLSX)
 auditorias/*.json
 auditorias/*.zip
 auditorias/*.xlsx
 auditorias/*-evidencias/
+
+# 🚫 Ignorar resultados de auditorías completos (carpetas dinámicas)
+auditorias/
+!auditorias/.gitkeep
+
+# 🧩 Evitar subir capturas locales
+auditorias/capturas/
+auditorias/logs.txt
 
 # 🧰 Salidas automáticas de Cypress
 cypress/downloads/
 cypress/screenshots/
 cypress/videos/
 
-# 🚫 Evitar duplicación accidental de carpetas
+# 🚫 Evitar duplicación accidental de carpetas o scripts temporales
 scripts/scripts/
 scripts/__pycache__/
 scripts/*.pyc
 scripts/*.bak
 
-# 📦 Archivos generados por VSCode o Mac
+# 📦 Archivos generados por editores
 .vscode/
 .idea/
 Thumbs.db
+
+# ⚙️ Caches y artefactos temporales
+*.cache
+npm-cache/
+.pnp.*
+.pnp.js
+
+# 💡 Playwright / Puppeteer (por si se usa en capturas o contraste)
+playwright-report/
+.traces/
+

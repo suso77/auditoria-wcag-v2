@@ -1,5 +1,5 @@
 /**
- * 🧩 merge-results.mjs (v3.2 CI-safe)
+ * 🧩 merge-results.mjs (v3.6 profesional IAAP / CI-safe)
  * --------------------------------------------------------------
  * Combina y normaliza resultados de auditorías WCAG:
  *   - Auditoría Sitemap (páginas completas)
@@ -7,9 +7,10 @@
  *
  * ✅ Deduplica por URL + selector + origen + ID de violación.
  * ✅ Detecta capturas PNG asociadas (campo capturePath).
- * ✅ Limpia entradas vacías o sin violaciones reales.
- * ✅ Logs claros con totales por severidad y origen.
- * ✅ Seguro para CI/CD (crea carpetas y valida salida).
+ * ✅ Limpia entradas vacías o con formato inválido.
+ * ✅ Compatible con JSON plano de test-wcag.cy.js.
+ * ✅ Logs IAAP claros con totales por severidad y origen.
+ * ✅ Genera last-merged.txt para pipeline CI.
  */
 
 import fs from "fs";
@@ -24,16 +25,11 @@ const CAPTURAS_DIR = path.join(AUDITORIAS_DIR, "capturas");
 // ===========================================================
 // 🧱 Asegurar carpetas base
 // ===========================================================
-if (!fs.existsSync(AUDITORIAS_DIR)) {
-  fs.mkdirSync(AUDITORIAS_DIR, { recursive: true });
-  console.log("📁 Carpeta /auditorias creada automáticamente.");
-}
-if (!fs.existsSync(CAPTURAS_DIR)) {
-  fs.mkdirSync(CAPTURAS_DIR, { recursive: true });
-}
+if (!fs.existsSync(AUDITORIAS_DIR)) fs.mkdirSync(AUDITORIAS_DIR, { recursive: true });
+if (!fs.existsSync(CAPTURAS_DIR)) fs.mkdirSync(CAPTURAS_DIR, { recursive: true });
 
 // ===========================================================
-// 🔍 Buscar recursivamente todos los results.json (excepto merged previos)
+// 🔍 Buscar recursivamente todos los results*.json (excepto merged previos)
 // ===========================================================
 function findResultFiles(dir) {
   let results = [];
@@ -46,16 +42,25 @@ function findResultFiles(dir) {
   return results;
 }
 
-// ===========================================================
-// ⚙️ Validación inicial
-// ===========================================================
 const resultFiles = findResultFiles(AUDITORIAS_DIR);
 if (resultFiles.length === 0) {
   console.error("⚠️ No se encontraron archivos results.json para combinar.");
   process.exit(0);
 }
-
 console.log(`📦 Archivos detectados: ${resultFiles.length}`);
+
+// ===========================================================
+// 🧩 Validación rápida de resultados
+// ===========================================================
+function isValidResult(obj) {
+  return (
+    obj &&
+    typeof obj === "object" &&
+    Array.isArray(obj.violations) &&
+    obj.violations.length > 0 &&
+    obj.violations.every((v) => typeof v.id === "string" && v.id.trim().length > 0)
+  );
+}
 
 // ===========================================================
 // 🧩 Cargar y normalizar resultados
@@ -72,15 +77,32 @@ for (const file of resultFiles) {
 
     const json = JSON.parse(raw);
     const relative = path.relative(AUDITORIAS_DIR, file);
-    const origen = relative.includes("interactiva") ? "interactiva" : "sitemap";
+    let origen = "sitemap";
 
+    if (/interactiva/i.test(relative)) origen = "interactiva";
+    else if (/sitemap/i.test(relative)) origen = "sitemap";
+    else if (Array.isArray(json) && json.some((v) => v.origen === "interactiva")) origen = "interactiva";
+
+    // Si es JSON plano (array de violaciones sin estructura)
+    if (Array.isArray(json) && json[0]?.id && !json[0]?.violations) {
+      merged.push({
+        origen,
+        url: json[0].url || "https://example.cypress.io",
+        pageTitle: "(sin título)",
+        selector: "body",
+        date: new Date().toISOString(),
+        system: "macOS + Chrome (Cypress + axe-core)",
+        violations: json,
+      });
+      console.log(`✅ Normalizado JSON plano: ${relative}`);
+      continue;
+    }
+
+    // Si es formato estructurado con violaciones
     (Array.isArray(json) ? json : [json]).forEach((item) => {
       if (!item) return;
       const pageUrl = item.url || item.page;
-      if (!pageUrl) return;
-
-      const violations = Array.isArray(item.violations) ? item.violations : [];
-      if (violations.length === 0) return;
+      if (!pageUrl || !isValidResult(item)) return;
 
       merged.push({
         origen,
@@ -89,7 +111,7 @@ for (const file of resultFiles) {
         selector: item.selector || "body",
         date: item.date || new Date().toISOString(),
         system: item.system || "macOS + Chrome (Cypress + axe-core)",
-        violations,
+        violations: item.violations,
       });
     });
 
@@ -139,7 +161,7 @@ merged = merged.map((item) => {
   const capture =
     findCaptureFor(item.url, item.selector) || findCaptureFor(item.url, "body");
   if (capture) {
-    item.capturePath = `capturas/${capture}`.substring(0, 250); // 🔒 evita paths largos
+    item.capturePath = `capturas/${capture}`.substring(0, 250);
   }
   return item;
 });
@@ -163,19 +185,21 @@ merged.forEach((r) => {
 });
 
 // ===========================================================
-// 💾 Guardar archivo final
+// 💾 Guardar archivo final y last-merged.txt
 // ===========================================================
 const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 const outputFile = path.join(AUDITORIAS_DIR, `results-merged-${timestamp}.json`);
 
 try {
   fs.writeFileSync(outputFile, JSON.stringify(merged, null, 2), "utf8");
-
-  // Verificación rápida de integridad
   const stat = fs.statSync(outputFile);
   if (stat.size < 200) throw new Error("archivo demasiado pequeño o vacío");
 
+  // Crear referencia para pipeline posterior
+  fs.writeFileSync(path.join(AUDITORIAS_DIR, "last-merged.txt"), outputFile, "utf8");
+
   console.log(`\n✅ Archivo final generado: ${outputFile} (${stat.size} bytes)`);
+  console.log(`🧾 Referencia guardada en auditorias/last-merged.txt`);
 } catch (err) {
   console.error(`❌ Error guardando ${outputFile}: ${err.message}`);
   process.exit(1);
@@ -208,4 +232,3 @@ console.log("✅ Fusión completada correctamente.");
 console.log("===============================================\n");
 
 process.exit(0);
-

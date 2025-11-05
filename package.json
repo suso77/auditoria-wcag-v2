@@ -1,11 +1,11 @@
 {
   "name": "auditoria-wcag-v2",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "type": "module",
   "description": "Auditoría de accesibilidad automatizada con Cypress + axe-core + Puppeteer + ExcelJS + GitHub Actions (IAAP/W3C)",
   "scripts": {
     "check-env": "node scripts/check-env.cjs",
-    "validate:urls": "ts-node scripts/validate-urls.ts",
+    "validate:urls": "node scripts/validate-urls.mjs",
     "tag-origen": "node scripts/tag-origen.cjs",
     "merge-results": "node scripts/merge-results.mjs",
     "fix": "node scripts/fix-json.cjs",
@@ -19,7 +19,7 @@
     "audit:debug": "cypress run --spec cypress/e2e/accesibilidad-sitemap.cy.js --browser chrome --headed",
     "capture:evidence": "node --max-old-space-size=4096 --experimental-specifier-resolution=node scripts/capture-evidence.mjs",
     "export:xlsx": "node --max-old-space-size=4096 --experimental-specifier-resolution=node scripts/export-to-xlsx.mjs",
-    "summary": "node scripts/generate-summary.mjs $(ls -t auditorias/results-merged-*.json | head -n1)",
+    "summary": "node scripts/generate-summary.mjs $(cat auditorias/last-merged.txt)",
     "quality": "node scripts/quality-gate.cjs",
     "audit:all": "npm run check-env && npm run validate:urls && npm run crawl:js && npm run audit:sitemap && npm run audit:interactiva && npm run tag-origen && npm run merge-results && npm run capture:evidence && npm run export:xlsx && npm run summary && npm run quality",
     "audit:full": "npm run preaudit && npm run audit:all",
@@ -29,21 +29,23 @@
   },
   "dependencies": {
     "archiver": "^7.0.1",
-    "axe-core": "^4.10.0",
     "axios": "^1.7.2",
     "chalk": "^5.6.2",
     "cheerio": "^1.0.0-rc.12",
-    "cypress": "^13.17.0",
-    "cypress-axe": "^1.5.0",
     "date-fns": "^3.6.0",
     "exceljs": "^4.4.0",
     "fs-extra": "^11.2.0",
     "open": "^10.2.0",
     "puppeteer": "^23.6.0",
-    "sharp": "^0.34.4"
+    "sharp": "^0.34.4",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/node": "^22.8.0",
+    "axe-core": "^4.11.0",
+    "cypress": "^15.6.0",
+    "cypress-axe": "^1.7.0",
+    "cypress-real-events": "^1.15.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   },

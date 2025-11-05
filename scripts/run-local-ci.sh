@@ -1,130 +1,101 @@
-#!/usr/bin/env bash
-# ================================================================
-# ♿ Auditoría de Accesibilidad Local – Ilúmina Media (v2.1 PRO)
-# ================================================================
-# Ejecuta el pipeline completo localmente con el mismo flujo que GitHub Actions:
-# - Rastreo (crawler)
-# - Auditorías sitemap + interactiva
-# - Capturas de evidencias
-# - Exportación profesional Excel + ZIP
-# - Quality Gate + resumen ejecutivo
-# ================================================================
+#!/bin/bash
 
-set -e  # Detener en errores
-set -o pipefail
+# ------------------------------------------------------------------------
+# Configuración del flujo de auditoría local para WCAG
+# ------------------------------------------------------------------------
 
-# ---------------------------------------------------------------
-# 🧭 CONFIGURACIÓN INICIAL
-# ---------------------------------------------------------------
-SITE_URL=${SITE_URL:-"https://www.hiexperience.es"}
-CRITICAL_MAX=${CRITICAL_MAX:-5}
-SERIOUS_MAX=${SERIOUS_MAX:-20}
+# Variables de entorno (puedes cambiar SITE_URL)
+export SITE_URL="https://www.hiexperience.es"
+export CRITICAL_MAX=5
+export SERIOUS_MAX=20
+export NODE_ENV=production
+export TZ=Europe/Madrid
 
-echo "==============================================================="
-echo "♿ AUDITORÍA DE ACCESIBILIDAD LOCAL – Ilúmina Media (v2.1)"
-echo "==============================================================="
-echo "🌍 Sitio a auditar: $SITE_URL"
-echo "🚦 Quality Gate: Critical <= $CRITICAL_MAX | Serious <= $SERIOUS_MAX"
-echo "==============================================================="
-
-# ---------------------------------------------------------------
-# 🧹 LIMPIEZA Y PREPARACIÓN
-# ---------------------------------------------------------------
+# Limpiar resultados anteriores
 echo "🧹 Limpiando auditorías anteriores..."
-mkdir -p auditorias/capturas
 rm -rf auditorias/* || true
-echo "✅ Limpieza completada."
+mkdir -p auditorias/capturas auditorias/logs
 
-# ---------------------------------------------------------------
-# ⚙️ INSTALACIÓN Y VALIDACIÓN
-# ---------------------------------------------------------------
-echo "📦 Verificando dependencias..."
-if [ ! -d "node_modules" ]; then
-  npm ci
-else
-  npm install --prefer-offline --no-audit --progress=false
-fi
+# Instalar dependencias
+echo "📦 Instalando dependencias..."
+npm ci || npm install
+echo "✅ Dependencias instaladas correctamente."
 
-echo "🧩 Verificando entorno base..."
-npm run check-env || true
+# Verificar ts-node
+echo "🧩 Verificando ts-node..."
+npx ts-node --version || npm install ts-node typescript --no-save
 
-# ---------------------------------------------------------------
-# 🌐 RASTREO DE URLs
-# ---------------------------------------------------------------
-echo "🌐 Iniciando rastreo de URLs con Puppeteer..."
+# Verificar Cypress
+echo "🧩 Verificando instalación de Cypress..."
+npx cypress verify || (echo "⚠️ Reinstalando Cypress..." && npx cypress install)
+
+# Validar el entorno base
+echo "🧾 Validando entorno base..."
+node scripts/check-env.cjs
+
+# Validar listado de URLs
+echo "🔍 Validando scripts/urls.json..."
+npx ts-node --transpile-only scripts/validate-urls.ts || echo "⚠️ Se generará en el siguiente paso"
+
+# Iniciar rastreo de URLs
+echo "🌐 Rastreo de URLs en $SITE_URL..."
 npm run crawl:js
 
-if [ ! -s scripts/urls.json ]; then
-  echo "❌ No se generó scripts/urls.json. Abortando auditoría."
-  exit 1
+# Ejecutar auditoría de accesibilidad - Sitemap
+echo "♿ Iniciando auditoría de accesibilidad – Sitemap..."
+npx cypress run --browser chrome --headless --config-file cypress.config.cjs --spec "cypress/e2e/sitemap/**/*.cy.js" || npm run audit:sitemap
+
+# Ejecutar auditoría de accesibilidad - Componentes interactivos
+echo "♿ Iniciando auditoría interactiva..."
+npx cypress run --browser chrome --headless --config-file cypress.config.cjs --spec "cypress/e2e/interactiva/**/*.cy.js" || npm run audit:interactiva || echo "⚠️ No hay specs interactivas."
+
+# Añadir campo origen a los resultados
+echo "🏷️ Añadiendo campo 'origen' a los resultados..."
+node scripts/tag-origen.cjs
+
+# Combinar resultados de auditoría
+echo "🧩 Combinando resultados..."
+node scripts/merge-results.mjs
+
+# Verificar Quality Gate
+echo "🚦 Verificando Quality Gate WCAG..."
+npm run quality || echo "⚠️ Quality Gate con advertencias"
+
+# Generar capturas de evidencias WCAG
+echo "📸 Generando evidencias visuales..."
+if [ -f scripts/capture-evidence.mjs ]; then
+  node --max-old-space-size=4096 --experimental-specifier-resolution=node scripts/capture-evidence.mjs
+else
+  echo "⚠️ No se encontró scripts/capture-evidence.mjs — se omite."
 fi
 
-echo "✅ Rastreo completado. URLs detectadas:"
-cat scripts/urls.json | jq '.[].url' 2>/dev/null || cat scripts/urls.json
+# Generar informe Excel + ZIP
+echo "📊 Generando informe profesional IAAP / W3C..."
+node --max-old-space-size=4096 --experimental-specifier-resolution=node scripts/export-to-xlsx.mjs
 
-# ---------------------------------------------------------------
-# ♿ AUDITORÍA WCAG – SITEMAP
-# ---------------------------------------------------------------
-echo "---------------------------------------------------------------"
-echo "♿ Ejecutando auditoría de accesibilidad (Sitemap)"
-echo "---------------------------------------------------------------"
-npm run audit:sitemap || echo "⚠️ Auditoría Sitemap completada con advertencias"
+# Generar resumen ejecutivo en Markdown
+echo "🧾 Generando resumen ejecutivo (Markdown)..."
+node scripts/generate-summary.mjs auditorias/results-merged-*.json > auditorias/Resumen-WCAG.md || echo "⚠️ No se pudo generar resumen."
 
-# ---------------------------------------------------------------
-# 🧠 AUDITORÍA WCAG – INTERACTIVA
-# ---------------------------------------------------------------
-echo "---------------------------------------------------------------"
-echo "🧠 Ejecutando auditoría de accesibilidad (Interactiva)"
-echo "---------------------------------------------------------------"
-npm run audit:interactiva || echo "⚠️ Auditoría Interactiva completada con advertencias"
+# Validar informe Excel generado
+echo "🔍 Validando informe generado..."
+if [ ! -f auditorias/Informe-WCAG-Profesional.xlsx ]; then
+  echo "❌ No se generó el informe Excel."
+  exit 1
+fi
+echo "✅ Informe Excel detectado correctamente."
 
-# ---------------------------------------------------------------
-# 🏷️ AÑADIR ORIGEN A RESULTADOS
-# ---------------------------------------------------------------
-echo "🏷️ Añadiendo campo 'origen' a los resultados..."
-npm run tag-origen || true
+# Subir artefactos finales
+echo "📤 Subiendo artefactos finales..."
+mkdir -p auditorias/artifacts
+tar -czf auditorias/artifacts/WCAG-Informe-$(date +%F).tar.gz auditorias/
 
-# ---------------------------------------------------------------
-# 🔄 COMBINAR RESULTADOS
-# ---------------------------------------------------------------
-echo "🔄 Combinando resultados (sitemap + interactiva)..."
-npm run merge-results
-echo "✅ Archivo combinado generado."
+# Resumen final
+echo "✅ Resumen final de ejecución"
+echo "---------------------------------------------"
+echo "🌍 Sitio auditado: $SITE_URL"
+echo "📊 Informe generado: auditorias/Informe-WCAG-Profesional.xlsx"
+echo "📸 Capturas incluidas en ZIP"
+echo "🚦 Quality Gate: Critical <= $CRITICAL_MAX, Serious <= $SERIOUS_MAX"
+echo "✅ Auditoría completada correctamente."
 
-# ---------------------------------------------------------------
-# 📸 CAPTURAS DE EVIDENCIAS
-# ---------------------------------------------------------------
-echo "📸 Generando capturas de evidencias WCAG..."
-npm run capture:evidence || echo "⚠️ Generación de capturas completada con advertencias."
-
-# ---------------------------------------------------------------
-# 📊 EXPORTAR INFORME PROFESIONAL
-# ---------------------------------------------------------------
-echo "📊 Exportando informe profesional (Excel + ZIP)..."
-npm run export:xlsx || echo "⚠️ Exportación con advertencias."
-
-# ---------------------------------------------------------------
-# 🚦 QUALITY GATE
-# ---------------------------------------------------------------
-echo "🚦 Ejecutando control de calidad..."
-npm run quality || echo "⚠️ Quality Gate con advertencias."
-
-# ---------------------------------------------------------------
-# 🧾 RESUMEN EJECUTIVO
-# ---------------------------------------------------------------
-echo "🧾 Generando resumen ejecutivo WCAG..."
-npm run summary || echo "⚠️ Resumen ejecutivo no generado."
-
-# ---------------------------------------------------------------
-# ✅ FINALIZACIÓN
-# ---------------------------------------------------------------
-echo "==============================================================="
-echo "✅ PIPELINE LOCAL FINALIZADO CORRECTAMENTE"
-echo "---------------------------------------------------------------"
-echo "📂 Resultados disponibles en /auditorias/"
-echo "📘 Informe Excel: auditorias/Informe-WCAG-Profesional.xlsx"
-echo "🗜️ ZIP completo: auditorias/Informe-WCAG.zip"
-echo "🧾 Resumen: auditorias/Resumen-WCAG.md"
-echo "📸 Capturas: auditorias/capturas/"
-echo "🧭 Logs: auditorias/logs.txt"
-echo "==============================================================="
