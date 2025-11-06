@@ -3,13 +3,15 @@ import "cypress-axe";
 import "cypress-real-events/support";
 
 /**
- * ♿ Auditoría de accesibilidad – Componentes interactivos (v3.5.1 IAAP / WCAG 2.2 estable)
- * -------------------------------------------------------------------------
- * ✅ Audita todas las URLs del sitemap (sin quedarse en la primera)
- * ✅ Ejecución secuencial garantizada (Cypress.Promise.each)
+ * ♿ Auditoría de accesibilidad – Componentes interactivos (v3.6.0 IAAP / WCAG 2.2 CI+)
+ * ----------------------------------------------------------------------------------------
+ * ✅ Auditoría real en todas las URLs (sin quedarse en la primera)
+ * ✅ Inyección verificada de axe-core (dom completo garantizado)
+ * ✅ Ejecución secuencial real garantizada (Cypress.Promise.each)
  * ✅ Limpieza de memoria segura (sin romper el DOM)
- * ✅ Capturas y logs IAAP por componente
- * ✅ Reintento automático ante errores de red o timeout
+ * ✅ Capturas y logs IAAP por componente y violación
+ * ✅ Reintento ante errores de red o timeout
+ * ✅ Total compatibilidad con GitHub Actions y CI headless
  */
 
 describe("♿ Auditoría de accesibilidad – Componentes interactivos (IAAP PRO)", () => {
@@ -27,17 +29,31 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (IAAP PRO
     '[aria-label*="cookie"]',
   ];
 
+  // ===========================================================
+  // ⚙️ Manejo tolerante de errores
+  // ===========================================================
   Cypress.on("fail", (error) => {
     if (error.message?.includes("accessibility violation")) return false;
     console.warn("⚠️ Error tolerado:", error.message);
     return false;
   });
 
+  // ===========================================================
+  // ♿ Función auxiliar de auditoría por componente
+  // ===========================================================
   const runA11y = (selector, page, safeSel, slug) => {
     let attempts = 0;
 
     const execute = () => {
       attempts++;
+      cy.document().its("readyState").should("eq", "complete");
+      cy.wait(1000);
+      cy.injectAxe();
+
+      cy.window().then((win) => {
+        if (!win.axe) cy.task("log", `⚠️ axe-core no inyectado correctamente en ${page}`);
+      });
+
       cy.checkA11y(
         selector,
         null,
@@ -51,7 +67,11 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (IAAP PRO
           });
 
           if (violations.length > 0) {
-            // 📸 Capturas por violación
+            cy.task(
+              "log",
+              `♿ ${page} / ${selector} — ${violations.length} violaciones detectadas`
+            );
+
             violations.forEach((v, i) => {
               const id = v.id || `violacion-${i}`;
               cy.screenshot(`auditorias/capturas/${slug}/${safeSel}/${id}`, {
@@ -68,6 +88,8 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (IAAP PRO
               violations,
               system: "macOS + Chrome (Cypress + axe-core)",
             });
+          } else {
+            cy.task("log", `✅ ${page} / ${selector} — Sin violaciones detectadas.`);
           }
         },
         { skipFailures: true }
@@ -76,7 +98,6 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (IAAP PRO
         if ((msg.includes("timeout") || msg.includes("ERR_CONNECTION")) && attempts <= MAX_RETRIES) {
           cy.task("log", `🔁 Reintentando ${selector} en ${page}`);
           cy.wait(1000);
-          cy.injectAxe();
           execute();
         }
       });
@@ -86,7 +107,7 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (IAAP PRO
   };
 
   // ===========================================================
-  // 🧩 Test principal sincronizado y secuencial
+  // 🧩 Test principal — Ejecución secuencial real
   // ===========================================================
   it("Audita todos los componentes interactivos en todas las URLs", () => {
     cy.viewport(1280, 720);
@@ -102,9 +123,16 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (IAAP PRO
 
         return cy
           .visit(page, { timeout: 90000, failOnStatusCode: false })
-          .wait(1000)
           .then(() => {
+            // 🕒 Espera al DOM completo antes de inyectar axe
+            cy.document().its("readyState").should("eq", "complete");
+            cy.wait(1500);
             cy.injectAxe();
+
+            cy.window().then((win) => {
+              if (!win.axe)
+                cy.task("log", `⚠️ axe-core no inyectado correctamente en ${page}`);
+            });
 
             cy.screenshot(`auditorias/capturas/${slug}/pagina`, {
               capture: "viewport",
@@ -128,7 +156,6 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (IAAP PRO
               "header, footer, main, aside",
             ];
 
-            // 🔁 Evita reauditar cabecera/cookies/footer en cada URL
             if (index > 0) {
               selectors = selectors.filter(
                 (sel) =>
@@ -140,60 +167,61 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (IAAP PRO
 
             const detected = new Set();
 
-            cy.get("body").then(($body) => {
-              selectors.forEach((sel) => {
-                if ($body.find(sel).length > 0) detected.add(sel);
-              });
-            });
+            // 🔍 Detectar componentes existentes
+            return cy
+              .get("body")
+              .then(($body) => {
+                selectors.forEach((sel) => {
+                  if ($body.find(sel).length > 0) detected.add(sel);
+                });
+              })
+              .then(() => {
+                if (detected.size === 0) {
+                  cy.task("log", `ℹ️ No se detectaron componentes en ${page}`);
+                  return;
+                }
 
-            cy.then(() => {
-              if (detected.size === 0) {
-                cy.task("log", `ℹ️ No se detectaron componentes en ${page}`);
-                return;
-              }
+                // ♿ Auditoría IAAP por cada componente detectado
+                return Cypress.Promise.each(Array.from(detected), (selector) => {
+                  return cy.get("body").then(($body) => {
+                    if ($body.find(selector).length === 0) return;
 
-              // 🔍 Interacción + auditoría IAAP por componente
-              return Cypress.Promise.each(Array.from(detected), (selector) => {
-                return cy.get("body").then(($body) => {
-                  if ($body.find(selector).length === 0) return;
+                    cy.get(selector)
+                      .first()
+                      .scrollIntoView()
+                      .then(($el) => {
+                        const safeSel = selector.replace(/[^\w-]/g, "_");
 
-                  cy.get(selector)
-                    .first()
-                    .scrollIntoView()
-                    .then(($el) => {
-                      const safeSel = selector.replace(/[^\w-]/g, "_");
+                        if (
+                          selector.includes("menu") ||
+                          selector.includes("accordion") ||
+                          selector.includes("collapsible") ||
+                          selector.includes("modal") ||
+                          selector.includes("dialog")
+                        ) {
+                          cy.wrap($el).click({ force: true });
+                        }
 
-                      if (
-                        selector.includes("menu") ||
-                        selector.includes("accordion") ||
-                        selector.includes("collapsible") ||
-                        selector.includes("modal") ||
-                        selector.includes("dialog")
-                      ) {
-                        cy.wrap($el).click({ force: true });
-                      }
-
-                      cy.wait(800);
-                      cy.realPress("Tab");
-                      cy.injectAxe();
-                      runA11y(selector, page, safeSel, slug);
-                    });
+                        cy.wait(1200);
+                        cy.realPress("Tab");
+                        runA11y(selector, page, safeSel, slug);
+                      });
+                  });
+                });
+              })
+              .then(() => {
+                // ✅ Limpieza del DOM segura
+                cy.window().then((win) => {
+                  try {
+                    if (win.stop) win.stop();
+                    if (win.gc) win.gc();
+                    win.location.replace("about:blank");
+                    cy.task("log", "🧹 Memoria liberada correctamente (safe mode).");
+                  } catch (err) {
+                    cy.task("log", `⚠️ Limpieza parcial: ${err.message || "sin mensaje"}`);
+                  }
                 });
               });
-            });
-          })
-          .then(() => {
-            // ✅ Limpieza segura sin destruir DOM
-            cy.window().then((win) => {
-              try {
-                if (win.stop) win.stop();
-                if (win.gc) win.gc();
-                win.location.replace("about:blank");
-                cy.task("log", "🧹 Memoria liberada correctamente (safe mode).");
-              } catch (err) {
-                cy.task("log", `⚠️ Limpieza parcial: ${err.message || "sin mensaje"}`);
-              }
-            });
           })
           .wait(500);
       });
@@ -223,7 +251,6 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (IAAP PRO
       cy.task("log", `✅ Resultados guardados en: ${outputDir}/results.json`)
     );
 
-    // 📊 Resumen IAAP
     const total = onlyViolations.flatMap((r) => r.violations || []);
     const counts = {
       critical: total.filter((v) => v.impact === "critical").length,
@@ -240,6 +267,8 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (IAAP PRO
     cy.writeFile("auditorias/last-interactiva.txt", outputDir, "utf8");
   });
 });
+
+
 
 
 
