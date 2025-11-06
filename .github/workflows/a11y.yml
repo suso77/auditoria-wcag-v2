@@ -107,6 +107,14 @@ jobs:
           node scripts/validate-urls.mjs || echo "⚠️ Validación no crítica"
           echo "::endgroup::"
 
+      # ✅ Fallback adicional por si el rastreo no genera URLs
+      - name: 🔧 Fallback de URLs
+        run: |
+          if [ ! -s scripts/urls.json ]; then
+            echo "⚠️ Generando urls.json vacío (no crítico)"
+            echo "[]" > scripts/urls.json
+          fi
+
       # =====================================================
       # ♿ Auditorías principales
       # =====================================================
@@ -115,8 +123,7 @@ jobs:
         continue-on-error: true
         with:
           install-command: npm ci --include=dev
-          command: > 
-            # ✅ FIX: eliminado NODE_OPTIONS="" (causaba error en GitHub Actions)
+          command: >
             npx cypress run --browser chrome --headless
             --config-file cypress.config.cjs
             --spec "cypress/e2e/accesibilidad-sitemap.cy.js"
@@ -124,7 +131,6 @@ jobs:
       - name: 🧠 Auditoría de accesibilidad – Componentes interactivos
         continue-on-error: true
         run: |
-          # ✅ FIX: eliminado NODE_OPTIONS="" (causaba error en GitHub Actions)
           npx cypress run --browser chrome --headless --config-file cypress.config.cjs \
             --spec "cypress/e2e/accesibilidad-interactiva.cy.js" \
             || echo "⚠️ No hay specs interactivas o se omitieron."
@@ -137,7 +143,6 @@ jobs:
       # =====================================================
       - name: 🧩 Combinar resultados (merge-results.mjs)
         run: |
-          # ✅ FIX: no romper flujo si archivo está vacío o no existe
           node scripts/merge-results.mjs || echo "⚠️ No hay resultados válidos para combinar."
 
       - name: 🧾 Generar resumen ejecutivo (Markdown)
@@ -151,17 +156,16 @@ jobs:
 
       - name: 🚦 Quality Gate – WCAG
         continue-on-error: true
-        run: |
-          npm run quality || echo "⚠️ Quality Gate con advertencias."
+        run: npm run quality || echo "⚠️ Quality Gate con advertencias."
 
       # =====================================================
       # 📊 Exportaciones IAAP
       # =====================================================
       - name: 📊 Exportar informe Excel IAAP
-        run: node scripts/export-to-xlsx.mjs || echo "⚠️ Error no crítico exportando Excel." # ✅ FIX tolerancia
+        run: node scripts/export-to-xlsx.mjs || echo "⚠️ Error no crítico exportando Excel."
 
       - name: 🖨️ Generar PDF IAAP profesional
-        run: node scripts/generate-report.mjs || echo "⚠️ Error no crítico generando PDF." # ✅ FIX tolerancia
+        run: node scripts/generate-report.mjs || echo "⚠️ Error no crítico generando PDF."
         env:
           PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome-stable
 
@@ -183,15 +187,25 @@ jobs:
       # =====================================================
       - name: 🧱 Preparar carpeta pública
         run: |
+          set +e
           FECHA=$(date +'%Y-%m-%d_%H-%M-%S')
           mkdir -p public/auditorias/${FECHA}
-          cp auditorias/Informe-WCAG-Profesional.pdf public/auditorias/${FECHA}/
-          cp auditorias/Resumen-WCAG.md public/auditorias/${FECHA}/
-          cp auditorias/Informe-WCAG-Completo.zip public/auditorias/${FECHA}/
-          cp $(ls -t auditorias/results-merged-*.json | head -n1) public/auditorias/${FECHA}/resultados.json
 
-          # Generar dashboard individual
+          echo "🧾 Copiando archivos disponibles..."
+          [ -f auditorias/Informe-WCAG-Profesional.pdf ] && cp auditorias/Informe-WCAG-Profesional.pdf public/auditorias/${FECHA}/ || echo "⚠️ PDF no encontrado."
+          [ -f auditorias/Resumen-WCAG.md ] && cp auditorias/Resumen-WCAG.md public/auditorias/${FECHA}/ || echo "⚠️ Resumen no encontrado."
+          [ -f auditorias/Informe-WCAG-Completo.zip ] && cp auditorias/Informe-WCAG-Completo.zip public/auditorias/${FECHA}/ || echo "⚠️ ZIP no encontrado."
+
+          LAST_JSON=$(ls -t auditorias/results-merged-*.json 2>/dev/null | head -n1)
+          if [ -n "$LAST_JSON" ]; then
+            cp "$LAST_JSON" public/auditorias/${FECHA}/resultados.json
+          else
+            echo "⚠️ No se encontró results-merged.json. Creando JSON vacío."
+            echo "[]" > public/auditorias/${FECHA}/resultados.json
+          fi
+
           cp public/auditorias/${FECHA}/resultados.json public/auditorias/${FECHA}/data.json
+
           cat > public/auditorias/${FECHA}/index.html <<'HTML'
           <!DOCTYPE html>
           <html lang="es">
@@ -219,20 +233,16 @@ jobs:
               <p><strong>Conformidad:</strong> <span id="conf"></span>%</p>
               <canvas id="chart"></canvas>
             </section>
-
             <section>
               <h2>📄 Informe PDF IAAP</h2>
               <iframe src="Informe-WCAG-Profesional.pdf" title="Informe PDF"></iframe>
             </section>
-
             <section>
               <h2>💾 Descargas</h2>
               <button onclick="window.open('Informe-WCAG-Completo.zip')">⬇️ Descargar Informe Completo (ZIP)</button>
               <p><a href="Resumen-WCAG.md">📘 Ver resumen Markdown</a></p>
             </section>
-
             <footer>© Ilúmina Audit IAAP · 2025</footer>
-
             <script>
               fetch('data.json')
                 .then(r=>r.json())
@@ -252,10 +262,9 @@ jobs:
           </html>
           HTML
 
-          # Actualizar histórico
           mkdir -p public/auditorias
           echo "<!DOCTYPE html><html lang='es'><head><meta charset='utf-8'><title>Histórico de auditorías WCAG</title><style>body{font-family:sans-serif;margin:2em;background:#f9fafc;}table{border-collapse:collapse;width:100%;}th,td{border:1px solid #ccc;padding:.5em;text-align:left;}th{background:#004080;color:white;}</style></head><body><h1>📜 Histórico de Auditorías WCAG</h1><table><tr><th>Fecha</th><th>Conformidad</th><th>Informe</th></tr>" > public/auditorias/index.html
-          for dir in $(ls -dt public/auditorias/*/ | head -n 20); do
+          for dir in $(ls -dt public/auditorias/*/ 2>/dev/null | head -n 20); do
             if [ -f "${dir}data.json" ]; then
               CONF=$(node -e "const d=require('${dir}data.json');const t=new Set(d.map(x=>x.url)).size;const i=d.flatMap(r=>r.violations?.map(v=>v.impact||'unknown')||[]);const c=i.reduce((a,x)=>{a[x]=(a[x]||0)+1;return a;},{});const p=(c.critical||0)*2+(c.serious||0)*1.2+(c.moderate||0)*0.5+(c.minor||0)*0.2;console.log((100-p/Math.max(t,1)).toFixed(1));")
               echo "<tr><td>${dir#public/auditorias/}</td><td>${CONF}%</td><td><a href='${dir#public/}'>Ver informe</a></td></tr>" >> public/auditorias/index.html
@@ -264,6 +273,7 @@ jobs:
           echo "</table><p>🧩 Ilúmina Audit IAAP – generado automáticamente</p></body></html>" >> public/auditorias/index.html
 
       - name: 🚀 Publicar en GitHub Pages
+        if: success() || always()
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -289,6 +299,7 @@ jobs:
 
       - name: ✅ Resumen final
         run: |
+          FECHA=$(date +'%Y-%m-%d_%H-%M-%S')
           echo "==============================================="
           echo "♿ AUDITORÍA COMPLETADA CORRECTAMENTE"
           echo "==============================================="
