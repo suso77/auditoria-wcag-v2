@@ -1,11 +1,13 @@
 /**
- * 📊 export-to-xlsx.mjs (v3.6 IAAP / W3C)
- * --------------------------------------------------------------
- * Genera informe profesional WCAG:
- *  - Traduce automáticamente las descripciones.
- *  - Agrupa por severidad y criterio WCAG.
- *  - Incluye capturas (si existen).
- * --------------------------------------------------------------
+ * 📊 export-to-xlsx.mjs (v4.0.0 IAAP PRO / W3C)
+ * -------------------------------------------------------------------
+ * Genera informe de auditoría accesible IAAP:
+ *  - Pestañas: Sitemap / Interactiva / Resumen global
+ *  - Traducción automática (DeepLx) con caché local
+ *  - Formato profesional IAAP (12 columnas)
+ *  - Compatible con merge-results v4.0.0
+ *  - Incluye capturas, sistema y metodología WCAG
+ * -------------------------------------------------------------------
  */
 
 import fs from "fs";
@@ -27,16 +29,14 @@ const cache = new Map();
 async function traducir(texto) {
   if (!texto || texto.length < 4) return texto;
   if (cache.has(texto)) return cache.get(texto);
-
-  // ya en español
-  if (/[áéíóúñ¿¡]/i.test(texto)) return texto;
+  if (/[áéíóúñ¿¡]/i.test(texto)) return texto; // Ya en español
 
   try {
     const { stdout } = await execAsync(
       `curl -s -X POST "https://api-free.deeplx.org/translate" -H "Content-Type: application/json" -d '{"text": ${JSON.stringify(
         texto
       )}, "source_lang": "EN", "target_lang": "ES"}'`,
-      { timeout: 4000 }
+      { timeout: 5000 }
     );
     const res = JSON.parse(stdout);
     const tr = res?.data?.translations?.[0]?.text?.trim() || texto;
@@ -47,294 +47,168 @@ async function traducir(texto) {
     return texto;
   }
 }
-// ===========================================================
-// 📘 Diccionario base de criterios WCAG (v4.9 completo)
-// -----------------------------------------------------------
-// Asociación entre IDs de axe-core y criterios WCAG 2.1 / 2.2
-// Cada entrada sigue la estructura:
-//   "<axe-id>": "<criterio> <nombre> (<nivel>)"
-// ===========================================================
-const wcagMap = {
-  // =======================================================
-  // 🧭 PRINCIPIO 1: Perceptible
-  // =======================================================
-
-  // Texto alternativo
-  "image-alt": "1.1.1 Contenido no textual (A)",
-  "area-alt": "1.1.1 Contenido no textual (A)",
-  "object-alt": "1.1.1 Contenido no textual (A)",
-  "input-image-alt": "1.1.1 Contenido no textual (A)",
-
-  // Adaptable
-  "aria-hidden-focus": "1.3.1 Información y relaciones (A)",
-  "aria-allowed-attr": "1.3.1 Información y relaciones (A)",
-  "aria-allowed-role": "1.3.1 Información y relaciones (A)",
-  "label-title-only": "1.3.1 Información y relaciones (A)",
-  "form-field-multiple-labels": "1.3.1 Información y relaciones (A)",
-  "definition-list": "1.3.1 Información y relaciones (A)",
-
-  // Contraste y color
-  "color-contrast": "1.4.3 Contraste (AA)",
-  "color-contrast-enhanced": "1.4.6 Contraste (AAA)",
-  "link-in-text-block": "1.4.1 Uso del color (A)",
-  "meta-viewport": "1.4.4 Cambio de tamaño del texto (AA)",
-  "scrollable-region-focusable": "1.4.10 Reflujo (AA)",
-  "video-caption": "1.2.2 Subtítulos (A)",
-
-  // Contenido auditivo y visual
-  "video-description": "1.2.5 Descripción de audio (AA)",
-  "audio-control": "1.4.2 Control de audio (A)",
-  "frame-title": "1.3.1 Información y relaciones (A)",
-  "frame-tested": "1.1.1 Contenido no textual (A)",
-
-  // Idioma y contenido textual
-  "html-has-lang": "3.1.1 Idioma de la página (A)",
-  "html-lang-valid": "3.1.2 Idioma de las partes (AA)",
-  "valid-lang": "3.1.2 Idioma de las partes (AA)",
-
-  // =======================================================
-  // 🧭 PRINCIPIO 2: Operable
-  // =======================================================
-
-  // Navegación por teclado
-  "focus-visible": "2.4.7 Foco visible (AA)",
-  "focus-order": "2.4.3 Orden del foco (A)",
-  "tabindex": "2.1.1 Teclado (A)",
-  "skip-link": "2.4.1 Evitar bloques (A)",
-  "bypass": "2.4.1 Evitar bloques (A)",
-  "target-size": "2.5.8 Tamaño del objetivo (AA)",
-
-  // Enlaces y navegación
-  "link-name": "2.4.4 Propósito del enlace (A)",
-  "link-in-text-block": "2.4.4 Propósito del enlace (A)",
-  "page-has-heading-one": "2.4.6 Encabezados y etiquetas (AA)",
-  "landmark-one-main": "1.3.1 Información y relaciones (A)",
-
-  // Temporizadores y control del tiempo
-  "meta-refresh": "2.2.1 Tiempo ajustable (A)",
-  "no-autoplay-audio": "1.4.2 Control de audio (A)",
-
-  // Gestos y movimiento
-  "motion-actuation": "2.5.4 Activación por movimiento (A)",
-  "dragging-movements": "2.5.7 Arrastrar movimientos (AA)",
-
-  // =======================================================
-  // 🧭 PRINCIPIO 3: Comprensible
-  // =======================================================
-
-  // Formularios, etiquetas y errores
-  "label": "3.3.2 Etiquetas o instrucciones (A)",
-  "label-content-name-mismatch": "2.5.3 Etiqueta en el nombre (A)",
-  "form-field-has-label": "3.3.2 Etiquetas o instrucciones (A)",
-  "input-button-name": "4.1.2 Nombre, función, valor (A)",
-  "select-name": "4.1.2 Nombre, función, valor (A)",
-  "aria-required-parent": "3.3.1 Identificación de errores (A)",
-  "aria-required-children": "3.3.1 Identificación de errores (A)",
-  "aria-input-field-name": "3.3.2 Etiquetas o instrucciones (A)",
-
-  // Lenguaje legible
-  "html-has-lang": "3.1.1 Idioma de la página (A)",
-  "html-lang-valid": "3.1.2 Idioma de las partes (AA)",
-  "valid-lang": "3.1.2 Idioma de las partes (AA)",
-  "duplicate-id": "4.1.1 Procesamiento (A)",
-
-  // Navegación y coherencia
-  "heading-order": "2.4.6 Encabezados y etiquetas (AA)",
-  "aria-level": "2.4.6 Encabezados y etiquetas (AA)",
-  "consistent-navigation": "3.2.3 Navegación consistente (AA)",
-  "consistent-identification": "3.2.4 Identificación consistente (AA)",
-  "aria-roles": "4.1.2 Nombre, función, valor (A)",
-
-  // =======================================================
-  // 🧭 PRINCIPIO 4: Robusto
-  // =======================================================
-
-  // ARIA y roles
-  "aria-allowed-role": "4.1.2 Nombre, función, valor (A)",
-  "aria-required-attr": "4.1.2 Nombre, función, valor (A)",
-  "aria-valid-attr-value": "4.1.2 Nombre, función, valor (A)",
-  "aria-valid-attr": "4.1.2 Nombre, función, valor (A)",
-  "aria-allowed-attr": "4.1.2 Nombre, función, valor (A)",
-  "aria-command-name": "4.1.2 Nombre, función, valor (A)",
-  "aria-prohibited-attr": "4.1.2 Nombre, función, valor (A)",
-
-  // Semántica y estructura
-  "duplicate-id": "4.1.1 Procesamiento (A)",
-  "landmark-no-duplicate-banner": "4.1.1 Procesamiento (A)",
-  "landmark-unique": "4.1.1 Procesamiento (A)",
-  "html-namespace": "4.1.1 Procesamiento (A)",
-
-  // Programación y validación
-  "valid-html": "4.1.1 Procesamiento (A)",
-  "region": "4.1.2 Nombre, función, valor (A)",
-  "role-img-alt": "1.1.1 Contenido no textual (A)",
-  "aria-hidden-body": "4.1.2 Nombre, función, valor (A)",
-  "meta-refresh-no-exceed": "2.2.4 Interrupciones (AAA)",
-
-  // =======================================================
-  // 🧩 Casos de validación comunes adicionales
-  // =======================================================
-  "button-name": "4.1.2 Nombre, función, valor (A)",
-  "image-redundant-alt": "1.1.1 Contenido no textual (A)",
-  "image-redundant-role": "1.1.1 Contenido no textual (A)",
-  "html-xml-lang-mismatch": "3.1.1 Idioma de la página (A)",
-  "empty-heading": "2.4.6 Encabezados y etiquetas (AA)",
-  "empty-table-header": "1.3.1 Información y relaciones (A)",
-  "aria-toggle-field-name": "4.1.2 Nombre, función, valor (A)",
-  "aria-tooltip-name": "4.1.2 Nombre, función, valor (A)",
-  "aria-hidden-focus": "1.3.1 Información y relaciones (A)",
-  "role-presentation": "1.3.1 Información y relaciones (A)",
-  "html-lang": "3.1.1 Idioma de la página (A)",
-  "html-lang-mismatch": "3.1.1 Idioma de la página (A)",
-  "aria-roles": "4.1.2 Nombre, función, valor (A)",
-  "aria-label": "4.1.2 Nombre, función, valor (A)",
-  "aria-describedby": "4.1.2 Nombre, función, valor (A)",
-  "aria-labelledby": "4.1.2 Nombre, función, valor (A)",
-  "aria-valid-role": "4.1.2 Nombre, función, valor (A)",
-  "aria-dpub": "4.1.2 Nombre, función, valor (A)",
-  "aria-required-attr": "4.1.2 Nombre, función, valor (A)",
-  "aria-required-children": "1.3.1 Información y relaciones (A)",
-  "aria-required-parent": "1.3.1 Información y relaciones (A)",
-  "aria-valid-attr": "4.1.2 Nombre, función, valor (A)",
-  "aria-valid-attr-value": "4.1.2 Nombre, función, valor (A)",
-  "aria-allowed-attr": "4.1.2 Nombre, función, valor (A)",
-  "aria-allowed-role": "4.1.2 Nombre, función, valor (A)",
-  "aria-hidden-focus": "1.3.1 Información y relaciones (A)",
-};
 
 // ===========================================================
-// 🖼️ Cargar metadatos de capturas
+// 🔍 Cargar el último archivo combinado
 // ===========================================================
-const capturasMetaPath = path.join(AUDITORIAS_DIR, "capturas-metadata.json");
-let capturasMeta = [];
-if (fs.existsSync(capturasMetaPath)) {
-  try {
-    capturasMeta = JSON.parse(fs.readFileSync(capturasMetaPath, "utf8"));
-  } catch {
-    capturasMeta = [];
-  }
-}
-
-// ===========================================================
-// 🔍 Archivo combinado más reciente
-// ===========================================================
-const merged = fs
+const mergedFile = fs
   .readdirSync(AUDITORIAS_DIR)
   .filter((f) => f.startsWith("results-merged") && f.endsWith(".json"))
   .sort()
   .reverse()[0];
 
-if (!merged) {
+if (!mergedFile) {
   console.error("❌ No se encontró results-merged-*.json");
   process.exit(1);
 }
-const mergedPath = path.join(AUDITORIAS_DIR, merged);
+
+const mergedPath = path.join(AUDITORIAS_DIR, mergedFile);
 const data = JSON.parse(fs.readFileSync(mergedPath, "utf8"));
+if (!Array.isArray(data) || data.length === 0) {
+  console.warn("⚠️ No hay datos de auditoría válidos para exportar.");
+  process.exit(0);
+}
 
 // ===========================================================
-// 🧩 Crear libro Excel profesional
+// 🧩 Configuración del libro Excel
 // ===========================================================
 const wb = new ExcelJS.Workbook();
-wb.creator = "Auditoría WCAG Automatizada";
+wb.creator = "Ilúmina Media – Auditoría IAAP PRO";
 wb.created = new Date();
 
-async function crearHoja(nombre, origen) {
+const colorPorImpacto = {
+  critical: "FFFF0000",
+  serious: "FFFF6600",
+  moderate: "FFFFC000",
+  minor: "FF92D050",
+};
+
+// ===========================================================
+// 🧠 Helper para crear hoja IAAP estándar
+// ===========================================================
+function crearHoja(nombre) {
   const hoja = wb.addWorksheet(nombre);
   hoja.columns = [
     { header: "ID", key: "id", width: 20 },
-    { header: "Criterio WCAG", key: "criterio", width: 35 },
-    { header: "Impacto", key: "impact", width: 15 },
-    { header: "Resumen", key: "resumen", width: 70 },
-    { header: "Selector", key: "selector", width: 70 },
-    { header: "Página", key: "url", width: 70 },
-    { header: "Captura", key: "captura", width: 40 },
+    { header: "Criterio WCAG", key: "criterio", width: 40 },
+    { header: "Severidad", key: "impact", width: 15 },
+    { header: "Resumen", key: "resumen", width: 60 },
+    { header: "Elemento afectado", key: "selector", width: 60 },
+    { header: "Página analizada", key: "url", width: 80 },
+    { header: "Resultado actual", key: "resultado_actual", width: 70 },
+    { header: "Resultado esperado", key: "resultado_esperado", width: 50 },
+    { header: "Recomendación (W3C)", key: "recomendacion", width: 40 },
+    { header: "Captura de pantalla", key: "captura", width: 40 },
+    { header: "Sistema", key: "system", width: 40 },
+    { header: "Metodología", key: "metodologia", width: 35 },
   ];
-  hoja.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
-  hoja.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F4E78" } };
-
-  const colorPorImpacto = {
-    critical: "FFFF0000",
-    serious: "FFFF6600",
-    moderate: "FFFFC000",
-    minor: "FF92D050",
-  };
-
-  const rows = data.filter((x) => x.origen === origen);
-  for (const page of rows) {
-    for (const v of page.violations || []) {
-      const crit = wcagMap[v.id] || v.tags?.find((t) => t.startsWith("wcag")) || "";
-      const resumen = await traducir(v.help || v.description || "(sin descripción)");
-      const selector = v.nodes?.[0]?.target?.join(", ") || "(sin selector)";
-
-      const captura = capturasMeta.find(
-        (c) => c.url === page.url && c.criterio === v.id && c.origen === origen
-      );
-      const enlaceCaptura = captura
-        ? { text: "Ver captura", hyperlink: `capturas/${captura.origen}/${captura.archivo}` }
-        : "(sin captura)";
-
-      const row = hoja.addRow({
-        id: v.id,
-        criterio: crit,
-        impact: v.impact,
-        resumen,
-        selector,
-        url: { text: page.url, hyperlink: page.url },
-        captura: enlaceCaptura,
-      });
-
-      if (colorPorImpacto[v.impact]) {
-        row.getCell("impact").fill = {
-          type: "pattern",
-          pattern: "solid",
-          fgColor: { argb: colorPorImpacto[v.impact] },
-        };
-      }
-    }
-  }
-
-  hoja.autoFilter = { from: "A1", to: "G1" };
+  const header = hoja.getRow(1);
+  header.font = { bold: true, color: { argb: "FFFFFFFF" } };
+  header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F4E78" } };
+  hoja.autoFilter = { from: "A1", to: "L1" };
+  return hoja;
 }
 
-await crearHoja("Auditoría Sitemap", "sitemap");
-await crearHoja("Auditoría Interactiva", "interactiva");
+const hojaSitemap = crearHoja("Sitemap");
+const hojaInteractiva = crearHoja("Interactiva");
 
 // ===========================================================
-// 📈 Resumen ejecutivo
+// 🧾 Resumen IAAP global
 // ===========================================================
-const resumen = wb.addWorksheet("Resumen por Criterio");
-resumen.columns = [
-  { header: "Criterio WCAG", key: "criterio", width: 40 },
-  { header: "Críticas", key: "critical", width: 12 },
-  { header: "Graves", key: "serious", width: 12 },
-  { header: "Moderadas", key: "moderate", width: 12 },
-  { header: "Menores", key: "minor", width: 12 },
-  { header: "Total", key: "total", width: 12 },
+const hojaResumen = wb.addWorksheet("Resumen Global");
+hojaResumen.columns = [
+  { header: "Origen", key: "origen", width: 20 },
+  { header: "URLs auditadas", key: "urls", width: 20 },
+  { header: "Violaciones totales", key: "total", width: 20 },
+  { header: "Critical", key: "critical", width: 15 },
+  { header: "Serious", key: "serious", width: 15 },
+  { header: "Moderate", key: "moderate", width: 15 },
+  { header: "Minor", key: "minor", width: 15 },
 ];
+hojaResumen.getRow(1).font = { bold: true };
 
-const conteo = {};
-for (const p of data)
-  for (const v of p.violations || []) {
-    const crit = wcagMap[v.id] || v.id;
-    const impact = (v.impact || "").toLowerCase();
-    if (!conteo[crit]) conteo[crit] = { criterio: crit, critical: 0, serious: 0, moderate: 0, minor: 0, total: 0 };
-    if (conteo[crit][impact] !== undefined) conteo[crit][impact]++;
-    conteo[crit].total++;
+// ===========================================================
+// 🧮 Procesar resultados
+// ===========================================================
+const stats = { sitemap: {}, interactiva: {} };
+for (const page of data) {
+  const targetSheet = page.origen === "interactiva" ? hojaInteractiva : hojaSitemap;
+  const origenStats = page.origen === "interactiva" ? stats.interactiva : stats.sitemap;
+
+  origenStats.urls = origenStats.urls || new Set();
+  origenStats.urls.add(page.url);
+
+  for (const v of page.violations || []) {
+    origenStats.total = (origenStats.total || 0) + 1;
+    origenStats[v.impact] = (origenStats[v.impact] || 0) + 1;
+
+    const criterio =
+      v.tags?.find((t) => t.startsWith("wcag")) ||
+      "(sin criterio)" ||
+      v.help || v.id;
+
+    const resumen = await traducir(v.help || v.description || "(sin descripción)");
+    const selector = v.nodes?.[0]?.target?.join(", ") || "(sin selector)";
+    const html = v.nodes?.[0]?.html || "(sin HTML)";
+    const errorMsg = v.nodes?.[0]?.failureSummary || "(sin detalles de error)";
+    const resultadoActual = `Descripción: ${resumen}\nSelector: ${selector}\nHTML: ${html}\nError: ${errorMsg}`;
+    const resultadoEsperado =
+      "La estructura y relaciones se determinan programáticamente.";
+    const recomendacion = "Ver recomendación W3C";
+    const captura = page.capturePath
+      ? { text: "Ver captura", hyperlink: page.capturePath }
+      : "(sin captura)";
+
+    const row = targetSheet.addRow({
+      id: v.id,
+      criterio,
+      impact: v.impact || "(sin severidad)",
+      resumen,
+      selector,
+      url: { text: page.url, hyperlink: page.url },
+      resultado_actual: resultadoActual,
+      resultado_esperado: resultadoEsperado,
+      recomendacion,
+      captura,
+      system: page.system || "macOS + Chrome (Cypress + axe-core)",
+      metodologia: "WCAG 2.1 / 2.2 (axe-core)",
+    });
+
+    if (colorPorImpacto[v.impact]) {
+      row.getCell("impact").fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: colorPorImpacto[v.impact] },
+      };
+    }
   }
-
-Object.values(conteo)
-  .sort((a, b) => b.total - a.total)
-  .forEach((r) => resumen.addRow(r));
-resumen.getRow(1).font = { bold: true };
+}
 
 // ===========================================================
-// 💾 Guardar Excel y ZIP
+// 📊 Añadir resumen global
 // ===========================================================
-const excelPath = path.join(AUDITORIAS_DIR, "Informe-WCAG-Profesional.xlsx");
+["sitemap", "interactiva"].forEach((origen) => {
+  const s = stats[origen];
+  if (!s.urls) return;
+  hojaResumen.addRow({
+    origen,
+    urls: s.urls.size,
+    total: s.total || 0,
+    critical: s.critical || 0,
+    serious: s.serious || 0,
+    moderate: s.moderate || 0,
+    minor: s.minor || 0,
+  });
+});
+
+// ===========================================================
+// 💾 Guardar Excel y ZIP IAAP PRO
+// ===========================================================
+const excelPath = path.join(AUDITORIAS_DIR, "Informe-WCAG-IAAP.xlsx");
 await wb.xlsx.writeFile(excelPath);
-console.log(`✅ Excel generado: ${excelPath}`);
+console.log(`✅ Excel IAAP generado: ${excelPath}`);
 
-const zipPath = path.join(AUDITORIAS_DIR, "Informe-WCAG.zip");
+const zipPath = path.join(AUDITORIAS_DIR, "Informe-WCAG-IAAP.zip");
 const output = fs.createWriteStream(zipPath);
 const archive = archiver("zip", { zlib: { level: 9 } });
 archive.pipe(output);
@@ -345,5 +219,5 @@ const capturasDir = path.join(AUDITORIAS_DIR, "capturas");
 if (fs.existsSync(capturasDir)) archive.directory(capturasDir, "capturas");
 await archive.finalize();
 
-console.log(`📦 ZIP generado: ${zipPath}`);
-console.log("✅ Exportación completada con éxito.");
+console.log(`📦 ZIP IAAP generado: ${zipPath}`);
+console.log("✅ Exportación IAAP completada con éxito.");

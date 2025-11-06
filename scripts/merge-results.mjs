@@ -1,8 +1,12 @@
 /**
- * 🧩 merge-results.mjs (v3.9.1 profesional IAAP / CI-Pro estable)
- * --------------------------------------------------------------
- * Corrige error al guardar archivo vacío o pequeño.
- * Mantiene todas las funcionalidades del v3.9 original.
+ * ♿ merge-results.mjs (v4.0.0 IAAP PRO)
+ * -------------------------------------------------------------------------
+ * ✅ Fusión profesional de auditorías WCAG (Sitemap + Interactiva)
+ * ✅ Prioriza resultados interactivos sobre sitemap
+ * ✅ Elimina duplicados entre ambos orígenes
+ * ✅ Añade rutas de capturas PNG (si existen)
+ * ✅ Ordena por URL + severidad de impacto
+ * ✅ Genera resumen IAAP visual en consola
  */
 
 import fs from "fs";
@@ -15,14 +19,14 @@ const AUDITORIAS_DIR = path.join(ROOT_DIR, "auditorias");
 const CAPTURAS_DIR = path.join(AUDITORIAS_DIR, "capturas");
 
 // ===========================================================
-// 🧱 Asegurar carpetas base
+// 🧱 Crear carpetas si no existen
 // ===========================================================
 for (const dir of [AUDITORIAS_DIR, CAPTURAS_DIR]) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
 // ===========================================================
-// 🔍 Buscar recursivamente todos los results*.json (excepto merged previos)
+// 🔍 Buscar recursivamente todos los results*.json
 // ===========================================================
 function findResultFiles(dir) {
   let results = [];
@@ -43,65 +47,31 @@ if (resultFiles.length === 0) {
 console.log(`📦 Archivos detectados: ${resultFiles.length}`);
 
 // ===========================================================
-// 🧩 Validación de resultados
-// ===========================================================
-function isValidResult(obj) {
-  return (
-    obj &&
-    typeof obj === "object" &&
-    Array.isArray(obj.violations) &&
-    obj.violations.length > 0 &&
-    obj.violations.every((v) => typeof v.id === "string" && v.id.trim().length > 0)
-  );
-}
-
-// ===========================================================
 // 🧩 Cargar y normalizar resultados
 // ===========================================================
 let merged = [];
 
+function isValidResult(obj) {
+  return obj && Array.isArray(obj.violations) && obj.violations.length > 0;
+}
+
 for (const file of resultFiles) {
   try {
     const raw = fs.readFileSync(file, "utf8");
-    if (!raw.trim()) {
-      console.warn(`⚠️ ${file} está vacío, se omite.`);
-      continue;
-    }
-
+    if (!raw.trim()) continue;
     const json = JSON.parse(raw);
     const relative = path.relative(AUDITORIAS_DIR, file);
-    let origen = "sitemap";
-
-    if (/interactiva/i.test(relative)) origen = "interactiva";
-    else if (/sitemap/i.test(relative)) origen = "sitemap";
-    else if (Array.isArray(json) && json.some((v) => v.origen === "interactiva"))
-      origen = "interactiva";
-
-    // ✅ Normalización para JSON plano
-    if (Array.isArray(json) && json[0]?.id && !json[0]?.violations) {
-      merged.push({
-        origen,
-        url: json[0].url || "https://example.cypress.io",
-        pageTitle: "(sin título)",
-        selector: "body",
-        date: new Date().toISOString(),
-        system: "macOS + Chrome (Cypress + axe-core)",
-        violations: json,
-      });
-      console.log(`✅ Normalizado JSON plano: ${relative}`);
-      continue;
-    }
-
-    // ✅ Normalización de estructura estándar
+    const origen = /interactiva/i.test(relative) ? "interactiva" : "sitemap";
     const items = Array.isArray(json) ? json : [json];
+
     for (const item of items) {
-      if (!item) continue;
-      const pageUrl = item.url || item.page;
-      if (!pageUrl || !isValidResult(item)) continue;
+      if (!isValidResult(item)) continue;
+      const urlItem = item.url || item.page;
+      if (!urlItem) continue;
 
       merged.push({
         origen,
-        url: pageUrl.trim(),
+        url: urlItem.trim(),
         pageTitle: item.pageTitle || item.title || "(sin título)",
         selector: item.selector || "body",
         date: item.date || new Date().toISOString(),
@@ -109,82 +79,85 @@ for (const file of resultFiles) {
         violations: item.violations,
       });
     }
-
-    console.log(`✅ Combinado: ${relative} (${origen})`);
   } catch (err) {
-    console.warn(`⚠️ Error al procesar ${file}: ${err.message}`);
+    console.warn(`⚠️ Error procesando ${file}: ${err.message}`);
   }
 }
 
 // ===========================================================
-// 🧽 Deduplicar resultados (URL + selector + origen + IDs)
+// 🧽 Deduplicación cruzada IAAP (prioriza interactiva)
 // ===========================================================
-merged = merged.filter(
-  (item, i, self) =>
-    i ===
-    self.findIndex(
-      (t) =>
-        t.url === item.url &&
-        t.selector === item.selector &&
-        t.origen === item.origen &&
-        JSON.stringify(t.violations.map((v) => v.id).sort()) ===
-          JSON.stringify(item.violations.map((v) => v.id).sort())
-    )
-);
+merged = merged
+  .sort((a, b) => (a.origen === "interactiva" && b.origen !== "interactiva" ? -1 : 1))
+  .filter(
+    (item, index, self) =>
+      index ===
+      self.findIndex(
+        (t) =>
+          t.url === item.url &&
+          t.selector === item.selector &&
+          JSON.stringify(t.violations.map((v) => v.id).sort()) ===
+            JSON.stringify(item.violations.map((v) => v.id).sort())
+      )
+  );
 
 // ===========================================================
-// 🖼️ Vincular capturas PNG si existen
+// 🖼️ Vincular capturas PNG si existen (búsqueda recursiva)
 // ===========================================================
+function findAllPngFiles(dir) {
+  const result = [];
+  if (!fs.existsSync(dir)) return result;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) result.push(...findAllPngFiles(full));
+    else if (entry.isFile() && entry.name.endsWith(".png")) result.push(full);
+  }
+  return result;
+}
+
+const allPngs = findAllPngFiles(CAPTURAS_DIR);
+
 function findCaptureFor(urlString, selector = "") {
-  if (!fs.existsSync(CAPTURAS_DIR)) return null;
-
-  const slug = urlString
-    .replace(/https?:\/\/|\/$/g, "")
-    .replace(/[^\w-]/g, "-")
-    .substring(0, 150);
-  const selectorSlug = selector ? selector.replace(/[^\w-]/g, "_").substring(0, 80) : "";
-
-  const files = fs.readdirSync(CAPTURAS_DIR).filter((f) => f.endsWith(".png"));
+  const slug = urlString.replace(/https?:\/\/|\/$/g, "").replace(/[^\w-]/g, "-");
+  const selSlug = selector.replace(/[^\w-]/g, "_");
   return (
-    files.find((f) => f.includes(slug) && (!selectorSlug || f.includes(selectorSlug))) ||
-    files.find((f) => f.includes(slug.split("-").slice(-1)[0])) ||
+    allPngs.find((f) => f.includes(slug) && f.includes(selSlug)) ||
+    allPngs.find((f) => f.includes(slug)) ||
     null
   );
 }
 
 merged = merged.map((item) => {
-  const capture =
-    findCaptureFor(item.url, item.selector) || findCaptureFor(item.url, "body");
-  if (capture) {
-    item.capturePath = `capturas/${capture}`.substring(0, 250);
-  }
+  const capture = findCaptureFor(item.url, item.selector);
+  if (capture)
+    item.capturePath = path.relative(AUDITORIAS_DIR, capture).substring(0, 250);
   return item;
 });
 
 // ===========================================================
-// 💾 Guardar archivo final + last-merged.txt (fix)
+// 🧩 Ordenar resultados por URL + severidad
+// ===========================================================
+const impactWeight = { critical: 4, serious: 3, moderate: 2, minor: 1 };
+
+merged.sort((a, b) => {
+  if (a.url !== b.url) return a.url.localeCompare(b.url);
+  const aMax = Math.max(...a.violations.map((v) => impactWeight[v.impact] || 0));
+  const bMax = Math.max(...b.violations.map((v) => impactWeight[v.impact] || 0));
+  return bMax - aMax;
+});
+
+// ===========================================================
+// 💾 Guardar resultados IAAP combinados
 // ===========================================================
 const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 const outputFile = path.join(AUDITORIAS_DIR, `results-merged-${timestamp}.json`);
 const lastMergedPath = path.join(AUDITORIAS_DIR, "last-merged.txt");
 
-try {
-  // ✅ FIX: no se considera error si el merge está vacío
-  if (merged.length === 0) {
-    console.warn("⚠️ No hay resultados válidos para combinar. Se generará un JSON vacío.");
-    fs.writeFileSync(outputFile, "[]", "utf8");
-  } else {
-    fs.writeFileSync(outputFile, JSON.stringify(merged, null, 2), "utf8");
-  }
+fs.writeFileSync(outputFile, JSON.stringify(merged, null, 2), "utf8");
+fs.writeFileSync(lastMergedPath, outputFile, "utf8");
 
-  fs.writeFileSync(lastMergedPath, outputFile, "utf8");
-
-  console.log(`\n✅ Archivo final generado: ${outputFile}`);
-  console.log(`🧾 Referencia guardada en auditorias/last-merged.txt`);
-} catch (err) {
-  console.error(`❌ Error guardando ${outputFile}: ${err.message}`);
-  process.exit(0); // ✅ nunca error crítico en CI
-}
+console.log(`\n✅ Archivo final generado: ${outputFile}`);
+console.log(`🧾 Referencia actualizada en auditorias/last-merged.txt`);
 
 // ===========================================================
 // 📊 Estadísticas globales IAAP
@@ -194,21 +167,21 @@ const stats = {
   interactiva: { urls: new Set(), total: 0, critical: 0, serious: 0, moderate: 0, minor: 0 },
 };
 
-merged.forEach((r) => {
+for (const r of merged) {
   const s = stats[r.origen];
   s.urls.add(r.url);
-  r.violations?.forEach((v) => {
+  r.violations.forEach((v) => {
     const impact = v.impact?.toLowerCase();
-    if (impact && s[impact] !== undefined) s[impact]++;
+    if (s[impact] !== undefined) s[impact]++;
     s.total++;
   });
-});
+}
 
 // ===========================================================
 // 📈 Resumen IAAP profesional
 // ===========================================================
 console.log("\n===============================================");
-console.log("📊 RESULTADOS COMBINADOS DE AUDITORÍA WCAG");
+console.log("♿ RESUMEN GLOBAL DE AUDITORÍA WCAG – IAAP PRO");
 console.log("--------------------------------------------------");
 
 for (const [origen, s] of Object.entries(stats)) {
@@ -227,9 +200,8 @@ const totalUrls = new Set([...stats.sitemap.urls, ...stats.interactiva.urls]).si
 const totalViolations = stats.sitemap.total + stats.interactiva.total;
 
 console.log(`🌍 Cobertura total: ${totalUrls} URLs auditadas`);
-console.log(`♿ Violaciones totales combinadas: ${totalViolations}`);
-console.log("✅ Fusión completada correctamente.");
+console.log(`♿ Violaciones combinadas totales: ${totalViolations}`);
+console.log("✅ Fusión IAAP PRO completada correctamente.");
 console.log("===============================================\n");
 
 process.exit(0);
-

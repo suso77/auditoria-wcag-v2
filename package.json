@@ -1,6 +1,6 @@
 {
   "name": "auditoria-wcag-v2",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "type": "module",
   "description": "Auditoría de accesibilidad automatizada con Cypress + axe-core + Puppeteer + ExcelJS + GitHub Actions (IAAP/W3C)",
   "scripts": {
@@ -20,6 +20,7 @@
     "audit:interactiva": "npx cypress run --spec cypress/e2e/accesibilidad-interactiva.cy.js --browser chrome --headless",
     "audit:dev": "npx cypress open --browser chrome",
     "audit:debug": "npx cypress run --spec cypress/e2e/accesibilidad-sitemap.cy.js --browser chrome --headed",
+    "test:a11y": "npx cypress run --spec cypress/e2e/accesibilidad-sitemap.cy.js --browser chrome --headless",
 
     "capture:evidence": "node --max-old-space-size=4096 --experimental-specifier-resolution=node scripts/capture-evidence.mjs",
     "export:xlsx": "node --max-old-space-size=4096 --experimental-specifier-resolution=node scripts/export-to-xlsx.mjs",
@@ -36,11 +37,13 @@
     "local:ci": "bash scripts/run-local-ci.sh"
   },
   "dependencies": {
+    "@faker-js/faker": "^9.0.0",
     "archiver": "^7.0.1",
     "axios": "^1.7.2",
     "chalk": "^5.6.2",
     "chart.js": "^4.5.1",
     "cheerio": "^1.0.0-rc.12",
+    "cypress-real-events": "^1.15.0",
     "date-fns": "^3.6.0",
     "exceljs": "^4.4.0",
     "fs-extra": "^11.2.0",
@@ -48,6 +51,7 @@
     "open": "^10.2.0",
     "puppeteer": "^23.11.1",
     "sharp": "^0.34.4",
+    "slugify": "^1.6.6",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
@@ -88,5 +92,3 @@
   "author": "Suso (Ilúmina Media)",
   "license": "MIT"
 }
-
-

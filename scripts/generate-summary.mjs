@@ -1,23 +1,24 @@
 /**
- * 🧾 generate-summary.mjs (v3.5 profesional IAAP / CI-Pro)
- * -------------------------------------------------------------
- * Genera un resumen ejecutivo en formato Markdown
- * a partir del archivo JSON combinado de auditorías WCAG.
+ * 🧾 generate-summary.mjs (v3.9.2 profesional IAAP / CI-Pro optimizada)
+ * ---------------------------------------------------------------------
+ * Genera un resumen ejecutivo en formato Markdown a partir del archivo
+ * combinado de auditorías WCAG, con soporte para los campos:
+ *  • origen (sitemap / interactiva)
+ *  • capturePath
+ *  • pageTitle
  *
- * ✅ Compatible con workflows CI/CD (GitHub Actions, Jenkins, GitLab)
- * ✅ Cálculo de conformidad ponderada real
- * ✅ Ranking de criterios WCAG más afectados
- * ✅ Ranking de URLs con más violaciones
+ * ✅ Compatible con merge-results v3.9.2
+ * ✅ Conformidad ponderada precisa
+ * ✅ Ranking de criterios WCAG + URLs + capturas
  * ✅ Distribución porcentual por severidad y tipo
- * ✅ Salida Markdown lista para informes IAAP / pipelines
- * -------------------------------------------------------------
+ * ✅ Listo para workflows CI/CD (GitHub Actions, Jenkins, etc.)
  */
 
 import fs from "fs";
 import path from "path";
 
 // ===========================================================
-// 📄 Ruta del archivo combinado
+// 📄 Cargar archivo combinado
 // ===========================================================
 const filePath = process.argv[2];
 if (!filePath || !fs.existsSync(filePath)) {
@@ -25,9 +26,6 @@ if (!filePath || !fs.existsSync(filePath)) {
   process.exit(1);
 }
 
-// ===========================================================
-// 📊 Cargar datos
-// ===========================================================
 let data = [];
 try {
   data = JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -91,11 +89,6 @@ const topUrls = Object.entries(urlCount)
 
 // ===========================================================
 // 📈 Cálculo del índice de conformidad ponderado
-// -----------------------------------------------------------
-//   critical → 2.0
-//   serious  → 1.2
-//   moderate → 0.5
-//   minor    → 0.2
 // ===========================================================
 const penalizacion =
   (countByImpact.critical || 0) * 2 +
@@ -109,6 +102,18 @@ const conformidad = Math.max(
 ).toFixed(1);
 
 // ===========================================================
+// 🧱 Detectar las capturas más relevantes
+// ===========================================================
+const urlsWithCaptures = data
+  .filter((r) => r.capturePath)
+  .slice(0, 5)
+  .map((r) => ({
+    url: r.url,
+    path: r.capturePath,
+    origen: r.origen,
+  }));
+
+// ===========================================================
 // 🧾 Generar Markdown IAAP
 // ===========================================================
 const markdown = `
@@ -116,7 +121,7 @@ const markdown = `
 
 **Sitio auditado:** ${process.env.SITE_URL || "No especificado"}  
 **Fecha de generación:** ${new Date().toLocaleString("es-ES", { timeZone: "Europe/Madrid" })}  
-**Versión del pipeline:** Ilúmina Audit WCAG v3.5 IAAP Pro  
+**Versión del pipeline:** Ilúmina Audit WCAG v3.9.2 IAAP Pro  
 
 ---
 
@@ -152,6 +157,22 @@ ${topUrls.map(([url, n]) => `| ${url} | ${n} |`).join("\n")}
 
 ---
 
+## 📸 Capturas destacadas (muestra visual de evidencias)
+
+| Tipo | URL | Captura |
+|------|-----|----------|
+${urlsWithCaptures
+  .map(
+    (c) =>
+      `| ${c.origen} | [${c.url}](${c.url}) | ![captura](${c.path.replace(
+        /^auditorias\//,
+        ""
+      )}) |`
+  )
+  .join("\n") || "| – | – | – |"}
+
+---
+
 ## 📘 Criterios WCAG más afectados
 
 | Criterio | Nº de Violaciones |
@@ -162,10 +183,10 @@ ${topWcag.map(([crit, n]) => `| ${crit} | ${n} |`).join("\n")}
 
 ## 🔍 Observaciones automáticas
 
-- Se observan incidencias frecuentes en **contraste de color**, **roles ARIA** y **foco visible**.  
-- Las violaciones *critical* y *serious* afectan directamente la experiencia con **teclado y lector de pantalla**.  
-- Se recomienda priorizar la corrección de fallos críticos y realizar una **reauditoría parcial tras la corrección**.  
-- Las pruebas interactivas muestran un comportamiento estable en modales y menús, aunque con incidencias de accesibilidad ARIA.
+- Se observan incidencias frecuentes en **contraste de color**, **roles ARIA**, y **foco visible**.  
+- Las violaciones *critical* y *serious* afectan directamente la interacción con **teclado y lector de pantalla**.  
+- Las pruebas *interactivas* muestran buen rendimiento, aunque algunos modales y menús presentan problemas de etiquetado ARIA.  
+- La auditoría *sitemap* revela fallos repetitivos en elementos estructurales y encabezados.
 
 ---
 
@@ -174,12 +195,13 @@ ${topWcag.map(([crit, n]) => `| ${crit} | ${n} |`).join("\n")}
 El nivel global de conformidad con las [WCAG 2.1 / 2.2](https://www.w3.org/TR/WCAG22/) es del **${conformidad}%**,  
 lo que representa un **nivel medio de accesibilidad digital**.
 
-> 💡 *Se aconseja implementar mejoras progresivas, comenzando por las violaciones de severidad crítica,  
-> seguidas de los errores serios, para alcanzar el nivel AA de conformidad.*
+> 💡 *Se recomienda priorizar la corrección de las violaciones críticas y serias,  
+> realizar una verificación post-corrección y documentar las mejoras alcanzadas.*
 
 ---
 
-📦 *Informe generado automáticamente por Ilúmina Audit WCAG Pipeline (v3.5 profesional IAAP).*
+📦 *Informe generado automáticamente por Ilúmina Audit WCAG Pipeline (v3.9.2 profesional IAAP).*
 `;
 
 console.log(markdown);
+

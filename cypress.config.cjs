@@ -1,5 +1,5 @@
 /**
- * ♿ Configuración universal de Cypress (versión profesional completa v2.1)
+ * ♿ Configuración universal de Cypress (versión profesional completa v2.2)
  * --------------------------------------------------------------------
  * - Compatible con flujo de auditorías WCAG + capturas + exportación XLSX.
  * - Incluye tareas personalizadas para lectura, escritura y logs.
@@ -50,13 +50,15 @@ module.exports = defineConfig({
       }
 
       /**
-       * 🧹 Limpia capturas anteriores
+       * 🧹 Limpia capturas anteriores (con breve pausa para CI)
        */
       function clearCaptures() {
         const dir = path.join(__dirname, "auditorias", "capturas");
         try {
           fs.emptyDirSync(dir);
           console.log("🧹 Capturas anteriores eliminadas correctamente.");
+          // Pequeña pausa de 200ms para evitar conflictos en runners CI
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
         } catch (err) {
           console.warn("⚠️ Error al limpiar capturas:", err.message);
         }
@@ -64,7 +66,7 @@ module.exports = defineConfig({
       }
 
       /**
-       * 🧹 Limpia resultados antiguos
+       * 🧹 Limpia resultados antiguos (seguro cross-OS)
        */
       function cleanOldResults() {
         const auditoriasDir = path.join(__dirname, "auditorias");
@@ -73,8 +75,12 @@ module.exports = defineConfig({
         const files = fs.readdirSync(auditoriasDir);
         for (const file of files) {
           if (file.startsWith("results-") || file.includes("auditoria")) {
-            fs.rmSync(path.join(auditoriasDir, file), { recursive: true, force: true });
-            console.log(`🧹 Eliminado archivo antiguo: ${file}`);
+            try {
+              fs.rmSync(path.join(auditoriasDir, file), { recursive: true, force: true });
+              console.log(`🧹 Eliminado archivo antiguo: ${file}`);
+            } catch (err) {
+              console.warn(`⚠️ No se pudo eliminar ${file}: ${err.message}`);
+            }
           }
         }
         return null;
@@ -199,5 +205,3 @@ module.exports = defineConfig({
     SITE_URL: process.env.SITE_URL || "https://www.hiexperience.es",
   },
 });
-
-

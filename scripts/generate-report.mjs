@@ -1,15 +1,13 @@
 /**
- * 🧾 generate-report.mjs (v4.5 IAAP / PDF Export con datos reales)
+ * 🧾 generate-report.mjs (v4.6 IAAP PRO / PDF Export)
  * -------------------------------------------------------------
- * Genera un informe profesional en PDF a partir del resumen
- * Markdown (Resumen-WCAG.md) y de los resultados combinados
- * (results-merged-*.json).
+ * Genera un informe profesional IAAP en PDF a partir del
+ * resumen Markdown y los resultados combinados WCAG.
  *
- * ✅ Portada profesional con logo y fecha
- * ✅ Gráficos reales (severidad + origen)
- * ✅ Diseño accesible y legible
- * ✅ Compatible con CI/CD (GitHub Actions / Jenkins / Docker)
- * ✅ Salida: auditorias/Informe-WCAG-Profesional.pdf
+ * ✅ Compatible con Informe-WCAG-IAAP.xlsx
+ * ✅ Incluye portada profesional y gráficos reales
+ * ✅ Diseño accesible y legible (IAAP / W3C)
+ * ✅ Salida: auditorias/Informe-WCAG-IAAP.pdf
  * -------------------------------------------------------------
  */
 
@@ -38,7 +36,8 @@ if (!mergedFile) {
 }
 const mergedPath = path.join(AUDITORIAS_DIR, mergedFile);
 
-const outputPath = path.join(AUDITORIAS_DIR, "Informe-WCAG-Profesional.pdf");
+// Salida actualizada al nuevo estándar IAAP
+const outputPath = path.join(AUDITORIAS_DIR, "Informe-WCAG-IAAP.pdf");
 
 if (!fs.existsSync(summaryPath)) {
   console.error("❌ No se encontró Resumen-WCAG.md. Ejecuta primero generate-summary.mjs");
@@ -93,81 +92,31 @@ const htmlTemplate = `
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Informe de Accesibilidad WCAG</title>
+<title>Informe de Accesibilidad WCAG IAAP</title>
 <style>
-  @page {
-    margin: 2cm;
-  }
-
+  @page { margin: 2cm; }
   body {
     font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
     line-height: 1.6;
     color: #111;
     margin: 0;
   }
-
   h1, h2, h3 {
     color: #003366;
     border-bottom: 2px solid #e0e0e0;
     padding-bottom: 4px;
   }
-
-  h1 {
-    color: #002b80;
-    font-size: 1.8em;
-    text-align: center;
-  }
-
-  h2 {
-    font-size: 1.3em;
-    margin-top: 1.5em;
-  }
-
-  h3 {
-    font-size: 1.1em;
-  }
-
-  p {
-    font-size: 0.95em;
-    margin: 0.4em 0;
-  }
-
-  code {
-    background: #f6f8fa;
-    padding: 2px 5px;
-    border-radius: 4px;
-  }
-
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    margin: 1em 0;
-  }
-
-  th, td {
-    border: 1px solid #ccc;
-    padding: 6px 8px;
-    text-align: left;
-  }
-
-  th {
-    background-color: #f0f4ff;
-  }
-
-  tr:nth-child(even) {
-    background-color: #fafafa;
-  }
-
-  .page-break {
-    page-break-before: always;
-  }
-
-  header {
-    text-align: center;
-    padding: 30px 0 10px;
-    border-bottom: 2px solid #003366;
-  }
-
+  h1 { color: #002b80; font-size: 1.8em; text-align: center; }
+  h2 { font-size: 1.3em; margin-top: 1.5em; }
+  h3 { font-size: 1.1em; }
+  p { font-size: 0.95em; margin: 0.4em 0; }
+  code { background: #f6f8fa; padding: 2px 5px; border-radius: 4px; }
+  table { width: 100%; border-collapse: collapse; margin: 1em 0; }
+  th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; }
+  th { background-color: #f0f4ff; }
+  tr:nth-child(even) { background-color: #fafafa; }
+  .page-break { page-break-before: always; }
+  header { text-align: center; padding: 30px 0 10px; border-bottom: 2px solid #003366; }
   footer {
     text-align: center;
     font-size: 0.8em;
@@ -176,49 +125,32 @@ const htmlTemplate = `
     bottom: 10px;
     width: 100%;
   }
-
-  .cover {
-    text-align: center;
-    padding: 6cm 2cm;
-  }
-
-  .cover h1 {
-    font-size: 2.4em;
-    margin-bottom: 0.4em;
-  }
-
-  .cover h2 {
-    font-size: 1.3em;
-    color: #444;
-  }
-
-  .chart {
-    text-align: center;
-    margin: 1em auto;
-  }
-
-  .summary-table td:first-child {
-    font-weight: bold;
-  }
-
-  .legend {
-    text-align: center;
-    font-size: 0.85em;
-    color: #444;
-    margin-top: 5px;
+  .cover { text-align: center; padding: 6cm 2cm; }
+  .cover h1 { font-size: 2.4em; margin-bottom: 0.4em; }
+  .cover h2 { font-size: 1.3em; color: #444; }
+  .chart { text-align: center; margin: 1em auto; }
+  .summary-table td:first-child { font-weight: bold; }
+  .legend { text-align: center; font-size: 0.85em; color: #444; margin-top: 5px; }
+  .download-links {
+    margin: 1.5em 0;
+    background: #f9fafc;
+    border-radius: 8px;
+    padding: 1em;
+    border: 1px solid #e0e0e0;
   }
 </style>
 </head>
 <body>
 
 <header>
-  <img src="https://iluminamedia.es/wp-content/uploads/2024/09/ilumina-media-logo.png" alt="Ilúmina Media" width="150" />
+  <img src="https://iluminamedia.es/wp-content/uploads/2024/09/ilumina-media-logo.png"
+       alt="Ilúmina Media" width="150" />
 </header>
 
 <div class="cover">
-  <h1>Informe de Accesibilidad Digital</h1>
+  <h1>Informe de Accesibilidad Digital IAAP PRO</h1>
   <h2>Evaluación de conformidad con WCAG 2.1 / 2.2</h2>
-  <p><strong>Generado automáticamente por Ilúmina Audit WCAG</strong></p>
+  <p><strong>Generado automáticamente por Ilúmina Audit WCAG IAAP</strong></p>
   <p>${new Date().toLocaleDateString("es-ES", {
     day: "2-digit",
     month: "long",
@@ -243,8 +175,17 @@ ${htmlContent}
   <div class="legend">Violaciones según tipo de auditoría</div>
 </div>
 
+<div class="page-break"></div>
+
+<h2>📁 Archivos complementarios IAAP</h2>
+<div class="download-links">
+  <p>📘 <strong>Resumen Markdown:</strong> Resumen-WCAG.md</p>
+  <p>📊 <strong>Excel IAAP:</strong> Informe-WCAG-IAAP.xlsx</p>
+  <p>📦 <strong>ZIP consolidado:</strong> Informe-WCAG-IAAP.zip</p>
+</div>
+
 <footer>
-  ♿ Informe IAAP generado automáticamente por Ilúmina Audit WCAG Pipeline
+  ♿ Informe IAAP PRO generado automáticamente por Ilúmina Audit WCAG Pipeline
 </footer>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -264,10 +205,7 @@ ${htmlContent}
         backgroundColor: ['#b30000','#e67300','#ffcc00','#66b266']
       }]
     },
-    options: {
-      plugins: { legend: { display: false }},
-      scales: { y: { beginAtZero: true }}
-    }
+    options: { plugins: { legend: { display: false }}, scales: { y: { beginAtZero: true } } }
   });
 
   new Chart(document.getElementById('chartDistribucion'), {
@@ -279,7 +217,7 @@ ${htmlContent}
         backgroundColor: ['#0044cc', '#00cc99']
       }]
     },
-    options: { plugins: { legend: { position: 'bottom' }} }
+    options: { plugins: { legend: { position: 'bottom' } } }
   });
 </script>
 
@@ -292,7 +230,7 @@ ${htmlContent}
 // ===========================================================
 (async () => {
   try {
-    console.log("📄 Generando PDF IAAP con datos reales...");
+    console.log("📄 Generando PDF IAAP PRO...");
     const browser = await puppeteer.launch({
       headless: "new",
       args: ["--no-sandbox", "--disable-setuid-sandbox"],
@@ -309,9 +247,10 @@ ${htmlContent}
     });
 
     await browser.close();
-    console.log(`✅ Informe PDF generado correctamente: ${outputPath}`);
+    console.log(`✅ Informe PDF IAAP generado correctamente: ${outputPath}`);
   } catch (err) {
     console.error(`❌ Error generando PDF: ${err.message}`);
     process.exit(1);
   }
 })();
+

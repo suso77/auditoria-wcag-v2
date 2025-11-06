@@ -153,23 +153,33 @@
   },
   {
     "url": "https://www.hiexperience.es/estrategia-ux",
-    "title": "(error de carga)"
+    "title": "(error de carga)",
+    "error": true,
+    "errorMessage": "No se pudo cargar la página después de 2 intentos."
   },
   {
     "url": "https://www.hiexperience.es/ux-ui-design",
-    "title": "(error de carga)"
+    "title": "(error de carga)",
+    "error": true,
+    "errorMessage": "No se pudo cargar la página después de 2 intentos."
   },
   {
     "url": "https://www.hiexperience.es/cro-behavioral-design",
-    "title": "(error de carga)"
+    "title": "(error de carga)",
+    "error": true,
+    "errorMessage": "No se pudo cargar la página después de 2 intentos."
   },
   {
     "url": "https://www.hiexperience.es/ux-talent",
-    "title": "(error de carga)"
+    "title": "(error de carga)",
+    "error": true,
+    "errorMessage": "No se pudo cargar la página después de 2 intentos."
   },
   {
     "url": "https://www.hiexperience.es/tecnologia",
-    "title": "(error de carga)"
+    "title": "(error de carga)",
+    "error": true,
+    "errorMessage": "No se pudo cargar la página después de 2 intentos."
   },
   {
     "url": "https://www.hiexperience.es/simon-electric",
@@ -309,18 +319,26 @@
   },
   {
     "url": "https://www.hiexperience.es/hug/metaverso",
-    "title": "(error de carga)"
+    "title": "(error de carga)",
+    "error": true,
+    "errorMessage": "No se pudo cargar la página después de 2 intentos."
   },
   {
     "url": "https://www.hiexperience.es/hug/narrativa-digital",
-    "title": "(error de carga)"
+    "title": "(error de carga)",
+    "error": true,
+    "errorMessage": "No se pudo cargar la página después de 2 intentos."
   },
   {
     "url": "https://www.hiexperience.es/hug/economia-circular",
-    "title": "(error de carga)"
+    "title": "(error de carga)",
+    "error": true,
+    "errorMessage": "No se pudo cargar la página después de 2 intentos."
   },
   {
     "url": "https://www.hiexperience.es/hug/hug-design-systems-ops",
-    "title": "(error de carga)"
+    "title": "(error de carga)",
+    "error": true,
+    "errorMessage": "No se pudo cargar la página después de 2 intentos."
   }
 ]
