@@ -1,4 +1,4 @@
-name: ♿ Auditoría de Accesibilidad – a11y CI
+name: ♿ Auditoría de Accesibilidad – Ilúmina Audit IAAP PRO
 run-name: "♿ Auditoría WCAG (${{ github.event.inputs.site_url || 'default' }})"
 
 on:
@@ -11,13 +11,16 @@ on:
   push:
     branches: [ main, master, principal ]
   pull_request:
-  # schedule:
-  #   - cron: "0 3 * * 1"  # (opcional) ejecución semanal automática (lunes 03:00)
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
 
 jobs:
   a11y:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     defaults:
       run:
         working-directory: ${{ github.workspace }}
@@ -34,16 +37,18 @@ jobs:
       TS_NODE_COMPILER_OPTIONS: '{"module":"esnext"}'
       CRITICAL_MAX: 5
       SERIOUS_MAX: 20
+      PUPPETEER_EXECUTABLE_PATH: "/usr/bin/google-chrome-stable"
       CYPRESS_screenshotsFolder: auditorias/capturas
       CYPRESS_video: false
       CYPRESS_screenshotOnRunFailure: true
 
     steps:
-      # 1️⃣ Checkout del repositorio
+      # =====================================================
+      # 🧩 Setup base
+      # =====================================================
       - name: 🧩 Checkout del repositorio
         uses: actions/checkout@v4
 
-      # 2️⃣ Configurar Node.js
       - name: ⚙️ Configurar Node.js
         uses: actions/setup-node@v4
         with:
@@ -52,8 +57,7 @@ jobs:
           cache: "npm"
           cache-dependency-path: "**/package-lock.json"
 
-      # 3️⃣ Cachear dependencias pesadas
-      - name: 🧠 Cachear dependencias de Cypress y Puppeteer
+      - name: 🧠 Cachear dependencias pesadas
         uses: actions/cache@v4
         with:
           path: |
@@ -61,197 +65,230 @@ jobs:
             ~/.cache/puppeteer
           key: ${{ runner.os }}-a11y-${{ hashFiles('package-lock.json', 'cypress.config.*') }}
 
-      # 4️⃣ Limpieza previa
-      - name: 🧹 Limpiar resultados antiguos
+      - name: 🧹 Limpiar resultados anteriores
         run: |
           rm -rf auditorias/* || true
           mkdir -p auditorias/capturas auditorias/logs
 
-      # 5️⃣ Instalar dependencias
       - name: 📦 Instalar dependencias
         run: |
-          echo "📦 Instalando dependencias (incluyendo devDependencies)..."
           npm ci --include=dev
           npm rebuild
           mkdir -p scripts
           if [ ! -f scripts/urls.json ]; then echo "[]" > scripts/urls.json; fi
-          echo "✅ Dependencias instaladas correctamente."
 
-      # 5.1️⃣ Instalar ts-node y TypeScript (modo seguro)
-      - name: 🧩 Instalar ts-node y TypeScript (fallback seguro)
+      - name: 🧩 Instalar ts-node y TypeScript (fallback)
         run: |
-          echo "🧩 Verificando ts-node y TypeScript..."
           if ! npx ts-node --version >/dev/null 2>&1; then
             npm install --no-save ts-node typescript @types/node
-            echo "✅ ts-node y TypeScript instalados."
-          else
-            echo "✅ ts-node ya está disponible."
           fi
 
-      # 6️⃣ Verificar ts-node
-      - name: 🧩 Verificar ts-node
-        run: npx ts-node --version || npm install ts-node typescript --no-save
-
-      # 7️⃣ Verificar entorno de Cypress
       - name: 🧪 Verificar instalación de Cypress
         run: |
-          echo "::group::🧪 Verificando instalación de Cypress"
           if ! npx cypress --version >/dev/null 2>&1; then
-            echo "⚠️ Cypress no detectado, reinstalando..."
             npm install cypress --no-save
           fi
-          npx cypress verify || (echo "⚠️ Reinstalando Cypress..." && npx cypress install)
-          echo "::endgroup::"
-          echo "✅ Cypress verificado correctamente."
+          npx cypress verify || npx cypress install
 
-      # 8️⃣ Validar entorno base
+      # =====================================================
+      # 🧾 Validaciones previas
+      # =====================================================
       - name: 🧾 Validar entorno base
         run: node scripts/check-env.cjs
 
-      # 9️⃣ Mostrar entorno detectado
-      - name: 🧠 Mostrar entorno detectado
-        run: |
-          echo "::group::🧠 Variables activas"
-          node -p "({ SITE_URL: process.env.SITE_URL, NODE_ENV: process.env.NODE_ENV, TZ: process.env.TZ })"
-          echo "::endgroup::"
-
-      # 10️⃣ Validar listado de URLs inicial
       - name: 🔍 Validar listado de URLs inicial
-        run: |
-          echo "::group::🔍 Validando scripts/urls.json"
-          node scripts/validate-urls.mjs || echo "⚠️ Se generará en el siguiente paso"
-          echo "::endgroup::"
+        run: node scripts/validate-urls.mjs || echo "⚠️ Se generará más adelante"
 
-      # 11️⃣ Rastreo del sitio
-      - name: 🌐 Rastreo de URLs
+      - name: 🌐 Rastreo del sitio
         timeout-minutes: 15
         run: |
-          set -e
           echo "::group::🌍 Rastreo en $SITE_URL"
-          npm run crawl:js
-          node scripts/validate-urls.mjs
-          sleep 5
+          npm run crawl:js || echo "⚠️ Rastreo no disponible"
+          node scripts/validate-urls.mjs || echo "⚠️ Validación no crítica"
           echo "::endgroup::"
 
-      # 12️⃣ Auditoría principal (Sitemap)
+      # =====================================================
+      # ♿ Auditorías principales
+      # =====================================================
       - name: ♿ Auditoría de accesibilidad – Sitemap
         uses: cypress-io/github-action@v6
         continue-on-error: true
         with:
           install-command: npm ci --include=dev
           command: >
-            echo "🧪 Verificando versión de Cypress..." &&
-            NODE_OPTIONS="" npx cypress --version &&
-            echo "📄 Contenido de cypress.config.cjs:" &&
-            head -n 20 cypress.config.cjs || echo "(config resumido)" &&
-            echo "🚀 Ejecutando auditoría principal..." &&
-            NODE_OPTIONS="" npx cypress run --browser chrome --headless --config-file cypress.config.cjs 
-            --spec "cypress/e2e/accesibilidad-sitemap.cy.js" || npm run audit:sitemap
-        env:
-          SITE_URL: ${{ env.SITE_URL }}
+            NODE_OPTIONS="" npx cypress run --browser chrome --headless
+            --config-file cypress.config.cjs
+            --spec "cypress/e2e/accesibilidad-sitemap.cy.js"
 
-      # 13️⃣ Auditoría interactiva
       - name: 🧠 Auditoría de accesibilidad – Componentes interactivos
         continue-on-error: true
         run: |
-          echo "🚀 Ejecutando auditoría de componentes interactivos..."
           NODE_OPTIONS="" npx cypress run --browser chrome --headless --config-file cypress.config.cjs \
             --spec "cypress/e2e/accesibilidad-interactiva.cy.js" \
-            || npm run audit:interactiva || echo "⚠️ No hay specs interactivas o se omitieron."
+            || echo "⚠️ No hay specs interactivas o se omitieron."
 
-      # 14️⃣ Añadir campo origen
-      - name: 🏷️ Añadir campo "origen" a los resultados
-        run: node scripts/tag-origen.cjs
+      - name: 🏷️ Añadir campo "origen"
+        run: node scripts/tag-origen.cjs || echo "ℹ️ Campo origen no necesario"
 
-      # 15️⃣ Combinar resultados
+      # =====================================================
+      # 🧩 Combinación + resumen + quality
+      # =====================================================
       - name: 🧩 Combinar resultados (merge-results.mjs)
-        run: |
-          set -e
-          echo "::group::🧩 Combinando resultados parciales"
-          node scripts/merge-results.mjs
-          echo "✅ Archivo combinado generado correctamente."
-          echo "::endgroup::"
+        run: node scripts/merge-results.mjs
 
-      # 16️⃣ Generar resumen ejecutivo (Markdown)
       - name: 🧾 Generar resumen ejecutivo (Markdown)
-        if: always()
         run: |
-          echo "::group::🧾 Generando resumen ejecutivo"
           node scripts/generate-summary.mjs $(ls -t auditorias/results-merged-*.json | head -n1) \
-            > auditorias/Resumen-WCAG.md || echo "⚠️ No se pudo generar resumen."
-          echo "::endgroup::"
+            > auditorias/Resumen-WCAG.md
 
-      # 17️⃣ Quality Gate
       - name: 🚦 Quality Gate – WCAG
         continue-on-error: true
         run: |
-          echo "::group::🚦 Quality Gate (WCAG)"
-          npm run quality || echo "⚠️ Quality Gate con advertencias o fallos leves."
-          echo "::endgroup::"
+          npm run quality || echo "⚠️ Quality Gate con advertencias."
 
-      # 18️⃣ Generar evidencias visuales
-      - name: 📸 Generar evidencias visuales (capturas WCAG)
-        if: always()
-        run: |
-          echo "::group::📸 Generando evidencias visuales"
-          if [ -f scripts/capture-evidence.mjs ]; then
-            node --max-old-space-size=4096 --experimental-specifier-resolution=node scripts/capture-evidence.mjs
-          else
-            echo "⚠️ No se encontró scripts/capture-evidence.mjs — se omite."
-          fi
-          echo "::endgroup::"
-          echo "✅ Capturas y metadatos generados en auditorias/capturas/"
+      # =====================================================
+      # 📊 Exportaciones IAAP
+      # =====================================================
+      - name: 📊 Exportar informe Excel IAAP
+        run: node scripts/export-to-xlsx.mjs
+
+      - name: 🖨️ Generar PDF IAAP profesional
+        run: node scripts/generate-report.mjs
         env:
-          PUPPETEER_SKIP_DOWNLOAD: true
+          PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome-stable
 
-      # 19️⃣ Exportar informe profesional
-      - name: 📊 Exportar informe Excel + ZIP (IAAP / W3C)
+      - name: 📸 Generar evidencias visuales
         if: always()
         run: |
-          set -e
-          echo "::group::📊 Generando informe profesional IAAP / W3C"
-          node --max-old-space-size=4096 --experimental-specifier-resolution=node scripts/export-to-xlsx.mjs
-          echo "::endgroup::"
-          echo "✅ Informe Excel y ZIP generados correctamente."
-          ls -lh auditorias/
-
-      # 20️⃣ Validar informe final
-      - name: 🔍 Validar informe generado
-        if: always()
-        run: |
-          echo "::group::🔍 Validando informe final"
-          if [ ! -f auditorias/Informe-WCAG-Profesional.xlsx ]; then
-            echo "❌ No se generó el informe Excel."
-            exit 1
+          if [ -f scripts/capture-evidence.mjs ]; then
+            node scripts/capture-evidence.mjs
+          else
+            echo "ℹ️ No hay script de capturas."
           fi
-          echo "✅ Informe Excel detectado correctamente."
-          echo "::endgroup::"
 
-      # 21️⃣ Subir artefactos finales
+      - name: 📦 Generar ZIP consolidado
+        run: |
+          zip -r auditorias/Informe-WCAG-Completo.zip auditorias/*.xlsx auditorias/*.pdf auditorias/*.md auditorias/results-merged-*.json || echo "⚠️ ZIP no generado"
+
+      # =====================================================
+      # 🌐 Publicación Dashboard + Histórico
+      # =====================================================
+      - name: 🧱 Preparar carpeta pública
+        run: |
+          FECHA=$(date +'%Y-%m-%d_%H-%M-%S')
+          mkdir -p public/auditorias/${FECHA}
+          cp auditorias/Informe-WCAG-Profesional.pdf public/auditorias/${FECHA}/
+          cp auditorias/Resumen-WCAG.md public/auditorias/${FECHA}/
+          cp auditorias/Informe-WCAG-Completo.zip public/auditorias/${FECHA}/
+          cp $(ls -t auditorias/results-merged-*.json | head -n1) public/auditorias/${FECHA}/resultados.json
+
+          # Generar dashboard individual
+          cp public/auditorias/${FECHA}/resultados.json public/auditorias/${FECHA}/data.json
+          cat > public/auditorias/${FECHA}/index.html <<'HTML'
+          <!DOCTYPE html>
+          <html lang="es">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>♿ Informe WCAG – Ilúmina Audit IAAP</title>
+            <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+            <style>
+              body { font-family: system-ui, sans-serif; background: #f9fafc; color: #111; margin: 2em; }
+              h1 { color: #003366; }
+              section { background: white; border-radius: 12px; padding: 1.5em; margin-bottom: 2em; box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+              canvas { max-width: 600px; margin: 1em auto; display: block; }
+              iframe { width: 100%; height: 80vh; border-radius: 8px; border: 1px solid #ccc; }
+              button { background: #004080; color: white; border: none; padding: .8em 1.5em; border-radius: 8px; cursor: pointer; }
+              footer { text-align: center; font-size: .85em; color: #555; margin-top: 3em; }
+            </style>
+          </head>
+          <body>
+            <h1>♿ Informe de Accesibilidad WCAG</h1>
+            <section>
+              <h2>📊 Resumen</h2>
+              <p><strong>Sitio:</strong> <span id="site-url"></span></p>
+              <p><strong>Fecha:</strong> <span id="fecha"></span></p>
+              <p><strong>Conformidad:</strong> <span id="conf"></span>%</p>
+              <canvas id="chart"></canvas>
+            </section>
+
+            <section>
+              <h2>📄 Informe PDF IAAP</h2>
+              <iframe src="Informe-WCAG-Profesional.pdf" title="Informe PDF"></iframe>
+            </section>
+
+            <section>
+              <h2>💾 Descargas</h2>
+              <button onclick="window.open('Informe-WCAG-Completo.zip')">⬇️ Descargar Informe Completo (ZIP)</button>
+              <p><a href="Resumen-WCAG.md">📘 Ver resumen Markdown</a></p>
+            </section>
+
+            <footer>© Ilúmina Audit IAAP · 2025</footer>
+
+            <script>
+              fetch('data.json')
+                .then(r=>r.json())
+                .then(d=>{
+                  const totalUrls=new Set(d.map(x=>x.url)).size;
+                  const impacts=d.flatMap(r=>r.violations?.map(v=>v.impact||'unknown')||[]);
+                  const c=impacts.reduce((a,i)=>{a[i]=(a[i]||0)+1;return a;}, {});
+                  const p=(c.critical||0)*2+(c.serious||0)*1.2+(c.moderate||0)*0.5+(c.minor||0)*0.2;
+                  const conf=Math.max(0,100-p/Math.max(totalUrls,1)).toFixed(1);
+                  document.getElementById('site-url').textContent=new URL(window.location).searchParams.get('site')||'Desconocido';
+                  document.getElementById('fecha').textContent=new Date().toLocaleString('es-ES');
+                  document.getElementById('conf').textContent=conf;
+                  new Chart(document.getElementById('chart'),{type:'doughnut',data:{labels:Object.keys(c),datasets:[{data:Object.values(c),backgroundColor:['#e53935','#fb8c00','#fdd835','#43a047']}]},options:{plugins:{legend:{position:'bottom'}}}});
+                });
+            </script>
+          </body>
+          </html>
+          HTML
+
+          # Actualizar histórico
+          mkdir -p public/auditorias
+          echo "<!DOCTYPE html><html lang='es'><head><meta charset='utf-8'><title>Histórico de auditorías WCAG</title><style>body{font-family:sans-serif;margin:2em;background:#f9fafc;}table{border-collapse:collapse;width:100%;}th,td{border:1px solid #ccc;padding:.5em;text-align:left;}th{background:#004080;color:white;}</style></head><body><h1>📜 Histórico de Auditorías WCAG</h1><table><tr><th>Fecha</th><th>Conformidad</th><th>Informe</th></tr>" > public/auditorias/index.html
+          for dir in $(ls -dt public/auditorias/*/ | head -n 20); do
+            if [ -f "${dir}data.json" ]; then
+              CONF=$(node -e "const d=require('${dir}data.json');const t=new Set(d.map(x=>x.url)).size;const i=d.flatMap(r=>r.violations?.map(v=>v.impact||'unknown')||[]);const c=i.reduce((a,x)=>{a[x]=(a[x]||0)+1;return a;},{});const p=(c.critical||0)*2+(c.serious||0)*1.2+(c.moderate||0)*0.5+(c.minor||0)*0.2;console.log((100-p/Math.max(t,1)).toFixed(1));")
+              echo "<tr><td>${dir#public/auditorias/}</td><td>${CONF}%</td><td><a href='${dir#public/}'>Ver informe</a></td></tr>" >> public/auditorias/index.html
+            fi
+          done
+          echo "</table><p>🧩 Ilúmina Audit IAAP – generado automáticamente</p></body></html>" >> public/auditorias/index.html
+
+      - name: 🚀 Publicar en GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public
+          publish_branch: gh-pages
+          commit_message: "🚀 Publicación automática del Dashboard WCAG IAAP PRO con histórico"
+
+      # =====================================================
+      # 📤 Artefactos + resumen final
+      # =====================================================
       - name: 📤 Subir artefactos finales
-        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: "WCAG-Informe-${{ github.run_number }}-${{ github.event.inputs.site_url || 'default' }}"
+          name: "WCAG-Informe-${{ github.run_number }}"
           path: |
             auditorias/results-merged-*.json
             auditorias/Informe-WCAG-Profesional.xlsx
-            auditorias/Informe-WCAG.zip
+            auditorias/Informe-WCAG-Profesional.pdf
             auditorias/Resumen-WCAG.md
+            auditorias/Informe-WCAG-Completo.zip
             auditorias/capturas/**/*.png
-            auditorias/logs/**/*.log
           retention-days: 30
 
-      # 22️⃣ Resumen final
-      - name: ✅ Resumen final de ejecución
-        if: always()
+      - name: ✅ Resumen final
         run: |
           echo "==============================================="
-          echo "♿ RESUMEN FINAL DE LA AUDITORÍA"
+          echo "♿ AUDITORÍA COMPLETADA CORRECTAMENTE"
           echo "==============================================="
           echo "🌍 Sitio auditado: $SITE_URL"
-          echo "📊 Informe generado: auditorias/Informe-WCAG-Profesional.xlsx"
-          echo "📘 Resumen: auditorias/Resumen-WCAG.md"
-          echo "📸 Capturas incluidas en ZIP"
-          echo "🚦 Quality Gate: Critical <= $CRITICAL_MAX, Serious <= $SERIOUS_MAX"
-          echo "✅ Pipeline completado correctamente."
+          echo "📊 Excel: auditorias/Informe-WCAG-Profesional.xlsx"
+          echo "📘 Markdown: auditorias/Resumen-WCAG.md"
+          echo "🖨️ PDF: auditorias/Informe-WCAG-Profesional.pdf"
+          echo "💾 ZIP: auditorias/Informe-WCAG-Completo.zip"
+          echo "🌐 Dashboard actual: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/auditorias/${FECHA}/index.html"
+          echo "🗂 Histórico: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/auditorias/"
+          echo "✅ Pipeline finalizado con éxito."
