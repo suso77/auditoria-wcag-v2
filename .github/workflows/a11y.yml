@@ -99,7 +99,7 @@ jobs:
         with:
           install-command: npm ci --include=dev || true
           command: >
-            npx cypress run --browser chrome --headless --quiet --exit
+            npx cypress run --e2e --browser chrome --headless --quiet
             --config-file cypress.config.cjs
             --spec cypress/e2e/accesibilidad-sitemap.cy.js
         env:
@@ -114,7 +114,7 @@ jobs:
         with:
           install-command: npm ci --include=dev || true
           command: >
-            npx cypress run --browser chrome --headless --quiet --exit
+            npx cypress run --e2e --browser chrome --headless --quiet
             --config-file cypress.config.cjs
             --spec cypress/e2e/accesibilidad-interactiva.cy.js
         env:
@@ -174,7 +174,7 @@ jobs:
           cp auditorias/*.pdf auditorias/*.xlsx auditorias/*.zip auditorias/*.md public/auditorias/${BUILD_DATE}/ 2>/dev/null || true
 
           # =====================================================
-          # 📊 Extraer resumen IAAP (impactos) desde resultados.json
+          # 📊 Extraer resumen IAAP (impactos)
           # =====================================================
           echo "📊 Extrayendo resumen IAAP..."
           node -e "
