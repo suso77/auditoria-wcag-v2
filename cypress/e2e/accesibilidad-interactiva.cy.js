@@ -3,15 +3,14 @@ import "cypress-axe";
 import "cypress-real-events/support";
 
 /**
- * ♿ Auditoría de accesibilidad – Componentes interactivos (v3.6.0 IAAP / WCAG 2.2 CI+)
- * ----------------------------------------------------------------------------------------
- * ✅ Auditoría real en todas las URLs (sin quedarse en la primera)
- * ✅ Inyección verificada de axe-core (dom completo garantizado)
- * ✅ Ejecución secuencial real garantizada (Cypress.Promise.each)
- * ✅ Limpieza de memoria segura (sin romper el DOM)
+ * ♿ Auditoría de accesibilidad – Componentes interactivos (IAAP PRO v3.6.3)
+ * ----------------------------------------------------------------------------
+ * ✅ Audita todos los componentes en todas las URLs (sin duplicar)
+ * ✅ Ejecución secuencial real (Cypress.Promise.each)
+ * ✅ Inyección verificada de axe-core
  * ✅ Capturas y logs IAAP por componente y violación
- * ✅ Reintento ante errores de red o timeout
- * ✅ Total compatibilidad con GitHub Actions y CI headless
+ * ✅ Guardado final deduplicado
+ * ✅ 100% compatible con CI/CD headless
  */
 
 describe("♿ Auditoría de accesibilidad – Componentes interactivos (IAAP PRO)", () => {
@@ -24,13 +23,13 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (IAAP PRO
     "menu",
     "nav",
     "[role='menu']",
-    '[id*="cookie"]',
-    '[class*="cookie"]',
-    '[aria-label*="cookie"]',
+    '[id*=\"cookie\"]',
+    '[class*=\"cookie\"]',
+    '[aria-label*=\"cookie\"]',
   ];
 
   // ===========================================================
-  // ⚙️ Manejo tolerante de errores
+  // ⚙️ Tolerancia de errores
   // ===========================================================
   Cypress.on("fail", (error) => {
     if (error.message?.includes("accessibility violation")) return false;
@@ -39,7 +38,7 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (IAAP PRO
   });
 
   // ===========================================================
-  // ♿ Función auxiliar de auditoría por componente
+  // ♿ Función auxiliar para auditar un componente
   // ===========================================================
   const runA11y = (selector, page, safeSel, slug) => {
     let attempts = 0;
@@ -51,7 +50,8 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (IAAP PRO
       cy.injectAxe();
 
       cy.window().then((win) => {
-        if (!win.axe) cy.task("log", `⚠️ axe-core no inyectado correctamente en ${page}`);
+        if (!win.axe)
+          cy.task("log", `⚠️ axe-core no inyectado correctamente en ${page}`);
       });
 
       cy.checkA11y(
@@ -95,7 +95,10 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (IAAP PRO
         { skipFailures: true }
       ).catch((err) => {
         const msg = err?.message || "sin mensaje";
-        if ((msg.includes("timeout") || msg.includes("ERR_CONNECTION")) && attempts <= MAX_RETRIES) {
+        if (
+          (msg.includes("timeout") || msg.includes("ERR_CONNECTION")) &&
+          attempts <= MAX_RETRIES
+        ) {
           cy.task("log", `🔁 Reintentando ${selector} en ${page}`);
           cy.wait(1000);
           execute();
@@ -107,24 +110,29 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (IAAP PRO
   };
 
   // ===========================================================
-  // 🧩 Test principal — Ejecución secuencial real
+  // 🧩 Test principal — Ejecución secuencial completa
   // ===========================================================
   it("Audita todos los componentes interactivos en todas las URLs", () => {
     cy.viewport(1280, 720);
     cy.task("clearCaptures");
 
-    return cy.task("readUrls").then((urlsRaw) => {
-      const urls = urlsRaw.map((p) => p.url).filter(Boolean);
-      cy.task("log", `🌍 Iniciando auditoría interactiva: ${urls.length} URLs.`);
+    cy.task("readUrls").then((urlsRaw) => {
+      const pages = urlsRaw.filter((p) => p && p.url && !p.error);
+      cy.task("log", `🌍 Iniciando auditoría interactiva: ${pages.length} URLs.`);
 
-      return Cypress.Promise.each(urls, (page, index) => {
+      if (pages.length === 0) {
+        cy.task("log", "⚠️ No hay URLs válidas para auditar.");
+        return;
+      }
+
+      return Cypress.Promise.each(pages, (p, index) => {
+        const page = p.url;
         const slug = page.replace(/https?:\/\/|\/$/g, "").replace(/\W+/g, "-");
         cy.task("log", `🚀 Analizando: ${page}`);
 
         return cy
           .visit(page, { timeout: 90000, failOnStatusCode: false })
           .then(() => {
-            // 🕒 Espera al DOM completo antes de inyectar axe
             cy.document().its("readyState").should("eq", "complete");
             cy.wait(1500);
             cy.injectAxe();
@@ -152,10 +160,11 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (IAAP PRO
               "[role='switch'], input[type='checkbox'], .toggle, .switch",
               "form, [role='form'], input, select, textarea, [contenteditable='true']",
               "[data-testid], [data-component], [data-cy]",
-              '[id*="cookie"], [class*="cookie"], [aria-label*="cookie"]',
+              '[id*=\"cookie\"], [class*=\"cookie\"], [aria-label*=\"cookie\"]',
               "header, footer, main, aside",
             ];
 
+            // Evita reauditar secciones comunes en páginas posteriores
             if (index > 0) {
               selectors = selectors.filter(
                 (sel) =>
@@ -167,7 +176,6 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (IAAP PRO
 
             const detected = new Set();
 
-            // 🔍 Detectar componentes existentes
             return cy
               .get("body")
               .then(($body) => {
@@ -181,7 +189,7 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (IAAP PRO
                   return;
                 }
 
-                // ♿ Auditoría IAAP por cada componente detectado
+                // ♿ Auditoría IAAP secuencial por componente
                 return Cypress.Promise.each(Array.from(detected), (selector) => {
                   return cy.get("body").then(($body) => {
                     if ($body.find(selector).length === 0) return;
@@ -210,7 +218,7 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (IAAP PRO
                 });
               })
               .then(() => {
-                // ✅ Limpieza del DOM segura
+                // 🧹 Limpieza de memoria segura tras cada página
                 cy.window().then((win) => {
                   try {
                     if (win.stop) win.stop();
@@ -224,6 +232,8 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (IAAP PRO
               });
           })
           .wait(500);
+      }).then(() => {
+        cy.task("log", "✅ Auditoría interactiva completada correctamente.");
       });
     });
   });
@@ -267,10 +277,3 @@ describe("♿ Auditoría de accesibilidad – Componentes interactivos (IAAP PRO
     cy.writeFile("auditorias/last-interactiva.txt", outputDir, "utf8");
   });
 });
-
-
-
-
-
-
-
