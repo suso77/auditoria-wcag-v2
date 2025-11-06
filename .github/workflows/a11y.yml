@@ -27,6 +27,7 @@ jobs:
 
     env:
       SITE_URL: ${{ github.event.inputs.site_url || vars.SITE_URL || 'https://www.hiexperience.es' }}
+      BUILD_DATE: ${{ github.run_id }}-${{ github.run_number }}
       LC_ALL: C.UTF-8
       LANG: C.UTF-8
       TZ: Europe/Madrid
@@ -208,27 +209,25 @@ jobs:
       - name: 🧱 Preparar carpeta pública
         run: |
           set +e
-          FECHA=$(date +'%Y-%m-%d_%H-%M-%S')
-          mkdir -p public/auditorias/${FECHA}
-
+          mkdir -p public/auditorias/${BUILD_DATE}
           echo "🧾 Copiando archivos disponibles..."
-          [ -f auditorias/Informe-WCAG-IAAP.pdf ] && cp auditorias/Informe-WCAG-IAAP.pdf public/auditorias/${FECHA}/ || echo "⚠️ PDF no encontrado."
-          [ -f auditorias/Informe-WCAG-IAAP.xlsx ] && cp auditorias/Informe-WCAG-IAAP.xlsx public/auditorias/${FECHA}/ || echo "⚠️ Excel no encontrado."
-          [ -f auditorias/Informe-WCAG-IAAP.zip ] && cp auditorias/Informe-WCAG-IAAP.zip public/auditorias/${FECHA}/ || echo "⚠️ ZIP no encontrado."
-          [ -f auditorias/Resumen-WCAG.md ] && cp auditorias/Resumen-WCAG.md public/auditorias/${FECHA}/ || echo "⚠️ Resumen no encontrado."
+          [ -f auditorias/Informe-WCAG-IAAP.pdf ] && cp auditorias/Informe-WCAG-IAAP.pdf public/auditorias/${BUILD_DATE}/ || echo "⚠️ PDF no encontrado."
+          [ -f auditorias/Informe-WCAG-IAAP.xlsx ] && cp auditorias/Informe-WCAG-IAAP.xlsx public/auditorias/${BUILD_DATE}/ || echo "⚠️ Excel no encontrado."
+          [ -f auditorias/Informe-WCAG-IAAP.zip ] && cp auditorias/Informe-WCAG-IAAP.zip public/auditorias/${BUILD_DATE}/ || echo "⚠️ ZIP no encontrado."
+          [ -f auditorias/Resumen-WCAG.md ] && cp auditorias/Resumen-WCAG.md public/auditorias/${BUILD_DATE}/ || echo "⚠️ Resumen no encontrado."
 
           LAST_JSON=$(ls -t auditorias/results-merged-*.json 2>/dev/null | head -n1)
           if [ -n "$LAST_JSON" ]; then
-            cp "$LAST_JSON" public/auditorias/${FECHA}/resultados.json
+            cp "$LAST_JSON" public/auditorias/${BUILD_DATE}/resultados.json
           else
             echo "⚠️ No se encontró results-merged.json."
-            echo "[]" > public/auditorias/${FECHA}/resultados.json
+            echo "[]" > public/auditorias/${BUILD_DATE}/resultados.json
           fi
 
-          cp public/auditorias/${FECHA}/resultados.json public/auditorias/${FECHA}/data.json
+          cp public/auditorias/${BUILD_DATE}/resultados.json public/auditorias/${BUILD_DATE}/data.json
 
-          # Página pública (dashboard IAAP PRO)
-          cat > public/auditorias/${FECHA}/index.html <<'HTML'
+          # HTML del Dashboard (idéntico al tuyo anterior)
+          cat > public/auditorias/${BUILD_DATE}/index.html <<'HTML'
           <!DOCTYPE html>
           <html lang="es">
           <head>
@@ -301,6 +300,15 @@ jobs:
           </html>
           HTML
 
+      # =====================================================
+      # 📦 Publicación y artefactos
+      # =====================================================
+      - name: 🧩 Empaquetar carpeta pública
+        if: always()
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./public
+
       - name: 🚀 Publicar en GitHub Pages
         if: success() || always()
         uses: peaceiris/actions-gh-pages@v3
@@ -309,6 +317,12 @@ jobs:
           publish_dir: ./public
           publish_branch: gh-pages
           commit_message: "🚀 Publicación automática del Dashboard WCAG IAAP PRO con histórico"
+
+      - name: 📜 Guardar logs de ejecución
+        if: always()
+        run: |
+          mkdir -p auditorias/logs
+          cp ~/.npm/_logs/* auditorias/logs/ || true
 
       - name: 📤 Subir artefactos finales
         uses: actions/upload-artifact@v4
@@ -321,11 +335,11 @@ jobs:
             auditorias/Resumen-WCAG.md
             auditorias/Informe-WCAG-IAAP.zip
             auditorias/capturas/**/*.png
+            auditorias/logs/*
           retention-days: 30
 
       - name: ✅ Resumen final
         run: |
-          FECHA=$(date +'%Y-%m-%d_%H-%M-%S')
           echo "==============================================="
           echo "♿ AUDITORÍA COMPLETADA CORRECTAMENTE"
           echo "==============================================="
@@ -334,8 +348,6 @@ jobs:
           echo "📘 Markdown: auditorias/Resumen-WCAG.md"
           echo "🖨️ PDF: auditorias/Informe-WCAG-IAAP.pdf"
           echo "💾 ZIP: auditorias/Informe-WCAG-IAAP.zip"
-          echo "🌐 Dashboard actual: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/auditorias/${FECHA}/index.html"
+          echo "🌐 Dashboard actual: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/auditorias/${BUILD_DATE}/index.html"
           echo "🗂 Histórico: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/auditorias/"
           echo "✅ Pipeline finalizado con éxito."
-
-
