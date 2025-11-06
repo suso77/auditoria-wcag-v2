@@ -126,13 +126,13 @@ jobs:
           command: >
             npx cypress run --browser chrome --headless
             --config-file cypress.config.cjs
-            --spec "cypress/e2e/accesibilidad-sitemap.cy.js"
+            --spec cypress/e2e/accesibilidad-sitemap.cy.js
 
       - name: 🧠 Auditoría de accesibilidad – Componentes interactivos
         continue-on-error: true
         run: |
           npx cypress run --browser chrome --headless --config-file cypress.config.cjs \
-            --spec "cypress/e2e/accesibilidad-interactiva.cy.js" \
+            --spec cypress/e2e/accesibilidad-interactiva.cy.js \
             || echo "⚠️ No hay specs interactivas o se omitieron."
 
       - name: 🏷️ Añadir campo "origen"
