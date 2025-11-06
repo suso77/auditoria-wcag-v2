@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>♿ Informe WCAG – Ilúmina Audit IAAP</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #f9fafc; color: #111; margin: 2em; }
+    h1 { color: #003366; }
+    section { background: white; border-radius: 12px; padding: 1.5em; margin-bottom: 2em; box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+    canvas { max-width: 600px; margin: 1em auto; display: block; }
+    iframe { width: 100%; height: 80vh; border-radius: 8px; border: 1px solid #ccc; }
+    button { background: #004080; color: white; border: none; padding: .8em 1.5em; border-radius: 8px; cursor: pointer; }
+    footer { text-align: center; font-size: .85em; color: #555; margin-top: 3em; }
+  </style>
+</head>
+<body>
+  <h1>♿ Informe de Accesibilidad WCAG</h1>
+  <section>
+    <h2>📊 Resumen</h2>
+    <p><strong>Sitio:</strong> <span id="site-url"></span></p>
+    <p><strong>Fecha:</strong> <span id="fecha"></span></p>
+    <p><strong>Conformidad:</strong> <span id="conf"></span>%</p>
+    <canvas id="chart"></canvas>
+  </section>
+  <section>
+    <h2>📄 Informe PDF IAAP</h2>
+    <iframe src="Informe-WCAG-Profesional.pdf" title="Informe PDF"></iframe>
+  </section>
+  <section>
+    <h2>💾 Descargas</h2>
+    <button onclick="window.open('Informe-WCAG-Completo.zip')">⬇️ Descargar Informe Completo (ZIP)</button>
+    <p><a href="Resumen-WCAG.md">📘 Ver resumen Markdown</a></p>
+  </section>
+  <footer>© Ilúmina Audit IAAP · 2025</footer>
+  <script>
+    fetch('data.json')
+      .then(r=>r.json())
+      .then(d=>{
+        const totalUrls=new Set(d.map(x=>x.url)).size;
+        const impacts=d.flatMap(r=>r.violations?.map(v=>v.impact||'unknown')||[]);
+        const c=impacts.reduce((a,i)=>{a[i]=(a[i]||0)+1;return a;}, {});
+        const p=(c.critical||0)*2+(c.serious||0)*1.2+(c.moderate||0)*0.5+(c.minor||0)*0.2;
+        const conf=Math.max(0,100-p/Math.max(totalUrls,1)).toFixed(1);
+        document.getElementById('site-url').textContent=new URL(window.location).searchParams.get('site')||'Desconocido';
+        document.getElementById('fecha').textContent=new Date().toLocaleString('es-ES');
+        document.getElementById('conf').textContent=conf;
+        new Chart(document.getElementById('chart'),{type:'doughnut',data:{labels:Object.keys(c),datasets:[{data:Object.values(c),backgroundColor:['#e53935','#fb8c00','#fdd835','#43a047']}]},options:{plugins:{legend:{position:'bottom'}}}});
+      });
+  </script>
+</body>
+</html>
