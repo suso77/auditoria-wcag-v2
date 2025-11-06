@@ -1,10 +1,11 @@
 /**
- * ♿ Configuración universal de Cypress (versión profesional completa v2.2)
+ * ♿ Configuración universal de Cypress (v2.3 IAAP PRO / WCAG 2.2)
  * --------------------------------------------------------------------
- * - Compatible con flujo de auditorías WCAG + capturas + exportación XLSX.
- * - Incluye tareas personalizadas para lectura, escritura y logs.
- * - Limpieza automática de carpetas y resultados antiguos.
- * - Optimizada para CI/CD (GitHub Actions, Docker, local).
+ * ✅ Compatible con auditorías WCAG (sitemap + interactiva) y exportación JSON/XLSX
+ * ✅ Limpieza automática de capturas y resultados antiguos
+ * ✅ Soporte total para CI/CD (GitHub Actions, Docker, local)
+ * ✅ Logs persistentes + creación automática de carpetas
+ * ✅ Estabilidad reforzada y compatibilidad con Cypress.Promise.each
  * --------------------------------------------------------------------
  */
 
@@ -40,24 +41,17 @@ module.exports = defineConfig({
       // 🧩 TAREAS PERSONALIZADAS WCAG + OPCIONES PRO
       // =====================================================
 
-      /**
-       * 📁 Asegura que una carpeta exista (crea si no)
-       */
+      /** 📁 Crea carpeta si no existe */
       function ensureDir(dirPath) {
-        if (!fs.existsSync(dirPath)) {
-          fs.mkdirSync(dirPath, { recursive: true });
-        }
+        if (!fs.existsSync(dirPath)) fs.mkdirSync(dirPath, { recursive: true });
       }
 
-      /**
-       * 🧹 Limpia capturas anteriores (con breve pausa para CI)
-       */
+      /** 🧹 Limpia capturas anteriores */
       function clearCaptures() {
         const dir = path.join(__dirname, "auditorias", "capturas");
         try {
           fs.emptyDirSync(dir);
           console.log("🧹 Capturas anteriores eliminadas correctamente.");
-          // Pequeña pausa de 200ms para evitar conflictos en runners CI
           Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
         } catch (err) {
           console.warn("⚠️ Error al limpiar capturas:", err.message);
@@ -65,9 +59,7 @@ module.exports = defineConfig({
         return null;
       }
 
-      /**
-       * 🧹 Limpia resultados antiguos (seguro cross-OS)
-       */
+      /** 🧹 Limpia resultados antiguos */
       function cleanOldResults() {
         const auditoriasDir = path.join(__dirname, "auditorias");
         if (!fs.existsSync(auditoriasDir)) return null;
@@ -86,9 +78,7 @@ module.exports = defineConfig({
         return null;
       }
 
-      /**
-       * 🌐 Lee URLs desde scripts/urls.json
-       */
+      /** 🌐 Lee URLs desde scripts/urls.json */
       function readUrls() {
         const urlsPath = path.join(__dirname, "scripts", "urls.json");
         if (!fs.existsSync(urlsPath)) {
@@ -115,13 +105,10 @@ module.exports = defineConfig({
         }
       }
 
-      /**
-       * 💾 Guarda resultados JSON (acumula si existe)
-       */
+      /** 💾 Guarda resultados JSON */
       function writeResults({ dir, data }) {
         ensureDir(dir);
         const filePath = path.join(dir, "results.json");
-
         try {
           let existing = [];
           if (fs.existsSync(filePath)) {
@@ -139,15 +126,14 @@ module.exports = defineConfig({
         return null;
       }
 
-      /**
-       * 🪵 Log seguro (consola + archivo logs.txt)
-       */
+      /** 🪵 Log seguro */
       function safeLog(message) {
         const text = typeof message === "string" ? message : JSON.stringify(message);
-        const logPath = path.join(__dirname, "auditorias", "logs.txt");
+        const logDir = path.join(__dirname, "auditorias");
+        const logPath = path.join(logDir, "logs.txt");
 
         try {
-          ensureDir(path.join(__dirname, "auditorias"));
+          ensureDir(logDir);
           fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${text}\n`);
         } catch (err) {
           console.warn("⚠️ No se pudo escribir en logs.txt:", err.message);
@@ -157,16 +143,16 @@ module.exports = defineConfig({
         return null;
       }
 
-      /**
-       * 📁 Crear carpeta recursiva
-       */
+      /** 📁 Crear carpeta recursiva */
       function createFolder(dir) {
         ensureDir(dir);
         console.log(`📁 Carpeta creada/verificada: ${dir}`);
         return null;
       }
 
-      // 🚀 Flags extra para CI (sin sandbox en GitHub Actions)
+      // =====================================================
+      // 🚀 Config extra para CI
+      // =====================================================
       on("before:browser:launch", (browser = {}, launchOptions) => {
         if (browser.name === "chrome" || browser.family === "chromium") {
           launchOptions.args.push("--no-sandbox", "--disable-gpu");
@@ -174,9 +160,9 @@ module.exports = defineConfig({
         return launchOptions;
       });
 
-      // ============================
-      // Registrar todas las tareas
-      // ============================
+      // =====================================================
+      // 📚 Registrar tareas
+      // =====================================================
       on("task", {
         log: safeLog,
         clearCaptures,
@@ -185,6 +171,17 @@ module.exports = defineConfig({
         writeResults,
         createFolder,
       });
+
+      // 📦 Limpieza inicial global antes de ejecución (solo primera auditoría)
+      try {
+        ensureDir(path.join(__dirname, "auditorias"));
+        fs.writeFileSync(
+          path.join(__dirname, "auditorias", "logs.txt"),
+          `\n\n===== INICIO AUDITORÍA ${new Date().toISOString()} =====\n`
+        );
+      } catch (err) {
+        console.warn("⚠️ No se pudo inicializar logs:", err.message);
+      }
 
       return config;
     },
@@ -205,3 +202,4 @@ module.exports = defineConfig({
     SITE_URL: process.env.SITE_URL || "https://www.hiexperience.es",
   },
 });
+
