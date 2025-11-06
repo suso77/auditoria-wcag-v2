@@ -2,31 +2,34 @@
 import "cypress-axe";
 
 /**
- * ♿ Auditoría de accesibilidad – Sitemap completo (v2.2 profesional optimizada)
+ * ♿ Auditoría de accesibilidad – Sitemap completo (v3.0 profesional optimizada)
  * -------------------------------------------------------------------------
  * ✅ Audita todas las URLs HTML listadas en scripts/urls.json.
  * ✅ Ignora recursos no HTML (PDF, imágenes, etc.).
- * ✅ Capturas por página y violación (evidencias visuales).
+ * ✅ Capturas por página y por violación (evidencias visuales).
  * ✅ Reintento automático en errores o timeouts.
- * ✅ Viewport optimizado para CI (1280x720).
- * ✅ Logs uniformes con la versión “interactiva”.
+ * ✅ Viewport optimizado para CI/CD (1280x720).
+ * ✅ Logs y estructura uniformes con la versión “interactiva”.
  * ✅ Compatible con merge-results.mjs y exportación profesional.
+ * ✅ Limpieza de memoria y manejo tolerante de errores en CI.
  */
 
 describe("♿ Auditoría de accesibilidad – Sitemap completo (profesional con capturas)", () => {
   let pages = [];
   const allResults = [];
 
-  // 🚫 Evita que Cypress marque el test como fallido por violaciones
+  // 🚫 Evita que Cypress falle por violaciones de axe-core
   Cypress.on("fail", (error) => {
     if (error.message?.includes("accessibility violation")) {
-      console.log("⚠️ Violación de accesibilidad detectada (registrada sin bloquear el test).");
+      console.log("⚠️ Violación registrada sin detener la ejecución.");
       return false;
     }
     throw error;
   });
 
-  // 🧹 Limpia capturas anteriores antes de comenzar
+  // ===========================================================
+  // 🧹 Preparación inicial
+  // ===========================================================
   before(() => {
     cy.viewport(1280, 720);
     cy.task("clearCaptures");
@@ -36,11 +39,15 @@ describe("♿ Auditoría de accesibilidad – Sitemap completo (profesional con 
     });
   });
 
-  // 🔁 Helper con reintento automático y logs uniformes
+  // ===========================================================
+  // 🧠 Helper: Auditoría accesibilidad con reintento automático
+  // ===========================================================
   const runA11y = (context, url, title, slug) => {
     let attempts = 0;
+
     const execute = () => {
       attempts++;
+
       cy.checkA11y(
         context,
         null,
@@ -86,13 +93,14 @@ describe("♿ Auditoría de accesibilidad – Sitemap completo (profesional con 
       ).then(null, (err) => {
         if (attempts < 2) {
           cy.task("log", `🔁 Reintentando auditoría de ${url} (intento ${attempts})...`);
-          cy.wait(800);
+          cy.wait(1000);
           execute();
         } else {
           cy.task("log", `⚠️ Error definitivo en ${url}: ${err?.message || "sin mensaje"}`);
         }
       });
     };
+
     execute();
   };
 
@@ -117,15 +125,13 @@ describe("♿ Auditoría de accesibilidad – Sitemap completo (profesional con 
       const slug = url.replace(/https?:\/\/|\/$/g, "").replace(/\W+/g, "-");
 
       cy.visit(url, { timeout: 90000, failOnStatusCode: false })
-        .wait(600)
+        .wait(800)
         .then((win) => {
-          // 🧾 Título de la página
+          // 🧾 Obtener título real de la página
           let safeTitle = title || "(sin título)";
           try {
-            if (win?.document?.title) {
-              const docTitle = win.document.title.trim();
-              if (docTitle) safeTitle = docTitle;
-            }
+            const docTitle = win?.document?.title?.trim();
+            if (docTitle) safeTitle = docTitle;
           } catch {
             cy.task("log", `⚠️ No se pudo leer el título en ${url}`);
           }
@@ -140,7 +146,7 @@ describe("♿ Auditoría de accesibilidad – Sitemap completo (profesional con 
           // ♿ Ejecutar auditoría principal
           runA11y(null, url, safeTitle, slug);
 
-          // ♻️ Limpieza de memoria
+          // ♻️ Limpieza de memoria (importante en CI)
           cy.window().then((win) => {
             try {
               win.document.body.innerHTML = "";
@@ -159,7 +165,7 @@ describe("♿ Auditoría de accesibilidad – Sitemap completo (profesional con 
           );
 
           cy.visit(url, { failOnStatusCode: false, timeout: 120000 })
-            .wait(1000)
+            .wait(1200)
             .then(() => {
               cy.injectAxe();
               cy.screenshot(`auditorias/capturas/${slug}/reintento`, {
@@ -196,10 +202,12 @@ describe("♿ Auditoría de accesibilidad – Sitemap completo (profesional con 
       (r) => Array.isArray(r.violations) && r.violations.length > 0
     );
 
+    // Guardar resultados principales
     cy.task("writeResults", { dir: outputDir, data: onlyViolations }).then(() => {
       cy.task("log", `✅ Resultados guardados en: ${outputDir}/results.json`);
     });
 
+    // Copia archivada con timestamp
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     const archiveDir = `auditorias/${timestamp}-auditoria-sitemap`;
     cy.task("createFolder", archiveDir);
@@ -207,6 +215,7 @@ describe("♿ Auditoría de accesibilidad – Sitemap completo (profesional con 
       cy.task("log", `📦 Copia archivada: ${archiveDir}/results.json`);
     });
 
+    // 📊 Resumen general de violaciones
     const totalViolations = onlyViolations.flatMap((r) => r.violations || []);
     const counts = {
       critical: totalViolations.filter((v) => v.impact === "critical").length,
@@ -221,5 +230,3 @@ describe("♿ Auditoría de accesibilidad – Sitemap completo (profesional con 
     );
   });
 });
-
-  
