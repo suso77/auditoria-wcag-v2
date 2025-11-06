@@ -26,8 +26,7 @@ jobs:
       BUILD_DATE: ${{ github.run_id }}-${{ github.run_number }}
       TZ: Europe/Madrid
       NODE_ENV: production
-      NODE_OPTIONS: "--max-old-space-size=4096 --experimental-specifier-resolution=node --no-warnings"
-      PUPPETEER_EXECUTABLE_PATH: "/usr/bin/google-chrome-stable"
+      NODE_OPTIONS: "--max-old-space-size=4096 --no-warnings"
       CYPRESS_screenshotsFolder: auditorias/capturas
       CYPRESS_video: false
       CYPRESS_screenshotOnRunFailure: true
@@ -54,23 +53,17 @@ jobs:
           key: ${{ runner.os }}-a11y-${{ hashFiles('package-lock.json') }}
 
       # =====================================================
-      # 📦 Instalación tolerante (no se detiene por errores)
+      # 📦 Instalación tolerante (sin detener por warnings)
       # =====================================================
       - name: 📦 Instalar dependencias (modo estable)
         run: |
           echo "📦 Instalando dependencias..."
           set +e
-          npm ci --include=dev
-          if [ $? -ne 0 ]; then
-            echo "⚠️ npm ci falló, usando npm install como alternativa."
-            npm install --include=dev
-          fi
-          echo "✅ Dependencias instaladas correctamente (ignorando advertencias y vulnerabilidades)."
+          npm ci --include=dev || npm install --include=dev
           npm rebuild || true
           mkdir -p scripts auditorias/capturas auditorias/logs
           [ ! -f scripts/urls.json ] && echo "[]" > scripts/urls.json
-          echo "🟢 Instalación finalizada sin detener el flujo (forzado exit 0)."
-          exit 0
+          echo "✅ Dependencias instaladas correctamente."
 
       # =====================================================
       # 🧹 Limpieza previa
@@ -79,6 +72,7 @@ jobs:
         run: |
           rm -rf auditorias/* || true
           mkdir -p auditorias/capturas auditorias/auditoria-sitemap auditorias/auditoria-interactiva
+          echo "🧹 Carpetas de auditoría listas."
 
       - name: 🧪 Verificar instalación de Cypress
         run: |
@@ -96,9 +90,9 @@ jobs:
           echo "::endgroup::"
 
       # =====================================================
-      # ♿ Auditorías principales
+      # ♿ Auditorías principales (v3.5.2)
       # =====================================================
-      - name: ♿ Auditoría de accesibilidad – Sitemap (v3.4.1)
+      - name: ♿ Auditoría de accesibilidad – Sitemap (v3.5.2)
         uses: cypress-io/github-action@v6
         continue-on-error: true
         with:
@@ -110,7 +104,7 @@ jobs:
         env:
           CYPRESS_baseUrl: ${{ env.SITE_URL }}
 
-      - name: ♿ Auditoría de accesibilidad – Componentes Interactivos (v3.5.1)
+      - name: ♿ Auditoría de accesibilidad – Componentes Interactivos (v3.5.2)
         uses: cypress-io/github-action@v6
         continue-on-error: true
         with:
@@ -123,26 +117,31 @@ jobs:
           CYPRESS_baseUrl: ${{ env.SITE_URL }}
 
       # =====================================================
-      # 🧩 Combinación + resumen + exportaciones IAAP
+      # 🧩 Combinación + resumen IAAP
       # =====================================================
       - name: 🧩 Combinar resultados
         run: |
-          node scripts/merge-results.mjs || echo "⚠️ No hay resultados válidos para combinar."
-          if [ -z "$(ls auditorias/results-merged-*.json 2>/dev/null)" ]; then
+          if node scripts/merge-results.mjs; then
+            echo "✅ Resultados combinados correctamente."
+          else
+            echo "⚠️ No se pudieron combinar resultados, generando placeholder..."
             echo "[]" > auditorias/results-merged-placeholder.json
           fi
 
       - name: 🧾 Generar resumen ejecutivo
         run: |
-          if ls auditorias/results-merged-*.json >/dev/null 2>&1; then
-            node scripts/generate-summary.mjs $(ls -t auditorias/results-merged-*.json | head -n1) > auditorias/Resumen-WCAG.md
+          LAST_JSON=$(ls -t auditorias/results-merged-*.json 2>/dev/null | head -n1)
+          if [ -n "$LAST_JSON" ]; then
+            node scripts/generate-summary.mjs "$LAST_JSON" > auditorias/Resumen-WCAG.md
+          else
+            echo "⚠️ No se generó resumen porque no hay resultados."
           fi
 
       - name: 📊 Exportar Excel IAAP
-        run: node scripts/export-to-xlsx.mjs || echo "⚠️ Error exportando Excel."
+        run: node scripts/export-to-xlsx.mjs || echo "⚠️ Error exportando Excel IAAP."
 
       - name: 🖨️ Generar PDF IAAP profesional
-        run: node scripts/generate-report.mjs || echo "⚠️ Error generando PDF."
+        run: node scripts/generate-report.mjs || echo "⚠️ Error generando PDF IAAP."
         env:
           PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome-stable
 
@@ -153,7 +152,7 @@ jobs:
       # =====================================================
       # 🌐 Dashboard público y artefactos
       # =====================================================
-      - name: 🌐 Publicar Dashboard
+      - name: 🌐 Publicar Dashboard IAAP
         run: |
           mkdir -p public/auditorias/${BUILD_DATE}
           cp auditorias/*.pdf auditorias/*.xlsx auditorias/*.zip auditorias/*.md public/auditorias/${BUILD_DATE}/ 2>/dev/null || true
@@ -186,7 +185,7 @@ jobs:
             </section>
             <section>
               <h2>📄 Informe PDF IAAP</h2>
-              <iframe src="Informe-WCAG-IAAP.pdf" width="100%" height="600"></iframe>
+              <iframe src="Informe-WCAG-IAAP.pdf" title="Informe IAAP PDF" width="100%" height="600"></iframe>
             </section>
             <section>
               <h2>💾 Descargas</h2>
@@ -211,7 +210,7 @@ jobs:
           </html>
           HTML
 
-      - name: 📤 Subir artefactos
+      - name: 📤 Subir artefactos IAAP
         uses: actions/upload-artifact@v4
         with:
           name: "WCAG-IAAP-${{ github.run_number }}"
@@ -225,10 +224,10 @@ jobs:
           retention-days: 30
 
       - name: 🚀 Publicar en GitHub Pages
-        if: success() || always()
+        if: always()
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./public
           publish_branch: gh-pages
-          commit_message: "🚀 Publicación automática WCAG IAAP PRO"
+          commit_message: "🚀 Publicación automática WCAG IAAP PRO (${{ github.run_number }})"
