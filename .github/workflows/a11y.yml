@@ -30,6 +30,7 @@ jobs:
       CYPRESS_screenshotsFolder: auditorias/capturas
       CYPRESS_video: false
       CYPRESS_screenshotOnRunFailure: true
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome
 
     steps:
       # =====================================================
@@ -50,7 +51,7 @@ jobs:
           path: |
             ~/.cache/Cypress
             ~/.cache/puppeteer
-          key: ${{ runner.os }}-a11y-v4.1-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-a11y-v4.7-${{ hashFiles('package-lock.json') }}
 
       # =====================================================
       # 📦 Instalación tolerante
@@ -61,7 +62,7 @@ jobs:
           set +e
           npm ci --include=dev || npm install --include=dev
           npm rebuild || true
-          mkdir -p scripts auditorias/capturas auditorias/logs
+          mkdir -p scripts auditorias/capturas auditorias/logs public/auditorias
           [ ! -f scripts/urls.json ] && echo "[]" > scripts/urls.json
           echo "✅ Dependencias instaladas correctamente."
 
@@ -72,8 +73,7 @@ jobs:
         run: |
           rm -rf auditorias/* public/* || true
           mkdir -p auditorias/capturas auditorias/auditoria-sitemap auditorias/auditoria-interactiva public/auditorias
-          [ ! -f scripts/urls.json ] && echo "[]" > scripts/urls.json
-          echo "🧹 Carpetas de auditoría listas."
+          echo "🧹 Carpetas listas."
 
       - name: 🧪 Verificar instalación de Cypress
         run: npx cypress verify || npx cypress install
@@ -81,10 +81,10 @@ jobs:
       # =====================================================
       # 🌐 Rastreo + Validación
       # =====================================================
-      - name: 🌍 Rastreo automático IAAP PRO (v4.1)
+      - name: 🌍 Rastreo automático IAAP PRO (v4.7)
         timeout-minutes: 15
         run: |
-          echo "::group::🌍 Rastreo inteligente IAAP PRO"
+          echo "::group::🌍 Rastreo IAAP PRO"
           npm run crawl:auto || echo "⚠️ Rastreo automático fallido, intentando fallback..."
           npm run validate:urls || echo "⚠️ Validación no crítica"
           echo "::endgroup::"
@@ -92,9 +92,9 @@ jobs:
           SITE_URL: ${{ env.SITE_URL }}
 
       # =====================================================
-      # ♿ Auditorías principales (WCAG + AXE)
+      # ♿ Auditorías principales
       # =====================================================
-      - name: ♿ Auditoría WCAG – Sitemap (v4.1)
+      - name: ♿ Auditoría WCAG – Sitemap
         uses: cypress-io/github-action@v6
         continue-on-error: true
         with:
@@ -109,7 +109,7 @@ jobs:
       - name: ⏱️ Pausa breve
         run: sleep 10
 
-      - name: ♿ Auditoría WCAG – Componentes Interactivos (v4.1)
+      - name: ♿ Auditoría WCAG – Interactiva
         uses: cypress-io/github-action@v6
         continue-on-error: true
         with:
@@ -122,88 +122,31 @@ jobs:
           CYPRESS_baseUrl: ${{ env.SITE_URL }}
 
       # =====================================================
-      # 🧩 Combinación + resumen IAAP
+      # 🧩 Merge + Reporte IAAP PRO
       # =====================================================
-      - name: 🧩 Combinar resultados WCAG
+      - name: 🧩 Combinar auditorías completas IAAP PRO
         run: |
-          echo "::group::♿ Combinando resultados..."
-          node scripts/merge-results.mjs || echo "⚠️ Merge no crítico."
+          echo "::group::♿ Combinando resultados IAAP PRO..."
+          npm run merge:auditorias || echo "⚠️ Merge IAAP no crítico."
           echo "::endgroup::"
 
-      - name: 🧾 Generar resumen ejecutivo
+      - name: 🧾 Generar resumen + PDF IAAP PRO
         run: |
-          LAST_JSON=$(ls -t auditorias/results-merged-*.json 2>/dev/null | head -n1)
-          if [ -n "$LAST_JSON" ]; then
-            node scripts/generate-summary.mjs "$LAST_JSON" > auditorias/Resumen-WCAG.md
-          else
-            echo "⚠️ No se generó resumen (sin resultados)."
-          fi
+          node scripts/generate-summary.mjs auditorias/reportes/merged-results.json || echo "⚠️ Resumen no crítico."
+          npm run generate:report || echo "⚠️ Error generando reporte IAAP PRO."
 
+      # =====================================================
+      # 📊 Exportar Excel IAAP
+      # =====================================================
       - name: 📊 Exportar Excel IAAP
         run: node scripts/export-to-xlsx.mjs || echo "⚠️ Error exportando Excel IAAP."
 
       # =====================================================
-      # 🧱 Quality Gate IAAP PRO (v4.1)
+      # 🧱 Quality Gate IAAP PRO
       # =====================================================
-      - name: 🧱 Quality Gate IAAP PRO (v4.1)
+      - name: 🧱 Quality Gate IAAP PRO
         run: |
-          echo "::group::🧱 Evaluando umbrales de calidad IAAP..."
-          node -e "
-          import fs from 'fs';
-          const results = fs.readdirSync('auditorias')
-            .filter(f => f.startsWith('results-merged-') && f.endsWith('.json'))
-            .map(f => JSON.parse(fs.readFileSync('auditorias/' + f, 'utf8')))
-            .flat();
-          if (!results.length) { console.log('⚠️ No hay resultados para evaluar.'); process.exit(0); }
-
-          const allViolations = results.flatMap(r => r.violations || []);
-          const counts = { critical: 0, serious: 0, moderate: 0, minor: 0 };
-          for (const v of allViolations) counts[v.impact] = (counts[v.impact] || 0) + 1;
-
-          const total = allViolations.length;
-          const limits = {
-            critical: parseInt(process.env.CRITICAL_MAX || '0', 10),
-            serious: parseInt(process.env.SERIOUS_MAX || '5', 10),
-            moderate: parseInt(process.env.MODERATE_MAX || '9999', 10),
-            minor: parseInt(process.env.MINOR_MAX || '9999', 10)
-          };
-
-          console.log('📊 Conteo de violaciones:', counts);
-          console.log('🚦 Umbrales configurados:', limits);
-
-          const resumen = [
-            '# ♿ Quality Gate IAAP PRO v4.1',
-            '',
-            '## 📋 Resultados globales',
-            `- Total violaciones: **${total}**`,
-            `- Críticas: **${counts.critical || 0}** (máx ${limits.critical})`,
-            `- Graves: **${counts.serious || 0}** (máx ${limits.serious})`,
-            `- Moderadas: **${counts.moderate || 0}** (máx ${limits.moderate})`,
-            `- Menores: **${counts.minor || 0}** (máx ${limits.minor})`,
-            '',
-            '---',
-            '## 🧩 Evaluación de cumplimiento'
-          ];
-
-          const status = {
-            critical: counts.critical <= limits.critical,
-            serious: counts.serious <= limits.serious,
-            moderate: counts.moderate <= limits.moderate,
-            minor: counts.minor <= limits.minor
-          };
-
-          const passed = Object.values(status).every(Boolean);
-          for (const [key, ok] of Object.entries(status)) {
-            resumen.push(ok ? `✅ ${key} dentro del límite` : `❌ ${key} supera el límite permitido`);
-          }
-
-          resumen.push('', `### Resultado final: ${passed ? '✅ APROBADO' : '❌ RECHAZADO'}`);
-
-          fs.writeFileSync('auditorias/quality-gate.md', resumen.join('\\n'), 'utf8');
-          console.log('✅ Quality Gate IAAP PRO generado en auditorias/quality-gate.md');
-          if (!passed) process.exit(1);
-          " || echo "⚠️ Quality Gate no crítico"
-          echo "::endgroup::"
+          node scripts/quality-gate.cjs || echo "⚠️ Quality Gate no crítico"
         env:
           CRITICAL_MAX: 0
           SERIOUS_MAX: 5
@@ -211,111 +154,26 @@ jobs:
           MINOR_MAX: 9999
 
       # =====================================================
-      # 🖨️ PDF + ZIP consolidado
-      # =====================================================
-      - name: 🧩 Instalar Puppeteer estable
-        run: npm install puppeteer@23.11.1 --no-save
-
-      - name: 🖨️ Generar PDF IAAP PRO
-        run: node scripts/generate-report.mjs || echo "⚠️ Error generando PDF IAAP."
-        env:
-          PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome-stable
-
-      - name: 📦 Generar ZIP consolidado
-        run: |
-          zip -r auditorias/Informe-WCAG-IAAP.zip auditorias/*.xlsx auditorias/*.pdf auditorias/*.md auditorias/results-merged-*.json || echo "⚠️ ZIP no generado"
-
-      # =====================================================
       # 🌐 Dashboard IAAP PRO
       # =====================================================
-      - name: 🌐 Generar Dashboard IAAP PRO (v4.1)
+      - name: 🌐 Generar Dashboard IAAP PRO (v4.7)
         run: |
           echo "::group::🌐 Generando dashboard IAAP PRO..."
           mkdir -p public/auditorias/${BUILD_DATE}
-
-          LAST_JSON=$(ls -t auditorias/results-merged-*.json 2>/dev/null | head -n1)
-          if [ -z "$LAST_JSON" ]; then
-            echo "[]" > public/auditorias/${BUILD_DATE}/resultados.json
-          else
-            cp "$LAST_JSON" public/auditorias/${BUILD_DATE}/resultados.json
-          fi
-
-          cp auditorias/*.pdf auditorias/*.xlsx auditorias/*.zip auditorias/*.md public/auditorias/${BUILD_DATE}/ 2>/dev/null || true
-
-          echo "📊 Generando resumen IAAP..."
-          node -e "
-          import fs from 'fs';
-          const f='public/auditorias/${BUILD_DATE}/resultados.json';
-          if(!fs.existsSync(f)){process.exit(0);}
-          const data=JSON.parse(fs.readFileSync(f,'utf8'));
-          const impacts=data.flatMap(r=>(r.violations||[]).map(v=>v.impact||'sin clasificar'));
-          const counts=impacts.reduce((a,i)=>(a[i]=(a[i]||0)+1,a),{});
-          const total=Object.values(counts).reduce((a,b)=>a+b,0);
-          const html='<ul>'+Object.entries(counts).map(([k,v])=>'<li>'+k+': <strong>'+v+'</strong></li>').join('')+'</ul><p><strong>Total violaciones:</strong> '+total+'</p>';
-          fs.writeFileSync('public/auditorias/${BUILD_DATE}/impactos.html',html);
-          "
-
-          cat > public/auditorias/${BUILD_DATE}/index.html <<'HTML'
-          <!DOCTYPE html>
-          <html lang="es">
-          <head>
-            <meta charset="utf-8" />
-            <title>♿ Informe de Accesibilidad Digital IAAP PRO</title>
-            <meta name="viewport" content="width=device-width, initial-scale=1" />
-            <style>
-              body { font-family: system-ui, sans-serif; background:#fafafa; color:#222; margin:2em; line-height:1.6; }
-              h1,h2 { color:#003366; }
-              section { background:#fff; border-radius:12px; padding:1.5em; margin-bottom:2em; box-shadow:0 2px 6px rgba(0,0,0,0.08); }
-              a.download { background:#004080; color:#fff; padding:0.8em 1.4em; border-radius:8px; text-decoration:none; margin-right:0.6em; display:inline-block; }
-              a.download:hover { background:#002b5e; }
-              footer { text-align:center; font-size:0.85em; color:#555; margin-top:3em; }
-              ul { list-style:none; padding-left:0; }
-              li { margin:0.3em 0; }
-              iframe { border:1px solid #ddd; border-radius:8px; }
-            </style>
-          </head>
-          <body>
-            <h1>♿ Informe de Accesibilidad Digital IAAP PRO</h1>
-            <section>
-              <h2>📊 Resumen</h2>
-              <p><strong>Fecha:</strong> <script>document.write(new Date().toLocaleString('es-ES'))</script></p>
-              <div id="resumenIAAP"></div>
-            </section>
-            <section>
-              <h2>📄 Informe PDF IAAP</h2>
-              <iframe src="Informe-WCAG-IAAP.pdf" width="100%" height="600" title="Informe IAAP"></iframe>
-            </section>
-            <section>
-              <h2>💾 Descargas</h2>
-              <p>
-                <a href="Informe-WCAG-IAAP.xlsx" class="download">Excel IAAP</a>
-                <a href="Informe-WCAG-IAAP.zip" class="download">ZIP Consolidado</a>
-                <a href="Resumen-WCAG.md" class="download">Resumen Markdown</a>
-              </p>
-            </section>
-            <footer>© Ilúmina Audit IAAP · 2025</footer>
-            <script>
-              fetch('impactos.html').then(r=>r.text()).then(html=>{
-                document.getElementById('resumenIAAP').innerHTML=html;
-              }).catch(()=>{
-                document.getElementById('resumenIAAP').innerHTML='<p>⚠️ No se pudo generar resumen IAAP.</p>';
-              });
-            </script>
-          </body>
-          </html>
-          HTML
+          cp auditorias/reportes/* public/auditorias/${BUILD_DATE}/ 2>/dev/null || true
+          cp auditorias/*.pdf auditorias/*.xlsx auditorias/*.md auditorias/*.zip public/auditorias/${BUILD_DATE}/ 2>/dev/null || true
           echo "::endgroup::"
           echo "✅ Dashboard IAAP generado correctamente en public/auditorias/${BUILD_DATE}/"
 
       # =====================================================
-      # 📤 Subida + Publicación
+      # 📤 Artefactos + Publicación
       # =====================================================
       - name: 📤 Subir artefactos IAAP
         uses: actions/upload-artifact@v4
         with:
           name: "WCAG-IAAP-${{ github.run_number }}"
           path: |
-            auditorias/results-merged-*.json
+            auditorias/reportes/*
             auditorias/*.pdf
             auditorias/*.xlsx
             auditorias/*.md
@@ -324,10 +182,10 @@ jobs:
           retention-days: 30
 
       - name: 🚀 Publicar en GitHub Pages
-        if: success() && (hashFiles('auditorias/results-merged-*.json') != '')
+        if: success() && (hashFiles('auditorias/reportes/merged-results.json') != '')
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./public
           publish_branch: gh-pages
-          commit_message: "🚀 Publicación automática WCAG IAAP PRO v4.1 (${{ github.run_number }})"
+          commit_message: "🚀 Publicación automática WCAG IAAP PRO v4.7 (${{ github.run_number }})"
