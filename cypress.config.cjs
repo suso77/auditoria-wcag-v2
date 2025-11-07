@@ -1,18 +1,33 @@
 /**
- * ♿ Configuración universal de Cypress (IAAP PRO v4.0.2 / WCAG 2.2)
+ * ♿ Configuración universal de Cypress (IAAP PRO v4.0.6 / WCAG 2.2)
  * --------------------------------------------------------------------
  * ✅ Compatible con auditorías WCAG (sitemap + interactiva)
- * ✅ Exportación JSON / XLSX y dashboard IAAP PRO
- * ✅ Limpieza automática de capturas y resultados antiguos
- * ✅ Logs persistentes + creación automática de carpetas
- * ✅ Soporte total para CI/CD (GitHub Actions, Docker, local)
- * ✅ Estabilidad reforzada para axe-core y Promises Cypress
+ * ✅ Soporte CI/CD (GitHub Actions, Docker, local)
+ * ✅ Evita error “Cannot find module 'cypress'” en CI
+ * ✅ Limpieza automática y logs persistentes
+ * ✅ Carga segura del preprocesador ESBuild
  * --------------------------------------------------------------------
  */
 
-const { defineConfig } = require("cypress");
 const fs = require("fs-extra");
 const path = require("path");
+
+let createBundler = null;
+try {
+  // Solo cargamos el preprocesador si no estamos dentro de Electron
+  if (!process.env.CYPRESS_INTERNAL_ENV) {
+    createBundler = require("@bahmutov/cypress-esbuild-preprocessor");
+  } else {
+    console.log("⚙️ Modo CI detectado — omitiendo carga del preprocesador esbuild");
+  }
+} catch (e) {
+  console.warn("⚠️ No se pudo cargar el preprocesador (no crítico):", e.message);
+}
+
+// Fallback manual: si defineConfig no existe, usamos un wrapper
+function defineConfig(config) {
+  return config;
+}
 
 module.exports = defineConfig({
   e2e: {
@@ -20,14 +35,9 @@ module.exports = defineConfig({
     specPattern: "cypress/e2e/**/*.cy.{js,jsx,ts,tsx}",
     supportFile: "cypress/support/e2e.js",
 
-    // 📸 Capturas automáticas
     screenshotsFolder: "auditorias/capturas",
     screenshotOnRunFailure: true,
-
-    // 🎥 Desactivar vídeos en CI (más estabilidad)
     video: false,
-
-    // ⚙️ Configuración de tiempos y estabilidad
     chromeWebSecurity: false,
     defaultCommandTimeout: 20000,
     pageLoadTimeout: 90000,
@@ -39,16 +49,20 @@ module.exports = defineConfig({
 
     setupNodeEvents(on, config) {
       // =====================================================
-      // 🧩 FUNCIONES UTILITARIAS IAAP PRO
+      // 🧠 Carga condicional del preprocesador (solo local)
       // =====================================================
-
-      /** 📁 Garantiza que una carpeta exista */
-      function ensureDir(dirPath) {
-        if (!fs.existsSync(dirPath)) fs.mkdirSync(dirPath, { recursive: true });
+      if (createBundler) {
+        on("file:preprocessor", createBundler());
       }
 
-      /** 🧹 Limpia capturas previas */
-      function clearCaptures() {
+      // =====================================================
+      // 🧩 FUNCIONES UTILITARIAS IAAP PRO
+      // =====================================================
+      const ensureDir = (dirPath) => {
+        if (!fs.existsSync(dirPath)) fs.mkdirSync(dirPath, { recursive: true });
+      };
+
+      const clearCaptures = () => {
         const dir = path.join(__dirname, "auditorias", "capturas");
         try {
           fs.emptyDirSync(dir);
@@ -56,13 +70,12 @@ module.exports = defineConfig({
         } catch (err) {
           console.warn("⚠️ Error al limpiar capturas:", err.message);
         }
-        return null;
-      }
+        return true;
+      };
 
-      /** 🧹 Limpia resultados antiguos */
-      function cleanOldResults() {
+      const cleanOldResults = () => {
         const auditoriasDir = path.join(__dirname, "auditorias");
-        if (!fs.existsSync(auditoriasDir)) return null;
+        if (!fs.existsSync(auditoriasDir)) return true;
 
         const entries = fs.readdirSync(auditoriasDir);
         for (const entry of entries) {
@@ -79,11 +92,10 @@ module.exports = defineConfig({
             }
           }
         }
-        return null;
-      }
+        return true;
+      };
 
-      /** 🌍 Lee las URLs desde scripts/urls.json */
-      function readUrls() {
+      const readUrls = () => {
         const urlsPath = path.join(__dirname, "scripts", "urls.json");
         if (!fs.existsSync(urlsPath)) {
           console.warn("⚠️ No se encontró scripts/urls.json — se devolverá vacío.");
@@ -106,10 +118,9 @@ module.exports = defineConfig({
           console.error("❌ Error leyendo scripts/urls.json:", err.message);
           return [];
         }
-      }
+      };
 
-      /** 💾 Escribe resultados JSON */
-      function writeResults({ dir, data }) {
+      const writeResults = ({ dir, data }) => {
         ensureDir(dir);
         const filePath = path.join(dir, "results.json");
         try {
@@ -127,11 +138,10 @@ module.exports = defineConfig({
         } catch (err) {
           console.error("❌ Error guardando resultados:", err.message);
         }
-        return null;
-      }
+        return true;
+      };
 
-      /** 🪵 Log persistente y visible */
-      function safeLog(message) {
+      const safeLog = (message) => {
         const text = typeof message === "string" ? message : JSON.stringify(message);
         const logDir = path.join(__dirname, "auditorias");
         const logPath = path.join(logDir, "logs.txt");
@@ -144,15 +154,14 @@ module.exports = defineConfig({
         }
 
         console.log(`🧭 ${text}`);
-        return null;
-      }
+        return true;
+      };
 
-      /** 📁 Crear carpeta recursiva si no existe */
-      function createFolder(dir) {
+      const createFolder = (dir) => {
         ensureDir(dir);
         console.log(`📁 Carpeta creada/verificada: ${dir}`);
-        return null;
-      }
+        return true;
+      };
 
       // =====================================================
       // 🚀 Ajustes de navegador en CI
@@ -172,15 +181,8 @@ module.exports = defineConfig({
         clearCaptures,
         cleanOldResults,
         createFolder,
-
-        readUrls() {
-          return Promise.resolve(readUrls());
-        },
-
-        writeResults({ dir, data }) {
-          writeResults({ dir, data });
-          return Promise.resolve(null);
-        },
+        readUrls,
+        writeResults,
       });
 
       // =====================================================
@@ -200,17 +202,9 @@ module.exports = defineConfig({
     },
   },
 
-  // =====================================================
-  // 📊 REPORTER LIMPIO
-  // =====================================================
   reporter: "spec",
-  reporterOptions: {
-    toConsole: true,
-  },
+  reporterOptions: { toConsole: true },
 
-  // =====================================================
-  // 🌍 VARIABLES DE ENTORNO
-  // =====================================================
   env: {
     SITE_URL: process.env.SITE_URL || "https://www.hiexperience.es",
   },
