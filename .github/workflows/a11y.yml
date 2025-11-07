@@ -236,4 +236,3 @@ jobs:
             - Fecha: ${{ github.event.head_commit.timestamp }}
             - Run ID: ${{ github.run_id }}
             - Build Date: ${{ env.BUILD_DATE }}
-
