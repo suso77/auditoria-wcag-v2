@@ -1,6 +1,6 @@
 {
   "name": "auditoria-wcag-v2",
-  "version": "1.4.2",
+  "version": "1.5.0",
   "type": "module",
   "description": "Auditoría de accesibilidad automatizada con Cypress + axe-core + Puppeteer + ExcelJS + GitHub Actions (IAAP/W3C)",
   "scripts": {
@@ -10,11 +10,12 @@
     "merge-results": "node scripts/merge-results.mjs",
     "fix": "node scripts/fix-json.cjs",
 
-    "crawl": "node crawler/crawl.js",
-    "crawl:js": "node crawler/crawl-puppeteer.mjs",
+    "crawl:auto": "node crawler/crawl-auto.mjs",
+    "crawl:js": "node crawler/crawl.js",
+    "crawl:puppeteer": "node crawler/crawl-puppeteer.mjs",
     "crawl:full": "MAX_DEPTH=5 CRAWL_DELAY=1200 node crawler/crawl-puppeteer.mjs",
 
-    "preaudit": "node -e \"if (!require('fs').existsSync('./scripts/urls.json')) { console.error('❌ No se encontró scripts/urls.json. Ejecuta npm run crawl:js'); process.exit(1) } else { console.log('✅ URLs detectadas, listo para auditar.') }\"",
+    "preaudit": "node -e \"if (!require('fs').existsSync('./scripts/urls.json')) { console.error('❌ No se encontró scripts/urls.json. Ejecuta npm run crawl:auto'); process.exit(1) } else { console.log('✅ URLs detectadas, listo para auditar.') }\"",
 
     "audit:sitemap": "npx cypress run --spec cypress/e2e/accesibilidad-sitemap.cy.js --browser chrome --headless",
     "audit:interactiva": "npx cypress run --spec cypress/e2e/accesibilidad-interactiva.cy.js --browser chrome --headless",
@@ -24,17 +25,21 @@
 
     "capture:evidence": "node --max-old-space-size=4096 --experimental-specifier-resolution=node scripts/capture-evidence.mjs",
     "export:xlsx": "node --max-old-space-size=4096 --experimental-specifier-resolution=node scripts/export-to-xlsx.mjs",
-    "summary": "node scripts/generate-summary.mjs $(cat auditorias/last-merged.txt)",
 
+    "summary": "node scripts/generate-summary.mjs $(cat auditorias/last-merged.txt)",
     "quality": "node scripts/quality-gate.cjs",
     "quality:soft": "node scripts/quality-gate.cjs || echo 'Quality Gate no crítico'",
 
-    "audit:all": "npm run check-env && npm run validate:urls && npm run crawl:js && npm run audit:sitemap && npm run audit:interactiva && npm run tag-origen && npm run merge-results && npm run capture:evidence && npm run export:xlsx && npm run summary && npm run quality",
+    "audit:all": "npm run check-env && npm run crawl:auto && npm run validate:urls && npm run audit:sitemap && npm run audit:interactiva && npm run tag-origen && npm run merge-results && npm run capture:evidence && npm run export:xlsx && npm run summary && npm run quality",
     "audit:full": "npm run preaudit && npm run audit:all",
+
     "audit:local": "CRITICAL_MAX=9999 SERIOUS_MAX=9999 npm run audit:full",
     "audit:ci": "CRITICAL_MAX=0 SERIOUS_MAX=5 npm run audit:full",
+    "local:ci": "bash scripts/run-local-ci.sh",
 
-    "local:ci": "bash scripts/run-local-ci.sh"
+    "merge:auditorias": "node scripts/merge-auditorias.mjs",
+    "generate:report": "node scripts/generate-report.mjs"
+
   },
   "dependencies": {
     "@faker-js/faker": "^9.0.0",
@@ -92,3 +97,5 @@
   "author": "Suso (Ilúmina Media)",
   "license": "MIT"
 }
+
+
