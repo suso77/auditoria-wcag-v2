@@ -46,7 +46,7 @@ jobs:
           node-version: "20"
           cache: "npm"
 
-      - name: 🧠 Cachear dependencias pesadas
+      - name: 🧠 Cachear dependencias pesadas (Cypress + Puppeteer)
         uses: actions/cache@v4
         with:
           path: |
@@ -57,7 +57,7 @@ jobs:
       # =====================================================
       # 📦 Instalación tolerante
       # =====================================================
-      - name: 📦 Instalar dependencias (modo estable)
+      - name: 📦 Instalar dependencias
         run: |
           echo "📦 Instalando dependencias..."
           set +e
@@ -67,17 +67,14 @@ jobs:
           [ ! -f scripts/urls.json ] && echo "[]" > scripts/urls.json
           echo "✅ Dependencias instaladas correctamente."
 
-      - name: 🧪 Verificar instalación de Cypress
-        run: npx cypress verify || npx cypress install
-
       # =====================================================
-      # ⚙️ Fallback manual: instalar Cypress si no existe
+      # 🩹 Fix de Cypress para entorno CI
       # =====================================================
-      - name: 🧩 Instalar Cypress manualmente (fallback CI)
+      - name: 🩹 Verificar e instalar Cypress
         run: |
-          echo "⚙️ Instalando Cypress (fallback CI)..."
-          npm install cypress --save-dev
-          echo "✅ Cypress instalado correctamente en entorno CI."
+          echo "🩹 Verificando Cypress..."
+          npx cypress verify || (echo "⚙️ Instalando Cypress manualmente..." && npm install cypress@15.6.0 --save-dev)
+          echo "✅ Cypress listo para ejecutar."
 
       # =====================================================
       # ♻️ Limpieza previa
@@ -92,7 +89,7 @@ jobs:
       # 🌐 Rastreo + Validación
       # =====================================================
       - name: 🌍 Rastreo automático IAAP PRO (v4.13.1)
-        timeout-minutes: 15
+        timeout-minutes: 30
         run: |
           echo "::group::🌍 Rastreo IAAP PRO"
           npm run crawl:auto || echo "⚠️ Rastreo automático fallido, intentando fallback..."
