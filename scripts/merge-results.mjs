@@ -161,15 +161,28 @@ deduped.sort((a, b) => {
 });
 
 // ===========================================================
-// 💾 Guardar resultados IAAP combinados
+// 💾 Guardar resultados IAAP combinados (v4.3.0 IAAP PRO)
 // ===========================================================
 if (deduped.length > 0) {
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+
+  // Archivo principal con timestamp (histórico)
   const outputFile = path.join(AUDITORIAS_DIR, `results-merged-${timestamp}.json`);
   fs.writeFileSync(outputFile, JSON.stringify(deduped, null, 2), "utf8");
+
+  // Crear carpeta /reportes si no existe
+  const REPORTES_DIR = path.join(AUDITORIAS_DIR, "reportes");
+  if (!fs.existsSync(REPORTES_DIR)) fs.mkdirSync(REPORTES_DIR, { recursive: true });
+
+  // Copia estándar para los scripts IAAP PRO
+  const mergedStandard = path.join(REPORTES_DIR, "merged-results.json");
+  fs.writeFileSync(mergedStandard, JSON.stringify(deduped, null, 2), "utf8");
+
+  // Guardar referencia del último merge
   fs.writeFileSync(path.join(AUDITORIAS_DIR, "last-merged.txt"), outputFile, "utf8");
 
   console.log(`\n✅ Archivo final generado: ${outputFile}`);
+  console.log(`📂 Copia IAAP creada en: ${mergedStandard}`);
 } else {
   console.log("⚠️ No se encontraron violaciones que combinar.");
 }
