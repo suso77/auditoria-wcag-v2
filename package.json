@@ -1,8 +1,8 @@
 {
   "name": "auditoria-wcag-v2",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "type": "module",
-  "description": "Auditoría de accesibilidad automatizada con Cypress + axe-core + Puppeteer + ExcelJS + GitHub Actions (IAAP/W3C) — v4.7.3 PRO",
+  "description": "Auditoría de accesibilidad automatizada con Cypress + axe-core + Puppeteer + ExcelJS + GitHub Actions (IAAP/W3C) — v4.7.4 PRO",
   "scripts": {
     "check-env": "node scripts/check-env.cjs",
     "validate:urls": "node scripts/validate-urls.mjs",
@@ -39,7 +39,6 @@
     "chalk": "^5.6.2",
     "chart.js": "^4.5.1",
     "cheerio": "^1.0.0-rc.12",
-    "cypress-real-events": "^1.15.0",
     "date-fns": "^3.6.0",
     "exceljs": "^4.4.0",
     "fs-extra": "^11.2.0",
