@@ -122,31 +122,51 @@ jobs:
           CYPRESS_baseUrl: ${{ env.SITE_URL }}
 
       # =====================================================
-      # 🧩 Merge + Reporte IAAP PRO
+      # 🧩 Merge + Reporte IAAP PRO (v4.7.2)
       # =====================================================
       - name: 🧩 Combinar auditorías completas IAAP PRO
         run: |
           echo "::group::♿ Combinando resultados IAAP PRO..."
           npm run merge:auditorias || echo "⚠️ Merge IAAP no crítico."
+          if [ ! -f auditorias/reportes/merged-results.json ]; then
+            echo "❌ No se encontró auditorias/reportes/merged-results.json"
+            exit 1
+          fi
           echo "::endgroup::"
 
       - name: 🧾 Generar resumen + PDF IAAP PRO
         run: |
-          node scripts/generate-summary.mjs auditorias/reportes/merged-results.json || echo "⚠️ Resumen no crítico."
-          npm run generate:report || echo "⚠️ Error generando reporte IAAP PRO."
+          echo "::group::🧾 Generando resumen IAAP PRO..."
+          if [ -f auditorias/reportes/merged-results.json ]; then
+            node scripts/generate-summary.mjs auditorias/reportes/merged-results.json > auditorias/reportes/merged-summary.md
+            npm run generate:report || echo "⚠️ Error generando PDF IAAP."
+          else
+            echo "⚠️ No hay merged-results.json. Saltando generación de informe."
+          fi
+          echo "::endgroup::"
+
+      # =====================================================
+      # ✅ Verificar existencia de merged-results antes de exportar
+      # =====================================================
+      - name: ✅ Verificar existencia de merged-results antes de exportar
+        run: |
+          if [ ! -f auditorias/reportes/merged-results.json ]; then
+            echo "❌ No hay resultados combinados, omitiendo exportaciones."
+            exit 0
+          fi
 
       # =====================================================
       # 📊 Exportar Excel IAAP
       # =====================================================
       - name: 📊 Exportar Excel IAAP
-        run: node scripts/export-to-xlsx.mjs || echo "⚠️ Error exportando Excel IAAP."
+        run: node scripts/export-to-xlsx.mjs auditorias/reportes/merged-results.json || echo "⚠️ Error exportando Excel IAAP."
 
       # =====================================================
       # 🧱 Quality Gate IAAP PRO
       # =====================================================
       - name: 🧱 Quality Gate IAAP PRO
         run: |
-          node scripts/quality-gate.cjs || echo "⚠️ Quality Gate no crítico"
+          node scripts/quality-gate.cjs auditorias/reportes/merged-results.json || echo "⚠️ Quality Gate no crítico"
         env:
           CRITICAL_MAX: 0
           SERIOUS_MAX: 5
@@ -156,7 +176,7 @@ jobs:
       # =====================================================
       # 🌐 Dashboard IAAP PRO
       # =====================================================
-      - name: 🌐 Generar Dashboard IAAP PRO (v4.7)
+      - name: 🌐 Generar Dashboard IAAP PRO (v4.7.2)
         run: |
           echo "::group::🌐 Generando dashboard IAAP PRO..."
           mkdir -p public/auditorias/${BUILD_DATE}
@@ -188,4 +208,4 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./public
           publish_branch: gh-pages
-          commit_message: "🚀 Publicación automática WCAG IAAP PRO v4.7 (${{ github.run_number }})"
+          commit_message: "🚀 Publicación automática WCAG IAAP PRO v4.7.2 (${{ github.run_number }})"
