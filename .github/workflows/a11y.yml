@@ -91,9 +91,11 @@ jobs:
         env:
           SITE_URL: ${{ env.SITE_URL }}
 
+            # =====================================================
+      # ♿ Auditorías principales (WCAG Sitemap + Interactiva)
       # =====================================================
-      # ♿ Auditorías principales
-      # =====================================================
+
+      # 🌐 Auditoría del Sitemap
       - name: ♿ Auditoría WCAG – Sitemap
         uses: cypress-io/github-action@v6
         continue-on-error: true
@@ -102,13 +104,16 @@ jobs:
           command: >
             npx cypress run --e2e --browser chrome --headless
             --config-file cypress.config.cjs
-            --spec cypress/e2e/accesibilidad-sitemap.cy.js
+            --spec cypress/e2e/accesibilidad-sitemap.cy.js &&
+            mkdir -p auditorias/auditoria-sitemap &&
+            cp -r cypress/results/* auditorias/auditoria-sitemap/ 2>/dev/null || true
         env:
           CYPRESS_baseUrl: ${{ env.SITE_URL }}
 
       - name: ⏱️ Pausa breve
         run: sleep 10
 
+      # ⚙️ Auditoría de componentes interactivos
       - name: ♿ Auditoría WCAG – Interactiva
         uses: cypress-io/github-action@v6
         continue-on-error: true
@@ -117,9 +122,27 @@ jobs:
           command: >
             npx cypress run --e2e --browser chrome --headless
             --config-file cypress.config.cjs
-            --spec cypress/e2e/accesibilidad-interactiva.cy.js
+            --spec cypress/e2e/accesibilidad-interactiva.cy.js &&
+            mkdir -p auditorias/auditoria-interactiva &&
+            cp -r cypress/results/* auditorias/auditoria-interactiva/ 2>/dev/null || true
         env:
           CYPRESS_baseUrl: ${{ env.SITE_URL }}
+
+      - name: 🧾 Verificar resultados de auditorías
+        run: |
+          echo "::group::📋 Comprobando resultados WCAG..."
+          if [ -f auditorias/auditoria-sitemap/results.json ]; then
+            echo "✅ Sitemap listo."
+          else
+            echo "⚠️ No se encontró auditoria-sitemap/results.json"
+          fi
+          if [ -f auditorias/auditoria-interactiva/results.json ]; then
+            echo "✅ Interactiva lista."
+          else
+            echo "⚠️ No se encontró auditoria-interactiva/results.json"
+          fi
+          echo "::endgroup::"
+
 
       # =====================================================
       # 🧩 Merge + Reporte IAAP PRO (v4.7.2)
