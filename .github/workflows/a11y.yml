@@ -99,6 +99,31 @@ jobs:
           SITE_URL: ${{ env.SITE_URL }}
 
       # =====================================================
+      # 🧪 Validar configuración de Cypress antes de auditorías
+      # =====================================================
+      - name: 🧪 Validar entorno Cypress
+        run: |
+          echo "🔍 Verificando entorno de Cypress y configuración..."
+          if [ ! -f "cypress.config.cjs" ]; then
+            echo "❌ ERROR: No se encuentra cypress.config.cjs en el repositorio."
+            exit 1
+          fi
+
+          echo "📄 Validando cypress.config.cjs..."
+          node -e "require('./cypress.config.cjs'); console.log('✅ Configuración Cypress válida.');"
+
+          echo "📦 Verificando módulo local de Cypress..."
+          if [ ! -d "node_modules/cypress" ]; then
+            echo "⚙️ Módulo local de Cypress no encontrado. Instalando..."
+            npm install cypress@15.6.0 --save-dev
+          fi
+
+          echo "🔢 Versión de Cypress:"
+          npx cypress version
+
+          echo "✅ Entorno Cypress verificado correctamente."
+
+      # =====================================================
       # ♿ Auditorías principales
       # =====================================================
       - name: ♿ Auditoría WCAG – Sitemap
@@ -211,3 +236,4 @@ jobs:
             - Fecha: ${{ github.event.head_commit.timestamp }}
             - Run ID: ${{ github.run_id }}
             - Build Date: ${{ env.BUILD_DATE }}
+
