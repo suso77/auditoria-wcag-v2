@@ -50,6 +50,13 @@ for (const fuente of fuentes) {
     try {
       const raw = fs.readFileSync(filePath, "utf8");
       if (!raw.trim()) continue;
+
+      // Validar formato JSON
+      if (!raw.trim().startsWith("[") && !raw.trim().startsWith("{")) {
+        console.warn(`⚠️ ${fuente} no parece un JSON válido, se omite.`);
+        continue;
+      }
+
       const data = JSON.parse(raw);
       const arr = Array.isArray(data) ? data : [data];
       merged.push(...arr);
@@ -105,6 +112,9 @@ const uniqueResults = Object.values(
   }, {})
 );
 
+// ✅ Ordenar resultados por página (mejora de legibilidad)
+uniqueResults.sort((a, b) => (a.page || "").localeCompare(b.page || ""));
+
 fs.writeFileSync(mergedFile, JSON.stringify(uniqueResults, null, 2));
 console.log(`✅ Archivo combinado creado en: ${mergedFile}`);
 console.log(`📊 Total combinado: ${uniqueResults.length} resultados únicos (${total} originales)`);
@@ -121,7 +131,7 @@ uniqueResults.forEach((item) => {
 });
 
 let summary = `# ♿ Informe Consolidado IAAP PRO v4.13.1\n\n`;
-summary += `📅 Fecha de generación: ${new Date().toLocaleString("es-ES")}\n\n`;
+summary += `📅 Fecha de generación: ${new Date().toISOString().replace("T", " ").split(".")[0]}\n\n`;
 summary += `📊 **Total de resultados combinados:** ${uniqueResults.length}\n\n`;
 
 summary += `| Severidad | Nº de violaciones |\n|------------|------------------|\n`;
@@ -170,6 +180,3 @@ try {
 }
 
 console.log("🎯 Merge completado con éxito (IAAP PRO v4.13.1)");
-
-
-
