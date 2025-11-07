@@ -91,7 +91,7 @@ jobs:
         env:
           SITE_URL: ${{ env.SITE_URL }}
 
-            # =====================================================
+      # =====================================================
       # ♿ Auditorías principales (WCAG Sitemap + Interactiva)
       # =====================================================
 
@@ -101,11 +101,11 @@ jobs:
         continue-on-error: true
         with:
           install-command: npm ci --include=dev || true
-          command: >
-            npx cypress run --e2e --browser chrome --headless
-            --config-file cypress.config.cjs
-            --spec cypress/e2e/accesibilidad-sitemap.cy.js &&
-            mkdir -p auditorias/auditoria-sitemap &&
+          command: |
+            npx cypress run --e2e --browser chrome --headless \
+              --config-file cypress.config.cjs \
+              --spec "cypress/e2e/accesibilidad-sitemap.cy.js"
+            mkdir -p auditorias/auditoria-sitemap
             cp -r cypress/results/* auditorias/auditoria-sitemap/ 2>/dev/null || true
         env:
           CYPRESS_baseUrl: ${{ env.SITE_URL }}
@@ -119,11 +119,11 @@ jobs:
         continue-on-error: true
         with:
           install-command: npm ci --include=dev || true
-          command: >
-            npx cypress run --e2e --browser chrome --headless
-            --config-file cypress.config.cjs
-            --spec cypress/e2e/accesibilidad-interactiva.cy.js &&
-            mkdir -p auditorias/auditoria-interactiva &&
+          command: |
+            npx cypress run --e2e --browser chrome --headless \
+              --config-file cypress.config.cjs \
+              --spec "cypress/e2e/accesibilidad-interactiva.cy.js"
+            mkdir -p auditorias/auditoria-interactiva
             cp -r cypress/results/* auditorias/auditoria-interactiva/ 2>/dev/null || true
         env:
           CYPRESS_baseUrl: ${{ env.SITE_URL }}
