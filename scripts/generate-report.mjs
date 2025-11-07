@@ -1,5 +1,5 @@
 /**
- * 🧾 generate-report.mjs (v4.7.0 IAAP PRO / PDF Export)
+ * 🧾 generate-report.mjs (v4.7.5 IAAP PRO / PDF Export)
  * -------------------------------------------------------------
  * Genera un informe profesional IAAP en PDF a partir del
  * resumen Markdown y los resultados combinados WCAG.
@@ -17,31 +17,66 @@ import puppeteer from "puppeteer";
 import { marked } from "marked";
 
 // ===========================================================
-// 📂 Configuración base
+// 📂 Configuración base (IAAP v4.7.5 compatible)
 // ===========================================================
 const ROOT_DIR = process.cwd();
 const AUDITORIAS_DIR = path.join(ROOT_DIR, "auditorias");
+const REPORTES_DIR = path.join(AUDITORIAS_DIR, "reportes");
+
 if (!fs.existsSync(AUDITORIAS_DIR)) fs.mkdirSync(AUDITORIAS_DIR, { recursive: true });
 
-const summaryPath = path.join(AUDITORIAS_DIR, "Resumen-WCAG.md");
-const mergedFile = fs
-  .readdirSync(AUDITORIAS_DIR)
-  .filter((f) => f.startsWith("results-merged") && f.endsWith(".json"))
-  .sort()
-  .reverse()[0];
+// ===========================================================
+// 🔍 Localizar el resumen Markdown
+// ===========================================================
+let summaryPath = null;
+if (fs.existsSync(path.join(AUDITORIAS_DIR, "Resumen-WCAG.md"))) {
+  summaryPath = path.join(AUDITORIAS_DIR, "Resumen-WCAG.md");
+} else if (fs.existsSync(path.join(REPORTES_DIR, "merged-summary.md"))) {
+  summaryPath = path.join(REPORTES_DIR, "merged-summary.md");
+}
 
-if (!mergedFile) {
-  console.error("❌ No se encontró ningún results-merged-*.json en /auditorias");
+// ===========================================================
+// 🔍 Localizar el archivo combinado (IAAP PRO v4.7.x compatible)
+// ===========================================================
+let mergedPath = null;
+
+// 1️⃣ Buscar en auditorias/reportes/
+if (fs.existsSync(path.join(REPORTES_DIR, "merged-results.json"))) {
+  mergedPath = path.join(REPORTES_DIR, "merged-results.json");
+} else {
+  // 2️⃣ Fallback: buscar results-merged-*.json en auditorias/
+  const oldMerged = fs
+    .readdirSync(AUDITORIAS_DIR)
+    .filter((f) => f.startsWith("results-merged") && f.endsWith(".json"))
+    .sort()
+    .reverse()[0];
+  if (oldMerged) {
+    mergedPath = path.join(AUDITORIAS_DIR, oldMerged);
+    console.warn(`⚠️ Usando archivo de compatibilidad en /auditorias: ${oldMerged}`);
+  }
+}
+
+// ===========================================================
+// 🧩 Validar existencia de archivos base
+// ===========================================================
+if (!mergedPath || !fs.existsSync(mergedPath)) {
+  console.error("❌ No se encontró ningún merged-results.json ni results-merged-*.json en /auditorias o /auditorias/reportes");
   process.exit(1);
 }
 
-const mergedPath = path.join(AUDITORIAS_DIR, mergedFile);
+if (!summaryPath || !fs.existsSync(summaryPath)) {
+  console.error("❌ No se encontró merged-summary.md ni Resumen-WCAG.md. Ejecuta primero generate-summary.mjs o merge-auditorias.mjs");
+  process.exit(1);
+}
+
+// 📁 Rutas de salida
 const outputPath = path.join(AUDITORIAS_DIR, "Informe-WCAG-IAAP.pdf");
 
-if (!fs.existsSync(summaryPath)) {
-  console.error("❌ No se encontró Resumen-WCAG.md. Ejecuta primero generate-summary.mjs");
-  process.exit(1);
-}
+// Debug info útil en CI
+console.log("📁 Rutas detectadas IAAP v4.7.5:");
+console.log(`   - Resumen: ${summaryPath}`);
+console.log(`   - Resultados combinados: ${mergedPath}`);
+console.log(`   - Salida PDF: ${outputPath}`);
 
 // ===========================================================
 // 📊 Cargar datos reales
@@ -184,6 +219,7 @@ ${htmlContent}
 </body>
 </html>
 `;
+
 // ===========================================================
 // 🌐 Guardar HTML accesible en public/auditorias
 // ===========================================================
@@ -223,5 +259,6 @@ console.log(`✅ Informe HTML accesible generado en: ${htmlOutputPath}`);
     process.exit(1);
   }
 })();
+
 
 

@@ -1,18 +1,15 @@
 /**
- * ♿ IAAP PRO v4.7.3 — Merge de auditorías de accesibilidad
+ * ♿ IAAP PRO v4.13.1 — Merge de auditorías de accesibilidad
  * ---------------------------------------------------------
  * Une los resultados de:
  *  - auditorias/auditoria-sitemap/results.json
  *  - auditorias/auditoria-interactiva/results.json
+ *  - auditorias/auditoria-interactiva/results-batch-*.json (si existen)
  *
  * Genera:
  *  - auditorias/reportes/merged-results.json
  *  - auditorias/reportes/merged-summary.md
- *
- * Compatible con:
- *  - export-to-xlsx.mjs
- *  - generate-report.mjs
- *  - quality-gate.cjs
+ *  - auditorias/results-merged-[timestamp].json (compatibilidad)
  */
 
 import fs from "fs";
@@ -27,14 +24,14 @@ const outputDir = path.join(auditoriasDir, "reportes");
 const mergedFile = path.join(outputDir, "merged-results.json");
 const summaryFile = path.join(outputDir, "merged-summary.md");
 
-// Crear carpeta de salida
+// Crear carpeta de salida si no existe
 if (!fs.existsSync(outputDir)) {
   fs.mkdirSync(outputDir, { recursive: true });
   console.log(`📁 Carpeta creada: ${outputDir}`);
 }
 
 // =====================================================
-// 📦 Fuentes de resultados a combinar
+// 📦 Fuentes de resultados base
 // =====================================================
 const fuentes = [
   "auditoria-sitemap/results.json",
@@ -45,7 +42,7 @@ let merged = [];
 let total = 0;
 
 // =====================================================
-// 🔍 Leer y unir resultados
+// 🔍 Leer y unir resultados base
 // =====================================================
 for (const fuente of fuentes) {
   const filePath = path.join(auditoriasDir, fuente);
@@ -63,6 +60,32 @@ for (const fuente of fuentes) {
     }
   } else {
     console.warn(`⚠️ No se encontró ${fuente}, se omitirá.`);
+  }
+}
+
+// =====================================================
+// 🧩 Integrar resultados por lotes (paralelismo CI)
+// =====================================================
+const batchDir = path.join(auditoriasDir, "auditoria-interactiva");
+if (fs.existsSync(batchDir)) {
+  const batchFiles = fs
+    .readdirSync(batchDir)
+    .filter((f) => f.startsWith("results-batch-") && f.endsWith(".json"));
+  if (batchFiles.length > 0) {
+    console.log(`🧩 Detectados ${batchFiles.length} archivos de lotes paralelos.`);
+    for (const f of batchFiles) {
+      try {
+        const raw = fs.readFileSync(path.join(batchDir, f), "utf8");
+        if (!raw.trim()) continue;
+        const data = JSON.parse(raw);
+        const arr = Array.isArray(data) ? data : [data];
+        merged.push(...arr);
+        total += arr.length;
+        console.log(`📦 ${arr.length} resultados añadidos desde ${f}`);
+      } catch (err) {
+        console.warn(`⚠️ No se pudo leer ${f}: ${err.message}`);
+      }
+    }
   }
 }
 
@@ -84,6 +107,7 @@ const uniqueResults = Object.values(
 
 fs.writeFileSync(mergedFile, JSON.stringify(uniqueResults, null, 2));
 console.log(`✅ Archivo combinado creado en: ${mergedFile}`);
+console.log(`📊 Total combinado: ${uniqueResults.length} resultados únicos (${total} originales)`);
 
 // =====================================================
 // 📊 Generar resumen Markdown
@@ -96,7 +120,7 @@ uniqueResults.forEach((item) => {
   });
 });
 
-let summary = `# ♿ Informe Consolidado IAAP PRO v4.7.3\n\n`;
+let summary = `# ♿ Informe Consolidado IAAP PRO v4.13.1\n\n`;
 summary += `📅 Fecha de generación: ${new Date().toLocaleString("es-ES")}\n\n`;
 summary += `📊 **Total de resultados combinados:** ${uniqueResults.length}\n\n`;
 
@@ -133,6 +157,19 @@ console.log(`📝 Resumen Markdown generado: ${summaryFile}`);
 // =====================================================
 fs.writeFileSync(path.join(auditoriasDir, "last-merged.txt"), mergedFile, "utf8");
 console.log("💾 Ruta registrada en auditorias/last-merged.txt");
-console.log("🎯 Merge completado con éxito (IAAP PRO v4.7.3)");
+
+// =====================================================
+// 🧠 Copia de compatibilidad con versiones anteriores
+// =====================================================
+try {
+  const legacyCopy = path.join(auditoriasDir, `results-merged-${Date.now()}.json`);
+  fs.copyFileSync(mergedFile, legacyCopy);
+  console.log(`🧩 Copia de compatibilidad creada: ${legacyCopy}`);
+} catch (err) {
+  console.warn(`⚠️ No se pudo crear la copia de compatibilidad: ${err.message}`);
+}
+
+console.log("🎯 Merge completado con éxito (IAAP PRO v4.13.1)");
+
 
 

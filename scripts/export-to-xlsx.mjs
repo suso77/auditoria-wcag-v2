@@ -1,5 +1,5 @@
 /**
- * 📊 export-to-xlsx.mjs (v4.1.0 IAAP PRO / W3C estable)
+ * 📊 export-to-xlsx.mjs (v4.1.1 IAAP PRO / W3C estable)
  * -------------------------------------------------------------------
  * Genera informe de auditoría accesible IAAP:
  *  - Pestañas: Sitemap / Interactiva / Resumen global
@@ -17,9 +17,13 @@ import { promisify } from "util";
 import ExcelJS from "exceljs";
 import archiver from "archiver";
 
+// ===========================================================
+// ⚙️ Configuración base
+// ===========================================================
 const execAsync = promisify(exec);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const AUDITORIAS_DIR = path.join(process.cwd(), "auditorias");
+const ROOT_DIR = process.cwd(); // ✅ añadido para eliminar el aviso
+const AUDITORIAS_DIR = path.join(ROOT_DIR, "auditorias");
 
 // ===========================================================
 // 🌍 Traducción con caché (DeepLx API libre y segura)
@@ -48,25 +52,48 @@ async function traducir(texto) {
 }
 
 // ===========================================================
-// 🔍 Cargar el último archivo combinado
+// 🔍 Cargar el último archivo combinado (IAAP v4.7.5 compatible)
 // ===========================================================
-const mergedFile = fs
-  .readdirSync(AUDITORIAS_DIR)
-  .filter((f) => f.startsWith("results-merged") && f.endsWith(".json"))
-  .sort()
-  .reverse()[0];
+let mergedPath = null;
 
-if (!mergedFile) {
-  console.error("❌ No se encontró results-merged-*.json");
+// 🧾 1. Priorizar nueva ubicación en /auditorias/reportes/
+const mergedReportes = path.join(AUDITORIAS_DIR, "reportes", "merged-results.json");
+if (fs.existsSync(mergedReportes)) {
+  mergedPath = mergedReportes;
+} else {
+  // 🧾 2. Compatibilidad con versiones antiguas (results-merged-*.json)
+  const legacyMerged = fs
+    .readdirSync(AUDITORIAS_DIR)
+    .filter((f) => f.startsWith("results-merged") && f.endsWith(".json"))
+    .sort()
+    .reverse()[0];
+  if (legacyMerged) mergedPath = path.join(AUDITORIAS_DIR, legacyMerged);
+}
+
+// ❌ 3. Validación de existencia
+if (!mergedPath || !fs.existsSync(mergedPath)) {
+  console.error("❌ No se encontró ningún merged-results.json ni results-merged-*.json");
   process.exit(1);
 }
 
-const mergedPath = path.join(AUDITORIAS_DIR, mergedFile);
-const data = JSON.parse(fs.readFileSync(mergedPath, "utf8"));
+// 🧩 4. Leer y validar datos combinados
+let data = [];
+try {
+  data = JSON.parse(fs.readFileSync(mergedPath, "utf8"));
+} catch (err) {
+  console.error(`❌ Error al leer ${mergedPath}: ${err.message}`);
+  process.exit(1);
+}
+
 if (!Array.isArray(data) || data.length === 0) {
   console.warn("⚠️ No hay datos válidos para exportar.");
   process.exit(0);
 }
+
+// Debug info útil para CI
+console.log("📁 Archivo combinado detectado:");
+console.log(`   - ${mergedPath}`);
+console.log(`   - Entradas: ${data.length}`);
 
 // ===========================================================
 // 🧩 Configuración del libro Excel
@@ -219,13 +246,20 @@ for (const [origen, s] of Object.entries(stats)) {
 }
 
 // ===========================================================
-// 💾 Guardar Excel y ZIP IAAP PRO
+// 💾 Guardar Excel y ZIP IAAP PRO (v4.7.5)
 // ===========================================================
-const excelPath = path.join(AUDITORIAS_DIR, "Informe-WCAG-IAAP.xlsx");
+const reportesDir = path.join(AUDITORIAS_DIR, "reportes");
+if (!fs.existsSync(reportesDir)) {
+  fs.mkdirSync(reportesDir, { recursive: true });
+  console.log(`📁 Carpeta creada: ${reportesDir}`);
+}
+
+const excelPath = path.join(reportesDir, "Informe-WCAG-IAAP.xlsx");
+const zipPath = path.join(reportesDir, "Informe-WCAG-IAAP.zip");
+
 await wb.xlsx.writeFile(excelPath);
 console.log(`✅ Excel IAAP generado: ${excelPath}`);
 
-const zipPath = path.join(AUDITORIAS_DIR, "Informe-WCAG-IAAP.zip");
 const output = fs.createWriteStream(zipPath);
 const archive = archiver("zip", { zlib: { level: 9 } });
 archive.pipe(output);
@@ -233,8 +267,34 @@ archive.file(excelPath, { name: path.basename(excelPath) });
 archive.file(mergedPath, { name: path.basename(mergedPath) });
 
 const capturasDir = path.join(AUDITORIAS_DIR, "capturas");
-if (fs.existsSync(capturasDir)) archive.directory(capturasDir, "capturas");
-await archive.finalize();
+if (fs.existsSync(capturasDir)) {
+  archive.directory(capturasDir, "capturas");
+  console.log("📸 Capturas añadidas al ZIP IAAP.");
+}
 
+await archive.finalize();
 console.log(`📦 ZIP IAAP generado: ${zipPath}`);
+
+// ===========================================================
+// 🔄 Copias de compatibilidad para el dashboard público
+// ===========================================================
+try {
+  const publicDir = path.join(ROOT_DIR, "public", "auditorias");
+  if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir, { recursive: true });
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const destino = path.join(publicDir, `export-${timestamp}`);
+  fs.mkdirSync(destino, { recursive: true });
+
+  fs.copyFileSync(excelPath, path.join(destino, "Informe-WCAG-IAAP.xlsx"));
+  fs.copyFileSync(zipPath, path.join(destino, "Informe-WCAG-IAAP.zip"));
+  fs.copyFileSync(mergedPath, path.join(destino, path.basename(mergedPath)));
+
+  console.log(`🚀 Archivos exportados para dashboard: ${destino}`);
+} catch (err) {
+  console.warn(`⚠️ No se pudo copiar resultados al dashboard público: ${err.message}`);
+}
+
 console.log("✅ Exportación IAAP PRO completada con éxito.");
+
+

@@ -1,12 +1,13 @@
 /**
- * ♿ generate-dashboard-html.mjs (v4.1 IAAP PRO)
+ * ♿ generate-dashboard-html.mjs (v4.2 IAAP PRO)
  * ----------------------------------------------------------
  * Genera el Dashboard público IAAP PRO en formato HTML,
  * basado en los resultados de auditoría y artefactos.
  *
  * ✅ Usa la carpeta /public/auditorias/{BUILD_DATE}/
  * ✅ Inserta resumen de impactos y totales
- * ✅ Genera enlaces de descarga a PDF, XLSX, ZIP y resumen
+ * ✅ Enlaces de descarga a PDF, XLSX, CSV, ZIP y resumen
+ * ✅ Compatible con merged-results.json o resultados.json
  * ✅ Seguro en CI/CD (no falla si faltan archivos)
  * ----------------------------------------------------------
  */
@@ -27,25 +28,32 @@ if (!buildDate) {
 
 // 📂 Directorios base
 const outputDir = path.join(__dirname, "../public/auditorias", buildDate);
-const resultsFile = path.join(outputDir, "resultados.json");
 const htmlFile = path.join(outputDir, "index.html");
 
 // Crear carpetas si no existen
 fs.mkdirSync(outputDir, { recursive: true });
 
-// Leer resultados
+// 🧠 Detección flexible del archivo de resultados
+const resultsFileCandidates = [
+  path.join(outputDir, "resultados.json"),
+  path.join(outputDir, "merged-results.json"),
+];
+const resultsFile = resultsFileCandidates.find((f) => fs.existsSync(f));
+
 let data = [];
 try {
-  if (fs.existsSync(resultsFile)) {
+  if (resultsFile) {
     const raw = fs.readFileSync(resultsFile, "utf8");
     data = JSON.parse(raw);
+  } else {
+    console.warn("⚠️ No se encontró resultados.json ni merged-results.json.");
   }
 } catch (err) {
-  console.warn("⚠️ No se pudo leer resultados.json:", err.message);
+  console.warn("⚠️ No se pudo leer resultados:", err.message);
   data = [];
 }
 
-// Calcular resumen
+// 🧩 Calcular resumen
 const impacts = data.flatMap((r) =>
   (r.violations || []).map((v) => v.impact || "sin clasificar")
 );
@@ -57,32 +65,43 @@ const counts = impacts.reduce((acc, i) => {
 
 const total = Object.values(counts).reduce((a, b) => a + b, 0);
 
+const impactColors = {
+  critical: "#c62828",
+  serious: "#ef6c00",
+  moderate: "#fbc02d",
+  minor: "#2e7d32",
+  "sin clasificar": "#777",
+};
+
 const resumenHTML =
   total > 0
     ? `
 <ul>
 ${Object.entries(counts)
-  .map(([k, v]) => `<li>${k}: <strong>${v}</strong></li>`)
+  .map(
+    ([k, v]) =>
+      `<li><span style="color:${impactColors[k] || "#333"};">${k}:</span> <strong>${v}</strong></li>`
+  )
   .join("\n")}
 </ul>
-<p><strong>Total violaciones:</strong> ${total}</p>`
+<p><strong>Total de violaciones detectadas:</strong> ${total}</p>`
     : `<p>⚠️ No se encontraron violaciones o no hay datos.</p>`;
 
-// Buscar artefactos
-const pdfFile = fs.existsSync(path.join(outputDir, "Informe-WCAG-IAAP.pdf"))
-  ? "Informe-WCAG-IAAP.pdf"
-  : null;
-const xlsxFile = fs.existsSync(path.join(outputDir, "Informe-WCAG-IAAP.xlsx"))
-  ? "Informe-WCAG-IAAP.xlsx"
-  : null;
-const zipFile = fs.existsSync(path.join(outputDir, "Informe-WCAG-IAAP.zip"))
-  ? "Informe-WCAG-IAAP.zip"
-  : null;
-const resumenFile = fs.existsSync(path.join(outputDir, "Resumen-WCAG.md"))
-  ? "Resumen-WCAG.md"
-  : null;
+// 📦 Buscar artefactos disponibles
+const findFile = (name) =>
+  fs.existsSync(path.join(outputDir, name)) ? name : null;
 
-// HTML base
+const pdfFile = findFile("Informe-WCAG-IAAP.pdf");
+const xlsxFile = findFile("Informe-WCAG-IAAP.xlsx");
+const csvFile = findFile("Informe-WCAG-IAAP.csv");
+const zipFile =
+  findFile("Informe-WCAG-IAAP.zip") || findFile(`IAAP-PRO-${buildDate}.zip`);
+const resumenFile =
+  findFile("Resumen-WCAG.md") ||
+  findFile("merged-summary.md") ||
+  findFile("Resumen-IAAP.md");
+
+// 🧩 HTML accesible y adaptable
 const html = `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -90,48 +109,106 @@ const html = `<!DOCTYPE html>
   <title>♿ Informe de Accesibilidad Digital IAAP PRO</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    body { font-family: system-ui, sans-serif; background:#fafafa; color:#222; margin:2em; line-height:1.6; }
-    h1,h2 { color:#003366; }
-    section { background:#fff; border-radius:12px; padding:1.5em; margin-bottom:2em; box-shadow:0 2px 6px rgba(0,0,0,0.08); }
-    a.download { background:#004080; color:#fff; padding:0.8em 1.4em; border-radius:8px; text-decoration:none; margin-right:0.6em; display:inline-block; }
-    a.download:hover { background:#002b5e; }
-    footer { text-align:center; font-size:0.85em; color:#555; margin-top:3em; }
-    ul { list-style:none; padding-left:0; }
-    li { margin:0.3em 0; }
-    iframe { border:1px solid #ddd; border-radius:8px; }
+    :root {
+      --blue: #004080;
+      --bg: #fafafa;
+      --card: #fff;
+      --text: #222;
+      --border: #ddd;
+    }
+    body {
+      font-family: system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 2em;
+      line-height: 1.6;
+    }
+    h1, h2 { color: var(--blue); }
+    section {
+      background: var(--card);
+      border-radius: 12px;
+      padding: 1.5em;
+      margin-bottom: 2em;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    }
+    a.download {
+      background: var(--blue);
+      color: #fff;
+      padding: 0.8em 1.4em;
+      border-radius: 8px;
+      text-decoration: none;
+      margin-right: 0.6em;
+      margin-bottom: 0.6em;
+      display: inline-block;
+    }
+    a.download:hover { background: #002b5e; }
+    footer {
+      text-align: center;
+      font-size: 0.85em;
+      color: #555;
+      margin-top: 3em;
+    }
+    ul { list-style: none; padding-left: 0; }
+    li { margin: 0.3em 0; }
+    iframe {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      width: 100%;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #121212;
+        --card: #1e1e1e;
+        --text: #eee;
+        --border: #333;
+        --blue: #4ea3ff;
+      }
+      a.download { background: #0070d1; }
+      a.download:hover { background: #2196f3; }
+    }
   </style>
 </head>
 <body>
-  <h1>♿ Informe de Accesibilidad Digital IAAP PRO</h1>
-  <section>
-    <h2>📊 Resumen</h2>
+  <header>
+    <h1>♿ Informe de Accesibilidad Digital IAAP PRO</h1>
     <p><strong>Fecha de generación:</strong> ${new Date().toLocaleString("es-ES")}</p>
-    ${resumenHTML}
-  </section>
+  </header>
 
-  ${
-    pdfFile
-      ? `
-  <section>
-    <h2>📄 Informe PDF IAAP</h2>
-    <iframe src="${pdfFile}" width="100%" height="600" title="Informe IAAP"></iframe>
-  </section>`
-      : ""
-  }
+  <main>
+    <section aria-labelledby="resumen">
+      <h2 id="resumen">📊 Resumen de Impactos</h2>
+      ${resumenHTML}
+    </section>
 
-  <section>
-    <h2>💾 Descargas</h2>
-    <p>
-      ${xlsxFile ? `<a href="${xlsxFile}" class="download">Excel IAAP</a>` : ""}
-      ${zipFile ? `<a href="${zipFile}" class="download">ZIP Consolidado</a>` : ""}
-      ${resumenFile ? `<a href="${resumenFile}" class="download">Resumen Markdown</a>` : ""}
-    </p>
-  </section>
+    ${
+      pdfFile
+        ? `
+    <section aria-labelledby="pdf">
+      <h2 id="pdf">📄 Informe PDF IAAP</h2>
+      <iframe src="${pdfFile}" height="600" title="Informe IAAP PDF"></iframe>
+    </section>`
+        : ""
+    }
 
-  <footer>© Ilúmina Audit IAAP · ${new Date().getFullYear()}</footer>
+    <section aria-labelledby="descargas">
+      <h2 id="descargas">💾 Descargas</h2>
+      <div>
+        ${xlsxFile ? `<a href="${xlsxFile}" class="download">📊 Excel</a>` : ""}
+        ${csvFile ? `<a href="${csvFile}" class="download">📈 CSV (Numbers/Sheets)</a>` : ""}
+        ${pdfFile ? `<a href="${pdfFile}" class="download">📄 PDF</a>` : ""}
+        ${zipFile ? `<a href="${zipFile}" class="download">📦 ZIP Consolidado</a>` : ""}
+        ${resumenFile ? `<a href="${resumenFile}" class="download">📝 Resumen Markdown</a>` : ""}
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    © Ilúmina Audit IAAP PRO · ${new Date().getFullYear()}<br />
+    Generado automáticamente con Cypress + axe-core + Puppeteer
+  </footer>
 </body>
 </html>`;
 
-// Escribir archivo
+// 🧩 Guardar HTML
 fs.writeFileSync(htmlFile, html, "utf8");
 console.log(`✅ Dashboard IAAP PRO generado correctamente: ${htmlFile}`);

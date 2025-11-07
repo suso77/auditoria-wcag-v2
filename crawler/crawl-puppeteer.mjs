@@ -138,7 +138,7 @@ async function crawl() {
           const next = normalizeUrl(link);
           if (
             next &&
-            next.startsWith(SITE_URL) && // 🔧 aquí reemplazamos location.origin por SITE_URL
+            next.startsWith(SITE_URL) &&
             !visited.has(next) &&
             !queue.find((q) => q.url === next) &&
             !NON_HTML_EXTENSIONS.test(next)
@@ -225,4 +225,6 @@ function saveResults() {
   }
   const duration = ((Date.now() - start) / 1000).toFixed(1);
   console.log(`⏱️ Tiempo total: ${duration}s`);
+  console.log("✅ Rastreo IAAP PRO finalizado correctamente (cierre forzado).");
+  process.exit(0);
 })();
