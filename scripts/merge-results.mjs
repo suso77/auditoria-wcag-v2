@@ -1,12 +1,13 @@
 /**
- * ♿ merge-results.mjs (v4.1.1 IAAP PRO estable)
+ * ♿ merge-results.mjs (v4.2.0 IAAP PRO Final)
  * -------------------------------------------------------------------------
  * ✅ Fusión profesional de auditorías WCAG (Sitemap + Interactiva)
  * ✅ Prioriza resultados interactivos sobre sitemap
  * ✅ Elimina duplicados entre ambos orígenes
  * ✅ Añade rutas de capturas PNG (si existen)
  * ✅ Ordena por URL + severidad de impacto
- * ✅ Compatible con CI/CD (sin process.exit bloqueante)
+ * ✅ Añade ID único para análisis posteriores
+ * ✅ Compatible con CI/CD (sin bloqueos de proceso)
  */
 
 import fs from "fs";
@@ -19,14 +20,14 @@ const AUDITORIAS_DIR = path.join(ROOT_DIR, "auditorias");
 const CAPTURAS_DIR = path.join(AUDITORIAS_DIR, "capturas");
 
 // ===========================================================
-// 🧱 Crear carpetas base
+// 🧱 Crear carpetas base si no existen
 // ===========================================================
 for (const dir of [AUDITORIAS_DIR, CAPTURAS_DIR]) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
 // ===========================================================
-// 🔍 Buscar todos los results*.json (no merged)
+// 🔍 Buscar todos los results*.json (excepto merged)
 // ===========================================================
 function findResultFiles(dir) {
   let results = [];
@@ -43,9 +44,10 @@ const resultFiles = findResultFiles(AUDITORIAS_DIR);
 if (resultFiles.length === 0) {
   console.warn("⚠️ No se encontraron archivos results.json para combinar.");
   process.exitCode = 0;
-  return;
+  // no return (deja seguir el pipeline)
+} else {
+  console.log(`📦 Archivos detectados: ${resultFiles.length}`);
 }
-console.log(`📦 Archivos detectados: ${resultFiles.length}`);
 
 // ===========================================================
 // 🧩 Cargar y normalizar resultados
@@ -70,10 +72,19 @@ for (const file of resultFiles) {
       const urlItem = item.url || item.page;
       if (!urlItem) continue;
 
+      const title =
+        item.pageTitle ||
+        item.title ||
+        item.page_name ||
+        "(sin título)";
+
       merged.push({
+        id: `${origen}-${Buffer.from(urlItem + (item.selector || "body"))
+          .toString("base64")
+          .substring(0, 12)}`,
         origen,
         url: urlItem.trim(),
-        pageTitle: item.pageTitle || item.title || "(sin título)",
+        pageTitle: title,
         selector: item.selector || "body",
         date: item.date || new Date().toISOString(),
         system: item.system || "macOS + Chrome (Cypress + axe-core)",
@@ -133,7 +144,8 @@ function findCaptureFor(urlString, selector = "") {
 
 for (const item of deduped) {
   const capture = findCaptureFor(item.url, item.selector);
-  if (capture) item.capturePath = path.relative(AUDITORIAS_DIR, capture).substring(0, 250);
+  if (capture)
+    item.capturePath = path.relative(AUDITORIAS_DIR, capture).substring(0, 250);
 }
 
 // ===========================================================
@@ -151,12 +163,16 @@ deduped.sort((a, b) => {
 // ===========================================================
 // 💾 Guardar resultados IAAP combinados
 // ===========================================================
-const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-const outputFile = path.join(AUDITORIAS_DIR, `results-merged-${timestamp}.json`);
-fs.writeFileSync(outputFile, JSON.stringify(deduped, null, 2), "utf8");
-fs.writeFileSync(path.join(AUDITORIAS_DIR, "last-merged.txt"), outputFile, "utf8");
+if (deduped.length > 0) {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const outputFile = path.join(AUDITORIAS_DIR, `results-merged-${timestamp}.json`);
+  fs.writeFileSync(outputFile, JSON.stringify(deduped, null, 2), "utf8");
+  fs.writeFileSync(path.join(AUDITORIAS_DIR, "last-merged.txt"), outputFile, "utf8");
 
-console.log(`\n✅ Archivo final generado: ${outputFile}`);
+  console.log(`\n✅ Archivo final generado: ${outputFile}`);
+} else {
+  console.log("⚠️ No se encontraron violaciones que combinar.");
+}
 
 // ===========================================================
 // 📊 Estadísticas IAAP
@@ -202,3 +218,4 @@ console.log(`🌍 Cobertura total: ${totalUrls} URLs auditadas`);
 console.log(`♿ Violaciones combinadas totales: ${totalViolations}`);
 console.log("✅ Fusión IAAP PRO completada correctamente.");
 console.log("===============================================\n");
+

@@ -184,6 +184,15 @@ ${htmlContent}
 </body>
 </html>
 `;
+// ===========================================================
+// 🌐 Guardar HTML accesible en public/auditorias
+// ===========================================================
+const PUBLIC_DIR = path.join(ROOT_DIR, "public", "auditorias");
+if (!fs.existsSync(PUBLIC_DIR)) fs.mkdirSync(PUBLIC_DIR, { recursive: true });
+
+const htmlOutputPath = path.join(PUBLIC_DIR, "merged-report.html");
+fs.writeFileSync(htmlOutputPath, htmlTemplate, "utf8");
+console.log(`✅ Informe HTML accesible generado en: ${htmlOutputPath}`);
 
 // ===========================================================
 // 🖨️ Generar PDF IAAP PRO

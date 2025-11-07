@@ -1,13 +1,13 @@
 /**
- * 🔍 validate-urls.mjs (v3.3 profesional IAAP / CI-safe)
+ * 🔍 validate-urls.mjs (v3.4 PRO IAAP / WCAG 2.2)
  * --------------------------------------------------------------
  * Valida y normaliza el listado de URLs antes de la auditoría WCAG.
- * 
+ *
  * ✅ Limpia duplicados y URLs no válidas
- * ✅ Convierte rutas relativas a absolutas
+ * ✅ Convierte rutas relativas a absolutas (usa SITE_URL)
  * ✅ Elimina parámetros de tracking (utm_*, gclid, fbclid)
- * ✅ Filtra recursos no HTML (PDF, imágenes, etc.)
- * ✅ Compatible con CI/CD (usa process.env.SITE_URL)
+ * ✅ Filtra recursos no HTML (PDF, imágenes, feeds, etc.)
+ * ✅ Evita fallos en CI/CD cuando urls.json está vacío o mal formado
  * ✅ Logs claros y consistentes con merge-results/export-to-xlsx
  * --------------------------------------------------------------
  */
@@ -24,36 +24,36 @@ const urlsPath = path.join(__dirname, "urls.json");
 // ===========================================================
 // 🌍 URL base (entorno local o CI)
 // ===========================================================
-const SITE_URL = process.env.SITE_URL || "https://example.com";
+const SITE_URL = process.env.SITE_URL?.trim() || "https://example.com";
 
 console.log("🔍 Validando estructura de scripts/urls.json...");
+console.log(`🌐 Dominio base: ${SITE_URL}`);
 
 // ===========================================================
 // 📄 Leer archivo de entrada
 // ===========================================================
 if (!fs.existsSync(urlsPath)) {
-  console.error("❌ No se encontró scripts/urls.json. Ejecute primero npm run crawl:js");
-  process.exit(1);
+  console.warn("⚠️ No se encontró scripts/urls.json. Se creará un archivo vacío.");
+  fs.writeFileSync(urlsPath, "[]", "utf8");
 }
 
-let urlsRaw;
+let urlsRaw = [];
 try {
-  const data = fs.readFileSync(urlsPath, "utf8");
+  const data = fs.readFileSync(urlsPath, "utf8") || "[]";
   urlsRaw = JSON.parse(data);
+  if (!Array.isArray(urlsRaw)) urlsRaw = [];
 } catch (err) {
   console.error("❌ Error al leer o parsear scripts/urls.json:", err.message);
-  process.exit(1);
+  urlsRaw = [];
 }
 
-if (!Array.isArray(urlsRaw) || urlsRaw.length === 0) {
-  console.error("⚠️ El archivo scripts/urls.json está vacío o mal formado.");
-  process.exit(0);
+if (urlsRaw.length === 0) {
+  console.warn("⚠️ scripts/urls.json está vacío. No se encontraron URLs para validar.");
 }
 
 // ===========================================================
 // 🧩 Normalización de URLs
 // ===========================================================
-const validExtensions = [".html", "/", ""];
 const uniqueUrls = new Map();
 
 function normalizarUrl(rawUrl) {
@@ -72,7 +72,7 @@ function normalizarUrl(rawUrl) {
   // Eliminar fragmentos (#) y parámetros tracking
   try {
     const parsed = new URL(u);
-    ["utm_source", "utm_medium", "utm_campaign", "gclid", "fbclid", "utm_term", "utm_content"].forEach((p) =>
+    ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "gclid", "fbclid"].forEach((p) =>
       parsed.searchParams.delete(p)
     );
     u = parsed.toString().replace(/\/$/, ""); // quitar slash final
@@ -82,8 +82,8 @@ function normalizarUrl(rawUrl) {
 
   // Ignorar recursos no HTML
   if (
-    u.match(
-      /\.(pdf|jpg|jpeg|png|gif|svg|doc|docx|xls|xlsx|zip|rar|mp4|webm|ico|rss|xml|json)$/i
+    /\.(pdf|jpg|jpeg|png|gif|svg|doc|docx|xls|xlsx|zip|rar|mp4|webm|ico|rss|xml|json|txt)$/i.test(
+      u
     )
   ) {
     return null;
@@ -103,7 +103,7 @@ urlsRaw.forEach((entry) => {
   if (!uniqueUrls.has(cleaned)) {
     uniqueUrls.set(cleaned, {
       url: cleaned,
-      title: entry?.title || "",
+      title: entry?.title?.trim() || "",
     });
   }
 });
@@ -115,11 +115,20 @@ const cleaned = Array.from(uniqueUrls.values());
 // ===========================================================
 try {
   fs.writeFileSync(urlsPath, JSON.stringify(cleaned, null, 2), "utf8");
-  console.log(`📊 Total original: ${urlsRaw.length} | Válidas: ${cleaned.length}`);
-  console.log("✅ URLs válidas guardadas en scripts/urls.json");
-  console.log(`🌍 Dominio base: ${SITE_URL}`);
-  console.log("💾 Archivo validado y preparado para auditoría WCAG.");
+
+  const originalCount = urlsRaw.length;
+  const validCount = cleaned.length;
+
+  console.log(`📊 URLs originales: ${originalCount} | Válidas: ${validCount}`);
+  if (validCount === 0) {
+    console.warn("⚠️ No se encontraron URLs válidas. El archivo sigue vacío, pero no se abortará el pipeline.");
+  } else {
+    console.log("✅ URLs válidas guardadas correctamente en scripts/urls.json");
+  }
+
+  console.log("💾 Archivo preparado para auditoría WCAG IAAP PRO.");
 } catch (err) {
   console.error("❌ Error guardando scripts/urls.json:", err.message);
   process.exit(1);
 }
+

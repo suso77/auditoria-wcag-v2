@@ -1,16 +1,15 @@
 /**
- * ♿ Crawler de accesibilidad – v2.0
- * -----------------------------------------------------
- * Rastrea todas las URLs internas de un dominio hasta una
- * profundidad configurable y guarda el listado completo
- * en `scripts/urls.json`.
+ * ♿ crawl.js (v4.1 IAAP PRO / WCAG 2.2)
+ * ----------------------------------------------------------
+ * Rastreador rápido y ligero basado en Cheerio.
+ * Ideal para webs estáticas o con sitemap.xml accesible.
  *
- * ✔ Profundidad configurable (MAX_DEPTH)
- * ✔ Evita bucles y duplicados
- * ✔ Ignora subdominios y anclas (#)
- * ✔ Muestra progreso y guarda log detallado
- * ✔ Compatible con GitHub Actions y Node 20+
- * -----------------------------------------------------
+ * ✅ Profundidad configurable (MAX_DEPTH)
+ * ✅ Evita duplicados, subdominios y recursos no HTML
+ * ✅ Guarda resultados únicos en scripts/urls.json
+ * ✅ Logs consistentes y tolerancia CI/CD
+ * ✅ Compatible con Node 20+, Docker, GitHub Actions
+ * ----------------------------------------------------------
  */
 
 import axios from "axios";
@@ -20,92 +19,143 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { format } from "date-fns";
 
-// 🧭 Configuración
-const SITE_URL = process.env.SITE_URL || "https://www.hiexperience.es";
-const MAX_DEPTH = parseInt(process.env.MAX_DEPTH || "4", 10);
-const TIMEOUT = 20000;
-
-// 🧩 Rutas y estructuras
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// ==========================================================
+// 🌐 CONFIGURACIÓN GLOBAL
+// ==========================================================
+const SITE_URL = process.env.SITE_URL?.replace(/\/$/, "") || "https://example.com";
+const MAX_DEPTH = parseInt(process.env.MAX_DEPTH || "3", 10);
+const TIMEOUT = parseInt(process.env.TIMEOUT || "15000", 10);
+const USER_AGENT = "IAAP-A11yCrawler/4.1 (+https://github.com/iaap-pro)";
+
+// 📂 Directorios
 const outputDir = path.join(__dirname, "..", "scripts");
 const logDir = path.join(__dirname, "..", "auditorias");
 
 // 🔄 Estructuras internas
 const visited = new Set();
-const urls = [];
+const results = [];
 const errors = [];
 
-/**
- * Rastrea recursivamente las URLs del sitio
- */
-async function crawl(url, depth = 0) {
-  if (
-  depth > MAX_DEPTH ||
-  visited.has(url) ||
-  !new URL(url).hostname.endsWith(new URL(SITE_URL).hostname.replace(/^www\./, ""))
-) return;
-url = url.replace(/#.*$/, "").replace(/\/$/, ""); // quita anclas y trailing slashes
-  visited.add(url);
-  urls.push(url);
-  console.log(`🔗 [${depth}] ${url}`);
+const NON_HTML_EXTENSIONS =
+  /\.(pdf|jpg|jpeg|png|gif|svg|webp|mp4|webm|avi|mov|ico|css|js|zip|rar|doc|docx|xls|xlsx|json|rss|xml)$/i;
 
+// ==========================================================
+// 🔍 Funciones auxiliares
+// ==========================================================
+function normalizeUrl(url) {
   try {
-    const { data } = await axios.get(url, { timeout: TIMEOUT, headers: { "User-Agent": "A11yBot/2.0" } });
-    const $ = cheerio.load(data);
-
-    const links = $("a[href]")
-      .map((_, el) => new URL($(el).attr("href"), SITE_URL).href)
-      .get()
-      .filter(href => href.startsWith(SITE_URL) && !href.includes("#") && !href.includes("mailto:"))
-      .filter(href => !visited.has(href));
-
-    // Recursión controlada
-    for (const link of links) {
-      await crawl(link, depth + 1);
-    }
-  } catch (err) {
-    console.warn(`⚠️ Error en ${url}: ${err.message}`);
-    errors.push({ url, message: err.message });
+    const u = new URL(url, SITE_URL);
+    u.hash = "";
+    return u.href.replace(/\/$/, "");
+  } catch {
+    return null;
   }
 }
 
-/**
- * Guarda los resultados en disco
- */
+function shouldVisit(url) {
+  return (
+    url.startsWith(SITE_URL) &&
+    !visited.has(url) &&
+    !NON_HTML_EXTENSIONS.test(url) &&
+    !url.includes("mailto:") &&
+    !url.includes("#")
+  );
+}
+
+async function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// ==========================================================
+// 🕷️ Rastreador recursivo
+// ==========================================================
+async function crawl(url, depth = 0) {
+  const normalized = normalizeUrl(url);
+  if (!normalized || visited.has(normalized) || depth > MAX_DEPTH) return;
+
+  visited.add(normalized);
+  console.log(`🔗 [${depth}] ${normalized}`);
+
+  try {
+    const { data } = await axios.get(normalized, {
+      timeout: TIMEOUT,
+      headers: { "User-Agent": USER_AGENT },
+    });
+
+    const $ = cheerio.load(data);
+    const title = $("title").text().trim() || "(sin título)";
+    results.push({ url: normalized, title });
+
+    const links = $("a[href]")
+      .map((_, el) => $(el).attr("href"))
+      .get()
+      .map((href) => normalizeUrl(href))
+      .filter(Boolean)
+      .filter(shouldVisit);
+
+    for (const link of links) {
+      await delay(150);
+      await crawl(link, depth + 1);
+    }
+  } catch (err) {
+    console.warn(`⚠️ Error en ${normalized}: ${err.message}`);
+    errors.push({ url: normalized, message: err.message });
+  }
+}
+
+// ==========================================================
+// 💾 Guardar resultados y logs
+// ==========================================================
 function saveResults() {
   fs.mkdirSync(outputDir, { recursive: true });
   const outputPath = path.join(outputDir, "urls.json");
-  fs.writeFileSync(outputPath, JSON.stringify(urls, null, 2));
+  fs.writeFileSync(outputPath, JSON.stringify(results, null, 2));
 
-  const logPath = path.join(
-    logDir,
-    `${format(new Date(), "yyyy-MM-dd")}-crawler.log`
-  );
   fs.mkdirSync(logDir, { recursive: true });
+  const logPath = path.join(logDir, `${format(new Date(), "yyyy-MM-dd")}-crawler.log`);
 
   const log = [
     `📅 Fecha: ${new Date().toISOString()}`,
     `🌍 Sitio: ${SITE_URL}`,
     `🔎 Profundidad máxima: ${MAX_DEPTH}`,
-    `✅ URLs rastreadas: ${urls.length}`,
+    `✅ Páginas rastreadas: ${results.length}`,
     `⚠️ Errores: ${errors.length}`,
     "",
-    errors.map(e => `❌ ${e.url} → ${e.message}`).join("\n")
+    errors.map((e) => `❌ ${e.url} → ${e.message}`).join("\n"),
   ].join("\n");
 
   fs.writeFileSync(logPath, log);
 
-  console.log(`✅ ${urls.length} URLs guardadas en ${outputPath}`);
+  console.log("===============================================");
+  console.log(`✅ ${results.length} páginas guardadas en ${outputPath}`);
   console.log(`🪵 Log de rastreo: ${logPath}`);
+  console.log("===============================================");
 }
 
+// ==========================================================
 // 🚀 Ejecución principal
+// ==========================================================
 (async () => {
-  console.log(`🚀 Iniciando rastreo de ${SITE_URL} (profundidad ${MAX_DEPTH})`);
-  const start = Date.now();
-  await crawl(SITE_URL);
-  saveResults();
-  console.log(`⏱️ Finalizado en ${((Date.now() - start) / 1000).toFixed(1)}s`);
-})();
+  console.log(`🚀 Iniciando rastreo IAAP PRO v4.1`);
+  console.log(`🌍 Dominio base: ${SITE_URL}`);
+  console.log(`🔎 Profundidad máxima: ${MAX_DEPTH}`);
+  console.log("-----------------------------------------------");
 
+  const start = Date.now();
+  try {
+    await crawl(SITE_URL);
+    if (results.length === 0) {
+      console.warn("⚠️ No se encontraron URLs válidas. Se generará un archivo vacío.");
+    }
+    saveResults();
+  } catch (err) {
+    console.error("❌ Error crítico en el crawler:", err.message);
+    fs.writeFileSync(path.join(outputDir, "urls.json"), "[]");
+  }
+
+  const duration = ((Date.now() - start) / 1000).toFixed(1);
+  console.log(`⏱️ Rastreo finalizado en ${duration}s`);
+})();
