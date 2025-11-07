@@ -71,6 +71,15 @@ jobs:
         run: npx cypress verify || npx cypress install
 
       # =====================================================
+      # ⚙️ Fallback manual: instalar Cypress si no existe
+      # =====================================================
+      - name: 🧩 Instalar Cypress manualmente (fallback CI)
+        run: |
+          echo "⚙️ Instalando Cypress (fallback CI)..."
+          npm install cypress --save-dev
+          echo "✅ Cypress instalado correctamente en entorno CI."
+
+      # =====================================================
       # ♻️ Limpieza previa
       # =====================================================
       - name: 🧹 Limpiar resultados anteriores
@@ -201,7 +210,7 @@ jobs:
           publish_branch: gh-pages
           keep_files: true
           full_commit_message: |
-            🚀 Publicación automática IAAP PRO v4.1.1
+            🚀 Publicación automática IAAP PRO v4.13.1
             - Fecha: ${{ github.event.head_commit.timestamp }}
             - Run ID: ${{ github.run_id }}
             - Build Date: ${{ env.BUILD_DATE }}
