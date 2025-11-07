@@ -1,6 +1,6 @@
 # ♿ Informe Consolidado IAAP PRO v4.1
 
-📅 Fecha de generación: 7/11/2025, 3:41:13
+📅 Fecha de generación: 7/11/2025, 10:33:29
 
 📊 **Violaciones totales:** 41
 
