@@ -81,7 +81,7 @@ jobs:
       # =====================================================
       # 🌐 Rastreo + Validación
       # =====================================================
-      - name: 🌍 Rastreo automático IAAP PRO (v4.7.4)
+      - name: 🌍 Rastreo automático IAAP PRO (v4.7.5)
         timeout-minutes: 15
         run: |
           echo "::group::🌍 Rastreo IAAP PRO"
@@ -94,14 +94,12 @@ jobs:
       # =====================================================
       # ♿ Auditorías principales (WCAG Sitemap + Interactiva)
       # =====================================================
-
-      # 🌐 Auditoría del Sitemap
       - name: ♿ Auditoría WCAG – Sitemap
         uses: cypress-io/github-action@v6
         continue-on-error: true
         with:
           install-command: npm ci --include=dev || true
-          command: npx cypress run --e2e --browser chrome --headless --config-file cypress.config.cjs --spec "cypress/e2e/accesibilidad-sitemap.cy.js"
+          command: npx cypress run --e2e --browser chrome --headless --config-file cypress.config.cjs --spec cypress/e2e/accesibilidad-sitemap.cy.js
         env:
           CYPRESS_baseUrl: ${{ env.SITE_URL }}
 
@@ -113,13 +111,12 @@ jobs:
       - name: ⏱️ Pausa breve
         run: sleep 10
 
-      # ⚙️ Auditoría de componentes interactivos
       - name: ♿ Auditoría WCAG – Interactiva
         uses: cypress-io/github-action@v6
         continue-on-error: true
         with:
           install-command: npm ci --include=dev || true
-          command: npx cypress run --e2e --browser chrome --headless --config-file cypress.config.cjs --spec "cypress/e2e/accesibilidad-interactiva.cy.js"
+          command: npx cypress run --e2e --browser chrome --headless --config-file cypress.config.cjs --spec cypress/e2e/accesibilidad-interactiva.cy.js
         env:
           CYPRESS_baseUrl: ${{ env.SITE_URL }}
 
@@ -144,7 +141,7 @@ jobs:
           echo "::endgroup::"
 
       # =====================================================
-      # 🧩 Merge + Reporte IAAP PRO (v4.7.4)
+      # 🧩 Merge + Reporte IAAP PRO (v4.7.5)
       # =====================================================
       - name: 🧩 Combinar auditorías completas IAAP PRO
         run: |
@@ -167,9 +164,6 @@ jobs:
           fi
           echo "::endgroup::"
 
-      # =====================================================
-      # ✅ Verificar existencia de merged-results antes de exportar
-      # =====================================================
       - name: ✅ Verificar existencia de merged-results antes de exportar
         run: |
           if [ ! -f auditorias/reportes/merged-results.json ]; then
@@ -177,15 +171,9 @@ jobs:
             exit 0
           fi
 
-      # =====================================================
-      # 📊 Exportar Excel IAAP
-      # =====================================================
       - name: 📊 Exportar Excel IAAP
         run: node scripts/export-to-xlsx.mjs auditorias/reportes/merged-results.json || echo "⚠️ Error exportando Excel IAAP."
 
-      # =====================================================
-      # 🧱 Quality Gate IAAP PRO
-      # =====================================================
       - name: 🧱 Quality Gate IAAP PRO
         run: |
           node scripts/quality-gate.cjs auditorias/reportes/merged-results.json || echo "⚠️ Quality Gate no crítico"
@@ -195,10 +183,7 @@ jobs:
           MODERATE_MAX: 9999
           MINOR_MAX: 9999
 
-      # =====================================================
-      # 🌐 Dashboard IAAP PRO
-      # =====================================================
-      - name: 🌐 Generar Dashboard IAAP PRO (v4.7.4)
+      - name: 🌐 Generar Dashboard IAAP PRO (v4.7.5)
         run: |
           echo "::group::🌐 Generando dashboard IAAP PRO..."
           mkdir -p public/auditorias/${BUILD_DATE}
@@ -207,9 +192,6 @@ jobs:
           echo "::endgroup::"
           echo "✅ Dashboard IAAP generado correctamente en public/auditorias/${BUILD_DATE}/"
 
-      # =====================================================
-      # 📤 Artefactos + Publicación
-      # =====================================================
       - name: 📤 Subir artefactos IAAP
         uses: actions/upload-artifact@v4
         with:
@@ -230,4 +212,4 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./public
           publish_branch: gh-pages
-          commit_message: "🚀 Publicación automática WCAG IAAP PRO v4.7.4 (${{ github.run_number }})"
+          commit_message: "🚀 Publicación automática WCAG IAAP PRO v4.7.5 (${{ github.run_number }})"
