@@ -2,7 +2,7 @@
 # ♿ Informe Ejecutivo de Accesibilidad WCAG – IAAP PRO
 
 **Sitio auditado:** https://www.hiexperience.es  
-**Fecha de generación:** 7/11/2025, 10:49:38  
+**Fecha de generación:** 7/11/2025, 12:11:26  
 **Versión del pipeline:** Ilúmina Audit WCAG v4.0.0 IAAP Pro  
 
 ---
