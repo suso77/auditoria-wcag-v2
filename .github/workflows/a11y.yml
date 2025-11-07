@@ -55,18 +55,28 @@ jobs:
           key: ${{ runner.os }}-a11y-v4.13-${{ hashFiles('package-lock.json') }}
 
       # =====================================================
-      # 📦 Instalación tolerante
+      # 📦 Instalación con verificación IAAP PRO
       # =====================================================
-      - name: 📦 Instalar dependencias (incluye cypress-axe y real-events)
+      - name: 📦 Instalar dependencias (con verificación IAAP PRO)
         run: |
-          echo "📦 Instalando dependencias..."
+          echo "📦 Instalando dependencias base..."
           set +e
           npm ci --include=dev || npm install --include=dev
-          npm install --save-dev @bahmutov/cypress-esbuild-preprocessor cypress-axe cypress-real-events esbuild
           npm rebuild || true
+
+          echo "🔍 Verificando dependencias críticas para CI..."
+          for pkg in cypress-axe cypress-real-events @bahmutov/cypress-esbuild-preprocessor esbuild; do
+            if ! npm list --depth=1 $pkg >/dev/null 2>&1; then
+              echo "⚙️ Instalando $pkg..."
+              npm install --save-dev $pkg
+            else
+              echo "✅ $pkg ya está instalado."
+            fi
+          done
+
           mkdir -p scripts auditorias/{capturas,auditoria-sitemap,auditoria-interactiva,reportes} public/auditorias
           [ ! -f scripts/urls.json ] && echo "[]" > scripts/urls.json
-          echo "✅ Dependencias instaladas correctamente."
+          echo "✅ Dependencias instaladas y verificadas correctamente."
 
       # =====================================================
       # 🩹 Fix de Cypress para entorno CI
@@ -89,7 +99,7 @@ jobs:
       # =====================================================
       # 🌐 Rastreo + Validación
       # =====================================================
-      - name: 🌍 Rastreo automático IAAP PRO (v4.13.2)
+      - name: 🌍 Rastreo automático IAAP PRO (v4.13.3)
         timeout-minutes: 30
         run: |
           echo "::group::🌍 Rastreo IAAP PRO"
@@ -164,6 +174,7 @@ jobs:
           echo "::group::♿ Combinando resultados IAAP PRO..."
           node scripts/merge-auditorias.mjs || echo "⚠️ Merge IAAP no crítico."
           echo "::endgroup::"
+
           if [ -f auditorias/reportes/merged-results.json ]; then
             echo "::group::📊 Exportando informes IAAP PRO..."
             mkdir -p auditorias/reportes
@@ -175,6 +186,7 @@ jobs:
           else
             echo "⚠️ No hay merged-results.json, saltando exportación."
           fi
+
           echo "✅ Informes IAAP PRO generados correctamente:"
           ls -lh auditorias/reportes || true
 
@@ -227,8 +239,9 @@ jobs:
           publish_branch: gh-pages
           keep_files: true
           full_commit_message: |
-            🚀 Publicación automática IAAP PRO v4.13.2
+            🚀 Publicación automática IAAP PRO v4.13.3
             - Fecha: ${{ github.event.head_commit.timestamp }}
             - Run ID: ${{ github.run_id }}
             - Build Date: ${{ env.BUILD_DATE }}
+
 
