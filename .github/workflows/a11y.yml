@@ -25,7 +25,7 @@ jobs:
       SITE_URL: ${{ github.event.inputs.site_url || vars.SITE_URL || 'https://www.hiexperience.es' }}
       BUILD_DATE: ${{ github.run_id }}-${{ github.run_number }}
       TZ: Europe/Madrid
-      NODE_ENV: production
+      NODE_ENV: development
       NODE_OPTIONS: "--max-old-space-size=4096 --no-warnings"
       CYPRESS_screenshotsFolder: auditorias/capturas
       CYPRESS_video: false
@@ -34,9 +34,6 @@ jobs:
       CI: true
 
     steps:
-      # =====================================================
-      # 🧩 Setup base
-      # =====================================================
       - name: 🧩 Checkout del repositorio
         uses: actions/checkout@v4
 
@@ -46,55 +43,24 @@ jobs:
           node-version: "20"
           cache: "npm"
 
-      - name: 🧠 Cachear dependencias pesadas (Cypress + Puppeteer)
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/Cypress
-            ~/.cache/puppeteer
-          key: ${{ runner.os }}-a11y-v4.13-${{ hashFiles('package-lock.json') }}
-
-      # =====================================================
-      # 📦 Instalación robusta IAAP PRO
-      # =====================================================
       - name: 📦 Instalar dependencias IAAP PRO
         run: |
           echo "📦 Instalando dependencias IAAP PRO..."
           set -e
-
-          # Instalación base
-          npm install --include=dev || npm ci --include=dev
-          npm rebuild || true
-
-          # Instalación forzada de dependencias críticas
-          echo "🔧 Instalando dependencias críticas (Cypress + axe + real-events)..."
+          npm_config_production=false npm install --include=dev
           npm install --save-dev cypress cypress-axe cypress-real-events @bahmutov/cypress-esbuild-preprocessor esbuild puppeteer
-
-          # Verificar que todo carga correctamente
-          echo "🧠 Verificando módulos..."
-          node -e "require('cypress'); require('cypress-axe'); require('cypress-real-events'); console.log('✅ Dependencias cargadas correctamente');"
-
-          echo "🧹 Verificando binario de Cypress..."
-          npx cypress cache path
-          npx cypress verify || npm rebuild cypress || true
-
-          echo "📂 Estructura base..."
+          node -e "require.resolve('cypress'); require.resolve('cypress-axe'); require.resolve('cypress-real-events'); console.log('✅ Dependencias detectadas correctamente');"
+          npx cypress verify
           mkdir -p scripts auditorias/{capturas,auditoria-sitemap,auditoria-interactiva,reportes} public/auditorias
-          [ ! -f scripts/urls.json ] && echo "[]" > scripts/urls.json
+          [ ! -f scripts/urls.json ] && echo '[]' > scripts/urls.json
           echo "✅ Entorno IAAP PRO listo."
 
-      # =====================================================
-      # ♻️ Limpieza previa
-      # =====================================================
       - name: 🧹 Limpiar resultados anteriores
         run: |
           rm -rf auditorias/* public/* || true
           mkdir -p auditorias/{capturas,auditoria-sitemap,auditoria-interactiva,reportes} public/auditorias
           echo "🧹 Carpetas limpias y preparadas."
 
-      # =====================================================
-      # 🌐 Rastreo automático IAAP PRO
-      # =====================================================
       - name: 🌍 Rastreo automático IAAP PRO
         timeout-minutes: 30
         run: |
@@ -105,9 +71,6 @@ jobs:
         env:
           SITE_URL: ${{ env.SITE_URL }}
 
-      # =====================================================
-      # ♿ Auditorías principales
-      # =====================================================
       - name: ♿ Auditoría WCAG – Sitemap
         uses: cypress-io/github-action@v6
         continue-on-error: true
@@ -130,9 +93,6 @@ jobs:
         env:
           CYPRESS_baseUrl: ${{ env.SITE_URL }}
 
-      # =====================================================
-      # 🧩 MERGE + EXPORTACIÓN IAAP PRO
-      # =====================================================
       - name: ♿ IAAP PRO — Combinar y exportar informes
         if: always()
         run: |
@@ -152,9 +112,6 @@ jobs:
             echo "⚠️ No hay merged-results.json, saltando exportación."
           fi
 
-      # =====================================================
-      # 🌐 Dashboard + Artefactos + Publicación
-      # =====================================================
       - name: 🌐 Generar Dashboard IAAP PRO
         run: |
           BUILD_PATH="public/auditorias/${BUILD_DATE}"
