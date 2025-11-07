@@ -55,16 +55,16 @@ jobs:
           key: ${{ runner.os }}-a11y-v4.13-${{ hashFiles('package-lock.json') }}
 
       # =====================================================
-      # 📦 Instalación con verificación IAAP PRO
+      # 📦 Instalación + verificación crítica IAAP PRO
       # =====================================================
-      - name: 📦 Instalar dependencias (con verificación IAAP PRO)
+      - name: 📦 Instalar dependencias (incluye cypress-axe y preprocesador)
         run: |
           echo "📦 Instalando dependencias base..."
           set +e
           npm ci --include=dev || npm install --include=dev
           npm rebuild || true
 
-          echo "🔍 Verificando dependencias críticas para CI..."
+          echo "🔍 Verificando dependencias críticas..."
           for pkg in cypress-axe cypress-real-events @bahmutov/cypress-esbuild-preprocessor esbuild; do
             if ! npm list --depth=1 $pkg >/dev/null 2>&1; then
               echo "⚙️ Instalando $pkg..."
@@ -74,18 +74,35 @@ jobs:
             fi
           done
 
+          echo "📂 Creando estructura de carpetas..."
           mkdir -p scripts auditorias/{capturas,auditoria-sitemap,auditoria-interactiva,reportes} public/auditorias
           [ ! -f scripts/urls.json ] && echo "[]" > scripts/urls.json
-          echo "✅ Dependencias instaladas y verificadas correctamente."
+          echo "✅ Dependencias IAAP PRO instaladas correctamente."
 
       # =====================================================
-      # 🩹 Fix de Cypress para entorno CI
+      # 🧪 Validar entorno de Cypress y preprocesador
       # =====================================================
-      - name: 🩹 Verificar e instalar Cypress
+      - name: 🧪 Validar entorno de Cypress
         run: |
-          echo "🩹 Verificando Cypress..."
-          npx cypress verify || (echo "⚙️ Instalando Cypress manualmente..." && npm install cypress@15.6.0 --save-dev)
-          echo "✅ Cypress listo para ejecutar."
+          echo "🔍 Validando entorno Cypress..."
+          if [ ! -f "cypress.config.cjs" ]; then
+            echo "❌ ERROR: No se encuentra cypress.config.cjs en el repositorio."
+            exit 1
+          fi
+
+          echo "🧠 Comprobando preprocesador @bahmutov/cypress-esbuild-preprocessor..."
+          if ! npm list @bahmutov/cypress-esbuild-preprocessor >/dev/null 2>&1; then
+            echo "⚙️ Instalando preprocesador..."
+            npm install --save-dev @bahmutov/cypress-esbuild-preprocessor esbuild
+          else
+            echo "✅ Preprocesador detectado correctamente."
+          fi
+
+          echo "📄 Validando sintaxis de cypress.config.cjs..."
+          node -e "require('./cypress.config.cjs'); console.log('✅ Configuración Cypress válida.');"
+          npx cypress verify
+          npx cypress version
+          echo "✅ Entorno Cypress y preprocesador listos."
 
       # =====================================================
       # ♻️ Limpieza previa
@@ -94,12 +111,12 @@ jobs:
         run: |
           rm -rf auditorias/* public/* || true
           mkdir -p auditorias/{capturas,auditoria-sitemap,auditoria-interactiva,reportes} public/auditorias
-          echo "🧹 Carpetas listas."
+          echo "🧹 Carpetas limpias y preparadas."
 
       # =====================================================
-      # 🌐 Rastreo + Validación
+      # 🌐 Rastreo automático IAAP PRO
       # =====================================================
-      - name: 🌍 Rastreo automático IAAP PRO (v4.13.3)
+      - name: 🌍 Rastreo automático IAAP PRO (v4.13.4)
         timeout-minutes: 30
         run: |
           echo "::group::🌍 Rastreo IAAP PRO"
@@ -108,27 +125,6 @@ jobs:
           echo "::endgroup::"
         env:
           SITE_URL: ${{ env.SITE_URL }}
-
-      # =====================================================
-      # 🧪 Validar configuración de Cypress antes de auditorías
-      # =====================================================
-      - name: 🧪 Validar entorno Cypress
-        run: |
-          echo "🔍 Verificando entorno de Cypress y configuración..."
-          if [ ! -f "cypress.config.cjs" ]; then
-            echo "❌ ERROR: No se encuentra cypress.config.cjs en el repositorio."
-            exit 1
-          fi
-          echo "📄 Validando cypress.config.cjs..."
-          node -e "require('./cypress.config.cjs'); console.log('✅ Configuración Cypress válida.');"
-          echo "📦 Verificando módulo local de Cypress..."
-          if [ ! -d "node_modules/cypress" ]; then
-            echo "⚙️ Módulo local de Cypress no encontrado. Instalando..."
-            npm install cypress@15.6.0 --save-dev
-          fi
-          echo "🔢 Versión de Cypress:"
-          npx cypress version
-          echo "✅ Entorno Cypress verificado correctamente."
 
       # =====================================================
       # ♿ Auditorías principales
@@ -144,11 +140,6 @@ jobs:
         env:
           CYPRESS_baseUrl: ${{ env.SITE_URL }}
 
-      - name: 📦 Guardar resultados del Sitemap
-        run: |
-          mkdir -p auditorias/auditoria-sitemap
-          cp -r cypress/results/* auditorias/auditoria-sitemap/ 2>/dev/null || true
-
       - name: ♿ Auditoría WCAG – Interactiva
         uses: cypress-io/github-action@v6
         continue-on-error: true
@@ -159,11 +150,6 @@ jobs:
             --spec cypress/e2e/accesibilidad-interactiva.cy.js
         env:
           CYPRESS_baseUrl: ${{ env.SITE_URL }}
-
-      - name: 📦 Guardar resultados de la Interactiva
-        run: |
-          mkdir -p auditorias/auditoria-interactiva
-          cp -r cypress/results/* auditorias/auditoria-interactiva/ 2>/dev/null || true
 
       # =====================================================
       # 🧩 MERGE + EXPORTACIÓN IAAP PRO
@@ -187,46 +173,29 @@ jobs:
             echo "⚠️ No hay merged-results.json, saltando exportación."
           fi
 
-          echo "✅ Informes IAAP PRO generados correctamente:"
-          ls -lh auditorias/reportes || true
-
       # =====================================================
       # 🌐 Dashboard + Artefactos + Publicación
       # =====================================================
       - name: 🌐 Generar Dashboard IAAP PRO
         run: |
-          echo "::group::🌐 Generando dashboard IAAP PRO..."
           BUILD_PATH="public/auditorias/${BUILD_DATE}"
           REPORTES_PATH="auditorias/reportes"
           mkdir -p "${BUILD_PATH}"
           cp -r "${REPORTES_PATH}"/* "${BUILD_PATH}/" 2>/dev/null || true
-          cp -r auditorias/*.pdf auditorias/*.xlsx auditorias/*.zip auditorias/*.csv auditorias/*.md "${BUILD_PATH}/" 2>/dev/null || true
-          if [ -d "auditorias/capturas" ]; then
-            mkdir -p "${BUILD_PATH}/capturas"
-            cp -r auditorias/capturas/**/*.png "${BUILD_PATH}/capturas/" 2>/dev/null || true
-          fi
-          echo "::endgroup::"
-          echo "✅ Dashboard IAAP PRO generado correctamente en ${BUILD_PATH}/"
+          echo "✅ Dashboard IAAP PRO generado correctamente."
 
-      # =====================================================
-      # 📦 Comprimir y subir auditoría completa (ZIP IAAP PRO)
-      # =====================================================
-      - name: 📦 Crear paquete ZIP IAAP PRO completo
+      - name: 📦 Crear y subir ZIP IAAP PRO completo
         if: always()
         run: |
-          echo "::group::📦 Empaquetando auditoría IAAP PRO..."
           ZIP_NAME="IAAP-PRO-${{ env.BUILD_DATE }}.zip"
           ZIP_PATH="auditorias/${ZIP_NAME}"
-          mkdir -p auditorias
-          zip -r "${ZIP_PATH}" auditorias/reportes auditorias/capturas auditorias/*.pdf auditorias/*.xlsx auditorias/*.csv auditorias/*.md 2>/dev/null || true
-          echo "::endgroup::"
+          zip -r "${ZIP_PATH}" auditorias/* || true
           echo "✅ ZIP IAAP PRO generado: ${ZIP_PATH}"
-          ls -lh "${ZIP_PATH}" || true
 
-      - name: 📤 Subir ZIP IAAP PRO como artefacto
+      - name: 📤 Subir artefacto IAAP PRO
         uses: actions/upload-artifact@v4
         with:
-          name: "IAAP-PRO-${{ github.run_number }}-full"
+          name: "IAAP-PRO-${{ github.run_number }}"
           path: auditorias/IAAP-PRO-*.zip
           retention-days: 30
 
@@ -239,9 +208,7 @@ jobs:
           publish_branch: gh-pages
           keep_files: true
           full_commit_message: |
-            🚀 Publicación automática IAAP PRO v4.13.3
+            🚀 Publicación automática IAAP PRO v4.13.4
             - Fecha: ${{ github.event.head_commit.timestamp }}
             - Run ID: ${{ github.run_id }}
             - Build Date: ${{ env.BUILD_DATE }}
-
-
