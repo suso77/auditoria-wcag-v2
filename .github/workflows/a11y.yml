@@ -57,7 +57,7 @@ jobs:
       # =====================================================
       # 📦 Instalación + verificación crítica IAAP PRO
       # =====================================================
-      - name: 📦 Instalar dependencias (incluye cypress-axe y preprocesador)
+      - name: 📦 Instalación y verificación de dependencias IAAP PRO
         run: |
           echo "📦 Instalando dependencias base..."
           set +e
@@ -65,7 +65,7 @@ jobs:
           npm rebuild || true
 
           echo "🔍 Verificando dependencias críticas..."
-          for pkg in cypress-axe cypress-real-events @bahmutov/cypress-esbuild-preprocessor esbuild; do
+          for pkg in cypress cypress-axe cypress-real-events @bahmutov/cypress-esbuild-preprocessor esbuild; do
             if ! npm list --depth=1 $pkg >/dev/null 2>&1; then
               echo "⚙️ Instalando $pkg..."
               npm install --save-dev $pkg
@@ -74,15 +74,19 @@ jobs:
             fi
           done
 
+          echo "🧹 Forzando compilación previa para evitar errores de bundling..."
+          npx cypress cache path
+          npx cypress verify || npm rebuild cypress || true
+
           echo "📂 Creando estructura de carpetas..."
           mkdir -p scripts auditorias/{capturas,auditoria-sitemap,auditoria-interactiva,reportes} public/auditorias
           [ ! -f scripts/urls.json ] && echo "[]" > scripts/urls.json
           echo "✅ Dependencias IAAP PRO instaladas correctamente."
 
       # =====================================================
-      # 🧪 Validar entorno de Cypress y preprocesador
+      # 🧪 Validar entorno Cypress (pre-bundling)
       # =====================================================
-      - name: 🧪 Validar entorno de Cypress
+      - name: 🧪 Validar entorno y preprocesador de Cypress
         run: |
           echo "🔍 Validando entorno Cypress..."
           if [ ! -f "cypress.config.cjs" ]; then
@@ -90,7 +94,7 @@ jobs:
             exit 1
           fi
 
-          echo "🧠 Comprobando preprocesador @bahmutov/cypress-esbuild-preprocessor..."
+          echo "🧠 Validando módulo @bahmutov/cypress-esbuild-preprocessor..."
           if ! npm list @bahmutov/cypress-esbuild-preprocessor >/dev/null 2>&1; then
             echo "⚙️ Instalando preprocesador..."
             npm install --save-dev @bahmutov/cypress-esbuild-preprocessor esbuild
@@ -98,11 +102,15 @@ jobs:
             echo "✅ Preprocesador detectado correctamente."
           fi
 
-          echo "📄 Validando sintaxis de cypress.config.cjs..."
+          echo "🧠 Validando cypress-axe y cypress-real-events..."
+          node -e "require('cypress-axe'); require('cypress-real-events'); console.log('✅ Módulos cargados correctamente');"
+
+          echo "📄 Validando cypress.config.cjs..."
           node -e "require('./cypress.config.cjs'); console.log('✅ Configuración Cypress válida.');"
-          npx cypress verify
+
+          echo "🔢 Versión de Cypress:"
           npx cypress version
-          echo "✅ Entorno Cypress y preprocesador listos."
+          echo "✅ Entorno Cypress listo para ejecutar auditorías."
 
       # =====================================================
       # ♻️ Limpieza previa
@@ -116,7 +124,7 @@ jobs:
       # =====================================================
       # 🌐 Rastreo automático IAAP PRO
       # =====================================================
-      - name: 🌍 Rastreo automático IAAP PRO (v4.13.4)
+      - name: 🌍 Rastreo automático IAAP PRO (v4.13.5)
         timeout-minutes: 30
         run: |
           echo "::group::🌍 Rastreo IAAP PRO"
@@ -208,7 +216,7 @@ jobs:
           publish_branch: gh-pages
           keep_files: true
           full_commit_message: |
-            🚀 Publicación automática IAAP PRO v4.13.4
+            🚀 Publicación automática IAAP PRO v4.13.5
             - Fecha: ${{ github.event.head_commit.timestamp }}
             - Run ID: ${{ github.run_id }}
             - Build Date: ${{ env.BUILD_DATE }}
