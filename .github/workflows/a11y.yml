@@ -183,15 +183,40 @@ jobs:
           MODERATE_MAX: 9999
           MINOR_MAX: 9999
 
+      # =====================================================
+      # 🌐 Dashboard + Artefactos + Publicación (v4.7.5)
+      # =====================================================
       - name: 🌐 Generar Dashboard IAAP PRO (v4.7.5)
         run: |
           echo "::group::🌐 Generando dashboard IAAP PRO..."
-          mkdir -p public/auditorias/${BUILD_DATE}
-          cp auditorias/reportes/* public/auditorias/${BUILD_DATE}/ 2>/dev/null || true
-          cp auditorias/*.pdf auditorias/*.xlsx auditorias/*.md auditorias/*.zip public/auditorias/${BUILD_DATE}/ 2>/dev/null || true
-          echo "::endgroup::"
-          echo "✅ Dashboard IAAP generado correctamente en public/auditorias/${BUILD_DATE}/"
+          
+          BUILD_PATH="public/auditorias/${BUILD_DATE}"
+          REPORTES_PATH="auditorias/reportes"
+          
+          mkdir -p "${BUILD_PATH}"
+          
+          echo "📦 Copiando informes y artefactos..."
+          # Copiar todo lo que se encuentre en auditorias/reportes
+          cp -r "${REPORTES_PATH}"/* "${BUILD_PATH}/" 2>/dev/null || true
+          
+          # Copiar PDF, XLSX, ZIP, MD y capturas del directorio raíz si existen
+          cp -r auditorias/*.pdf "${BUILD_PATH}/" 2>/dev/null || true
+          cp -r auditorias/*.xlsx "${BUILD_PATH}/" 2>/dev/null || true
+          cp -r auditorias/*.zip "${BUILD_PATH}/" 2>/dev/null || true
+          cp -r auditorias/*.md "${BUILD_PATH}/" 2>/dev/null || true
+          
+          # Copiar capturas si existen
+          if [ -d "auditorias/capturas" ]; then
+            mkdir -p "${BUILD_PATH}/capturas"
+            cp -r auditorias/capturas/**/*.png "${BUILD_PATH}/capturas/" 2>/dev/null || true
+          fi
 
+          echo "::endgroup::"
+          echo "✅ Dashboard IAAP PRO generado correctamente en ${BUILD_PATH}/"
+
+      # =====================================================
+      # 📤 Subir artefactos IAAP PRO
+      # =====================================================
       - name: 📤 Subir artefactos IAAP
         uses: actions/upload-artifact@v4
         with:
@@ -205,6 +230,9 @@ jobs:
             auditorias/capturas/**/*.png
           retention-days: 30
 
+      # =====================================================
+      # 🚀 Publicación automática en GitHub Pages
+      # =====================================================
       - name: 🚀 Publicar en GitHub Pages
         if: success() && (hashFiles('auditorias/reportes/merged-results.json') != '')
         uses: peaceiris/actions-gh-pages@v3
@@ -212,4 +240,9 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./public
           publish_branch: gh-pages
-          commit_message: "🚀 Publicación automática WCAG IAAP PRO v4.7.5 (${{ github.run_number }})"
+          keep_files: true
+          full_commit_message: |
+            🚀 Publicación automática IAAP PRO v4.7.5
+            - Fecha: ${{ github.event.head_commit.timestamp }}
+            - Run ID: ${{ github.run_id }}
+            - Build Date: ${{ env.BUILD_DATE }}
