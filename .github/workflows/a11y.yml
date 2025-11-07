@@ -55,61 +55,33 @@ jobs:
           key: ${{ runner.os }}-a11y-v4.13-${{ hashFiles('package-lock.json') }}
 
       # =====================================================
-      # 📦 Instalación + verificación crítica IAAP PRO
+      # 📦 Instalación robusta IAAP PRO
       # =====================================================
-      - name: 📦 Instalación y verificación de dependencias IAAP PRO
+      - name: 📦 Instalar dependencias IAAP PRO
         run: |
-          echo "📦 Instalando dependencias base..."
-          set +e
-          npm ci --include=dev || npm install --include=dev
+          echo "📦 Instalando dependencias IAAP PRO..."
+          set -e
+
+          # Instalación base
+          npm install --include=dev || npm ci --include=dev
           npm rebuild || true
 
-          echo "🔍 Verificando dependencias críticas..."
-          for pkg in cypress cypress-axe cypress-real-events @bahmutov/cypress-esbuild-preprocessor esbuild; do
-            if ! npm list --depth=1 $pkg >/dev/null 2>&1; then
-              echo "⚙️ Instalando $pkg..."
-              npm install --save-dev $pkg
-            else
-              echo "✅ $pkg ya está instalado."
-            fi
-          done
+          # Instalación forzada de dependencias críticas
+          echo "🔧 Instalando dependencias críticas (Cypress + axe + real-events)..."
+          npm install --save-dev cypress cypress-axe cypress-real-events @bahmutov/cypress-esbuild-preprocessor esbuild puppeteer
 
-          echo "🧹 Forzando compilación previa para evitar errores de bundling..."
+          # Verificar que todo carga correctamente
+          echo "🧠 Verificando módulos..."
+          node -e "require('cypress'); require('cypress-axe'); require('cypress-real-events'); console.log('✅ Dependencias cargadas correctamente');"
+
+          echo "🧹 Verificando binario de Cypress..."
           npx cypress cache path
           npx cypress verify || npm rebuild cypress || true
 
-          echo "📂 Creando estructura de carpetas..."
+          echo "📂 Estructura base..."
           mkdir -p scripts auditorias/{capturas,auditoria-sitemap,auditoria-interactiva,reportes} public/auditorias
           [ ! -f scripts/urls.json ] && echo "[]" > scripts/urls.json
-          echo "✅ Dependencias IAAP PRO instaladas correctamente."
-
-      # =====================================================
-      # 🧪 Validar entorno Cypress (pre-bundling)
-      # =====================================================
-      - name: 🧪 Validar entorno y preprocesador de Cypress
-        run: |
-          echo "🔍 Validando entorno Cypress..."
-          if [ ! -f "cypress.config.cjs" ]; then
-            echo "❌ ERROR: No se encuentra cypress.config.cjs en el repositorio."
-            exit 1
-          fi
-
-          echo "🧠 Validando módulo @bahmutov/cypress-esbuild-preprocessor..."
-          if ! npm list @bahmutov/cypress-esbuild-preprocessor >/dev/null 2>&1; then
-            echo "⚙️ Instalando preprocesador..."
-            npm install --save-dev @bahmutov/cypress-esbuild-preprocessor esbuild
-          else
-            echo "✅ Preprocesador detectado correctamente."
-          fi
-
-          echo "🧠 Validando cypress-axe y cypress-real-events..."
-          node -e "require('cypress-axe'); require('cypress-real-events'); console.log('✅ Módulos cargados correctamente');"
-
-          echo "📄 Validando cypress.config.cjs..."
-          node -e "require('./cypress.config.cjs'); console.log('✅ Configuración Cypress válida.');"
-          echo "🔢 Versión de Cypress:"
-          npx cypress version
-          echo "✅ Entorno Cypress listo para ejecutar auditorías."
+          echo "✅ Entorno IAAP PRO listo."
 
       # =====================================================
       # ♻️ Limpieza previa
@@ -123,7 +95,7 @@ jobs:
       # =====================================================
       # 🌐 Rastreo automático IAAP PRO
       # =====================================================
-      - name: 🌍 Rastreo automático IAAP PRO (v4.13.5)
+      - name: 🌍 Rastreo automático IAAP PRO
         timeout-minutes: 30
         run: |
           echo "::group::🌍 Rastreo IAAP PRO"
@@ -215,7 +187,8 @@ jobs:
           publish_branch: gh-pages
           keep_files: true
           full_commit_message: |
-            🚀 Publicación automática IAAP PRO v4.13.5
+            🚀 Publicación automática IAAP PRO v4.13.6
             - Fecha: ${{ github.event.head_commit.timestamp }}
             - Run ID: ${{ github.run_id }}
             - Build Date: ${{ env.BUILD_DATE }}
+
