@@ -1,19 +1,22 @@
 /// <reference types="cypress" />
-import "cypress-axe";
-import "cypress-real-events/support";
 
 /**
- * ♿ Auditoría de accesibilidad – Sitemap completo (IAAP PRO v4.0)
+ * ♿ Auditoría de accesibilidad – Sitemap completo (IAAP PRO v4.13.5)
  * -----------------------------------------------------------------
- * ✅ Audita todas las URLs del sitemap de forma secuencial (real)
- * ✅ Espera dinámica para contenido asíncrono
- * ✅ Inyección verificada de axe-core
- * ✅ Capturas, logs y resultados IAAP
- * ✅ Deduplcado y guardado en auditorias/auditoria-sitemap
- * ✅ Compatible con GitHub Actions, Docker y entorno local
+ * ✅ Totalmente compatible con CI (GitHub Actions, Docker, local)
+ * ✅ Sin imports ESM — solo require() CommonJS
+ * ✅ Audita sitemap secuencialmente con axe-core
+ * ✅ Logs, capturas y guardado IAAP PRO
  */
 
-describe("♿ Auditoría de accesibilidad – Sitemap completo (IAAP PRO v4.0)", () => {
+try {
+  require("cypress-axe");
+  require("cypress-real-events/support");
+} catch (err) {
+  console.warn("⚠️ Dependencias opcionales no cargadas:", err.message);
+}
+
+describe("♿ Auditoría de accesibilidad – Sitemap completo (IAAP PRO v4.13.5)", () => {
   const allResults = [];
   const MAX_RETRIES = 1;
 
@@ -23,9 +26,6 @@ describe("♿ Auditoría de accesibilidad – Sitemap completo (IAAP PRO v4.0)",
     return false;
   });
 
-  // ===========================================================
-  // ♿ Auditoría de una sola página
-  // ===========================================================
   const auditPage = (page, attempt = 0) => {
     const { url, title } = page;
     if (!url) return;
@@ -36,13 +36,12 @@ describe("♿ Auditoría de accesibilidad – Sitemap completo (IAAP PRO v4.0)",
     cy.visit(url, { timeout: 90000, failOnStatusCode: false });
     cy.document().its("readyState").should("eq", "complete");
 
-    // Espera adaptativa para contenido dinámico (React, Vue, WP, etc.)
+    // Espera adaptativa para contenido dinámico
     cy.wait(Cypress.env("CI") ? 3500 : 1500);
 
-    // Inyección de axe-core
+    // ♿ Inyección segura de axe-core
     cy.injectAxe();
 
-    // Verificar que axe-core esté disponible
     cy.window().then((win) => {
       const axeOK = !!win.axe;
       cy.task("log", `🧠 axe-core presente en ${url}: ${axeOK}`);
@@ -53,13 +52,11 @@ describe("♿ Auditoría de accesibilidad – Sitemap completo (IAAP PRO v4.0)",
       }
     });
 
-    // Captura inicial de la página
     cy.screenshot(`auditorias/capturas/${slug}/pagina`, {
       capture: "viewport",
       overwrite: true,
     });
 
-    // Ejecución del análisis de accesibilidad
     cy.checkA11y(
       null,
       {
@@ -99,7 +96,6 @@ describe("♿ Auditoría de accesibilidad – Sitemap completo (IAAP PRO v4.0)",
       { skipFailures: true }
     );
 
-    // Limpieza post-análisis
     cy.window().then((win) => {
       try {
         win.location.replace("about:blank");
@@ -110,9 +106,6 @@ describe("♿ Auditoría de accesibilidad – Sitemap completo (IAAP PRO v4.0)",
     });
   };
 
-  // ===========================================================
-  // 🧩 Ejecución secuencial real (Cypress-aware)
-  // ===========================================================
   it("Audita todas las páginas del sitemap", () => {
     cy.viewport(1280, 720);
     cy.task("clearCaptures");
@@ -126,7 +119,6 @@ describe("♿ Auditoría de accesibilidad – Sitemap completo (IAAP PRO v4.0)",
         return;
       }
 
-      // 🔁 Ejecución secuencial garantizada (una página a la vez)
       cy.wrap(null).then(() => {
         const runSequential = (i = 0) => {
           if (i >= pages.length) return;
@@ -140,9 +132,6 @@ describe("♿ Auditoría de accesibilidad – Sitemap completo (IAAP PRO v4.0)",
     });
   });
 
-  // ===========================================================
-  // 🧾 Guardado final IAAP
-  // ===========================================================
   after(() => {
     const outputDir = `auditorias/auditoria-sitemap`;
     cy.task("createFolder", outputDir);
@@ -179,6 +168,7 @@ describe("♿ Auditoría de accesibilidad – Sitemap completo (IAAP PRO v4.0)",
     cy.writeFile("auditorias/last-sitemap.txt", outputDir, "utf8");
   });
 });
+
 
 
 

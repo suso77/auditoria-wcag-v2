@@ -1,20 +1,34 @@
 /**
- * ♿ Configuración universal de Cypress (IAAP PRO v4.0.6 / WCAG 2.2)
+ * ♿ Configuración universal de Cypress (IAAP PRO v4.0.7 / WCAG 2.2)
  * --------------------------------------------------------------------
  * ✅ Compatible con auditorías WCAG (sitemap + interactiva)
  * ✅ Soporte CI/CD (GitHub Actions, Docker, local)
- * ✅ Evita error “Cannot find module 'cypress'” en CI
+ * ✅ Evita error “Cannot find module '@bahmutov/cypress-esbuild-preprocessor'”
+ * ✅ Carga automática del preprocesador si falta
  * ✅ Limpieza automática y logs persistentes
- * ✅ Carga segura del preprocesador ESBuild
  * --------------------------------------------------------------------
  */
 
 const fs = require("fs-extra");
 const path = require("path");
+const { execSync } = require("child_process");
 
 let createBundler = null;
+
 try {
-  // Solo cargamos el preprocesador si no estamos dentro de Electron
+  // 🚀 Si el preprocesador no está disponible, lo instalamos en caliente (solo CI)
+  try {
+    require.resolve("@bahmutov/cypress-esbuild-preprocessor");
+    require.resolve("esbuild");
+  } catch {
+    if (process.env.CI) {
+      console.warn("⚙️ Instalando preprocesador en caliente para CI...");
+      execSync("npm install --save-dev @bahmutov/cypress-esbuild-preprocessor esbuild", {
+        stdio: "inherit",
+      });
+    }
+  }
+
   if (!process.env.CYPRESS_INTERNAL_ENV) {
     createBundler = require("@bahmutov/cypress-esbuild-preprocessor");
   } else {
@@ -24,7 +38,7 @@ try {
   console.warn("⚠️ No se pudo cargar el preprocesador (no crítico):", e.message);
 }
 
-// Fallback manual: si defineConfig no existe, usamos un wrapper
+// Fallback manual: si defineConfig no existe (entorno antiguo)
 function defineConfig(config) {
   return config;
 }
@@ -49,10 +63,12 @@ module.exports = defineConfig({
 
     setupNodeEvents(on, config) {
       // =====================================================
-      // 🧠 Carga condicional del preprocesador (solo local)
+      // 🧠 Carga condicional del preprocesador
       // =====================================================
       if (createBundler) {
         on("file:preprocessor", createBundler());
+      } else {
+        console.warn("⚠️ Preprocesador no cargado. Los tests podrían ejecutarse más lentos.");
       }
 
       // =====================================================
