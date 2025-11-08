@@ -1,300 +1,250 @@
 /**
- * 📊 export-to-xlsx.mjs (v4.1.1 IAAP PRO / W3C estable)
- * -------------------------------------------------------------------
- * Genera informe de auditoría accesible IAAP:
- *  - Pestañas: Sitemap / Interactiva / Resumen global
- *  - Traducción automática (DeepLx) con caché y tolerancia CI
- *  - Incluye nivel de conformidad WCAG (A / AA / AAA)
- *  - Formato profesional IAAP con estilos visuales
- *  - Compatible con merge-results v4.1.1 y summary v4.0.0
+ * ♿ export-to-xlsx.mjs — IAAP PRO v4.28 OPTIMIZADA
+ * -------------------------------------------------
+ * Exporta los resultados combinados (merged-results.json)
+ * en un informe Excel profesional IAAP con tres hojas:
+ *  - 📄 Sitemap (violaciones del rastreo)
+ *  - ⚙️ Interactiva (violaciones de componentes)
+ *  - 📊 Resumen (severidades y criterios con formato visual)
+ *
+ * ✅ Enlaces activos en todas las columnas (URL / W3C / Captura)
+ * ✅ Textos IAAP/W3C en español (resumen / actual / esperado)
+ * ✅ Criterios legibles (ID + título)
+ * ✅ Compatibilidad total con pipeline IAAP PRO
+ * ✅ Hipervínculos al recurso oficial W3C Quickref en español
  */
 
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
-import { exec } from "child_process";
-import { promisify } from "util";
 import ExcelJS from "exceljs";
-import archiver from "archiver";
+import { getWcagInfo } from "./wcag-map.mjs";
 
 // ===========================================================
-// ⚙️ Configuración base
+// 📁 Rutas base
 // ===========================================================
-const execAsync = promisify(exec);
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT_DIR = process.cwd(); // ✅ añadido para eliminar el aviso
-const AUDITORIAS_DIR = path.join(ROOT_DIR, "auditorias");
+const ROOT_DIR = process.cwd();
+const REPORTES_DIR = path.join(ROOT_DIR, "auditorias", "reportes");
+const MERGED_PATH = path.join(REPORTES_DIR, "merged-results.json");
+const OUTPUT_PATH = path.join(REPORTES_DIR, "Informe-WCAG-IAAP.xlsx");
 
 // ===========================================================
-// 🌍 Traducción con caché (DeepLx API libre y segura)
+// 🔍 Validación previa
 // ===========================================================
-const cache = new Map();
-async function traducir(texto) {
-  if (!texto || texto.length < 4) return texto;
-  if (cache.has(texto)) return cache.get(texto);
-  if (/[áéíóúñ¿¡]/i.test(texto)) return texto;
-
-  try {
-    const { stdout } = await execAsync(
-      `curl -s -X POST "https://api-free.deeplx.org/translate" -H "Content-Type: application/json" -d '{"text": ${JSON.stringify(
-        texto
-      )}, "source_lang": "EN", "target_lang": "ES"}'`,
-      { timeout: 4000 }
-    );
-    const res = JSON.parse(stdout);
-    const tr = res?.data?.translations?.[0]?.text?.trim() || texto;
-    cache.set(texto, tr);
-    return tr;
-  } catch {
-    cache.set(texto, texto);
-    return texto;
-  }
-}
-
-// ===========================================================
-// 🔍 Cargar el último archivo combinado (IAAP v4.7.5 compatible)
-// ===========================================================
-let mergedPath = null;
-
-// 🧾 1. Priorizar nueva ubicación en /auditorias/reportes/
-const mergedReportes = path.join(AUDITORIAS_DIR, "reportes", "merged-results.json");
-if (fs.existsSync(mergedReportes)) {
-  mergedPath = mergedReportes;
-} else {
-  // 🧾 2. Compatibilidad con versiones antiguas (results-merged-*.json)
-  const legacyMerged = fs
-    .readdirSync(AUDITORIAS_DIR)
-    .filter((f) => f.startsWith("results-merged") && f.endsWith(".json"))
-    .sort()
-    .reverse()[0];
-  if (legacyMerged) mergedPath = path.join(AUDITORIAS_DIR, legacyMerged);
-}
-
-// ❌ 3. Validación de existencia
-if (!mergedPath || !fs.existsSync(mergedPath)) {
-  console.error("❌ No se encontró ningún merged-results.json ni results-merged-*.json");
+if (!fs.existsSync(MERGED_PATH)) {
+  console.error("❌ No se encontró merged-results.json en auditorias/reportes/");
   process.exit(1);
 }
 
-// 🧩 4. Leer y validar datos combinados
-let data = [];
-try {
-  data = JSON.parse(fs.readFileSync(mergedPath, "utf8"));
-} catch (err) {
-  console.error(`❌ Error al leer ${mergedPath}: ${err.message}`);
-  process.exit(1);
-}
-
+const data = JSON.parse(fs.readFileSync(MERGED_PATH, "utf8"));
 if (!Array.isArray(data) || data.length === 0) {
   console.warn("⚠️ No hay datos válidos para exportar.");
   process.exit(0);
 }
 
-// Debug info útil para CI
-console.log("📁 Archivo combinado detectado:");
-console.log(`   - ${mergedPath}`);
-console.log(`   - Entradas: ${data.length}`);
+// ===========================================================
+// 🧠 Funciones IAAP PRO — Traducción y fallback seguro
+// ===========================================================
+function obtenerCriterioIAAP(v) {
+  const info = getWcagInfo(v.id);
+  if (!info) {
+    return {
+      id: v.id || "(sin id)",
+      criterio: "Criterio no identificado",
+      nivel: "—",
+      resumen: "Elemento con problema de accesibilidad detectado.",
+      esperado: "Debe cumplir las pautas WCAG 2.1/2.2 aplicables.",
+      url: "https://www.w3.org/WAI/WCAG22/quickref/?showtechniques=es",
+    };
+  }
+  return {
+    ...info,
+    url:
+      info.url?.includes("w3.org") && !info.url.includes("?showtechniques=es")
+        ? `${info.url}?showtechniques=es`
+        : info.url || "https://www.w3.org/WAI/WCAG22/quickref/?showtechniques=es",
+  };
+}
+
+function generarResumen(v) {
+  const criterio = obtenerCriterioIAAP(v);
+  return (
+    criterio.resumen ||
+    v.help ||
+    `Elemento que incumple el criterio ${criterio.id} según las pautas WCAG.`
+  );
+}
+
+function generarResultadoActual(v) {
+  const criterio = obtenerCriterioIAAP(v);
+  if (v.id === "color-contrast") {
+    const match = v.description?.match(/contrast of ([\d.]+)/);
+    const ratio = match ? match[1] : "—";
+    return `El contraste detectado es ${ratio}:1, inferior al mínimo 4.5:1 exigido por WCAG 2.1 nivel AA. Esto afecta la legibilidad para usuarios con baja visión o daltonismo.`;
+  }
+  return (
+    v.description ||
+    `El contenido no cumple con el criterio ${criterio.id}, afectando la accesibilidad percibida o funcional.`
+  );
+}
+
+function generarResultadoEsperado(v) {
+  const criterio = obtenerCriterioIAAP(v);
+  return (
+    criterio.esperado ||
+    `El contenido debe cumplir el criterio ${criterio.id} de las WCAG. Ver detalles en el enlace W3C.`
+  );
+}
+
+function generarRecomendacion(v) {
+  const criterio = obtenerCriterioIAAP(v);
+  return {
+    text: "Ver recomendación W3C",
+    hyperlink: criterio.url,
+  };
+}
 
 // ===========================================================
-// 🧩 Configuración del libro Excel
+// 📊 Crear el Excel IAAP PRO (3 hojas)
 // ===========================================================
 const wb = new ExcelJS.Workbook();
 wb.creator = "Ilúmina Audit IAAP PRO";
 wb.created = new Date();
 wb.properties.subject = "Auditoría de Accesibilidad WCAG – IAAP PRO";
 
-// ===========================================================
-// 🎨 Colores de severidad IAAP
-// ===========================================================
-const colorPorImpacto = {
-  critical: "FFFF0000",
-  serious: "FFFF6600",
-  moderate: "FFFFC000",
-  minor: "FF92D050",
-  unclassified: "FFD9D9D9",
-};
+const columnasBase = [
+  { header: "ID", key: "id", width: 20 },
+  { header: "Criterio WCAG", key: "criterio", width: 40 },
+  { header: "Nivel", key: "nivel", width: 10 },
+  { header: "Severidad", key: "impact", width: 12 },
+  { header: "Resumen", key: "resumen", width: 60 },
+  { header: "Elemento afectado", key: "selector", width: 60 },
+  { header: "Página analizada", key: "url", width: 60 },
+  { header: "Resultado actual", key: "actual", width: 70 },
+  { header: "Resultado esperado", key: "esperado", width: 70 },
+  { header: "Recomendación (W3C)", key: "recomendacion", width: 55 },
+  { header: "Captura", key: "captura", width: 40 },
+  { header: "Sistema", key: "system", width: 35 },
+  { header: "Metodología", key: "metodologia", width: 30 },
+];
 
 // ===========================================================
-// 🧠 Helper para crear hoja IAAP
+// 📘 Crear hojas: Sitemap, Interactiva y Resumen
 // ===========================================================
-function crearHoja(nombre) {
-  const hoja = wb.addWorksheet(nombre);
-  hoja.columns = [
-    { header: "ID", key: "id", width: 20 },
-    { header: "Criterio WCAG", key: "criterio", width: 40 },
-    { header: "Nivel", key: "nivel", width: 10 },
-    { header: "Severidad", key: "impact", width: 15 },
-    { header: "Resumen", key: "resumen", width: 60 },
-    { header: "Elemento afectado", key: "selector", width: 60 },
-    { header: "Página analizada", key: "url", width: 80 },
-    { header: "Resultado actual", key: "resultado_actual", width: 70 },
-    { header: "Resultado esperado", key: "resultado_esperado", width: 50 },
-    { header: "Recomendación (W3C)", key: "recomendacion", width: 40 },
-    { header: "Captura", key: "captura", width: 40 },
-    { header: "Sistema", key: "system", width: 35 },
-    { header: "Metodología", key: "metodologia", width: 30 },
-  ];
+const hojaSitemap = wb.addWorksheet("Sitemap");
+const hojaInteractiva = wb.addWorksheet("Interactiva");
+const hojaResumen = wb.addWorksheet("Resumen");
 
+hojaSitemap.columns = columnasBase;
+hojaInteractiva.columns = columnasBase;
+
+[hojaSitemap, hojaInteractiva].forEach((hoja) => {
   const header = hoja.getRow(1);
-  header.font = { bold: true, color: { argb: "FFFFFFFF" } };
-  header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F4E78" } };
+  header.font = { bold: true };
   header.alignment = { vertical: "middle", horizontal: "center" };
   hoja.autoFilter = { from: "A1", to: "M1" };
-  return hoja;
-}
-
-const hojaSitemap = crearHoja("🌐 Sitemap");
-const hojaInteractiva = crearHoja("🧠 Interactiva");
+});
 
 // ===========================================================
-// 🧾 Resumen IAAP Global
+// 🧮 Procesar resultados por origen
 // ===========================================================
-const hojaResumen = wb.addWorksheet("📊 Resumen Global");
-hojaResumen.columns = [
-  { header: "Origen", key: "origen", width: 20 },
-  { header: "URLs auditadas", key: "urls", width: 20 },
-  { header: "Violaciones totales", key: "total", width: 20 },
-  { header: "Critical", key: "critical", width: 15 },
-  { header: "Serious", key: "serious", width: 15 },
-  { header: "Moderate", key: "moderate", width: 15 },
-  { header: "Minor", key: "minor", width: 15 },
-  { header: "Unclassified", key: "unclassified", width: 15 },
-  { header: "Conformidad estimada (%)", key: "conformidad", width: 25 },
-];
-hojaResumen.getRow(1).font = { bold: true };
+const severidades = {};
+const criterios = {};
 
-// ===========================================================
-// 🧮 Procesar resultados IAAP
-// ===========================================================
-const stats = { sitemap: {}, interactiva: {} };
+for (const item of data) {
+  const origen = item.origen || "sitemap";
+  const destino = origen === "interactiva" ? hojaInteractiva : hojaSitemap;
+  const pageUrl = item.page || item.url || "(sin URL)";
 
-for (const page of data) {
-  const targetSheet = page.origen === "interactiva" ? hojaInteractiva : hojaSitemap;
-  const origenStats = page.origen === "interactiva" ? stats.interactiva : stats.sitemap;
-  origenStats.urls = origenStats.urls || new Set();
-  origenStats.urls.add(page.url);
+  for (const v of item.violations || []) {
+    const criterio = obtenerCriterioIAAP(v);
+    const resumen = generarResumen(v);
+    const actual = generarResultadoActual(v);
+    const esperado = generarResultadoEsperado(v);
+    const recomendacion = generarRecomendacion(v);
 
-  for (const v of page.violations || []) {
-    origenStats.total = (origenStats.total || 0) + 1;
-    const impact = v.impact?.toLowerCase() || "unclassified";
-    origenStats[impact] = (origenStats[impact] || 0) + 1;
-
-    const criterio =
-      v.tags?.find((t) => t.startsWith("wcag")) || v.id || "(sin criterio)";
-    const nivel =
-      criterio.includes("aaa") ? "AAA" : criterio.includes("aa") ? "AA" : "A";
-    const resumen = await traducir(v.help || v.description || "(sin descripción)");
     const selector = v.nodes?.[0]?.target?.join(", ") || "(sin selector)";
-    const html = v.nodes?.[0]?.html || "(sin HTML)";
-    const errorMsg = v.nodes?.[0]?.failureSummary || "(sin detalles de error)";
-    const resultadoActual = `Descripción: ${resumen}\nSelector: ${selector}\nHTML: ${html}\nError: ${errorMsg}`;
-    const resultadoEsperado =
-      "El contenido cumple con los criterios de accesibilidad del nivel indicado.";
-    const recomendacion = "Consultar técnicas WCAG relevantes.";
-    const captura = page.capturePath
-      ? { text: "Ver captura", hyperlink: page.capturePath }
+    const capturaLink = item.capturePath
+      ? {
+          text: "Evidencia",
+          hyperlink: `https://suso77.github.io/auditoria-wcag-v2/${item.capturePath}`,
+        }
       : "(sin captura)";
 
-    const row = targetSheet.addRow({
+    // 🔗 Enlace activo en “Página analizada”
+    const urlCell =
+      pageUrl && pageUrl.startsWith("http")
+        ? { text: pageUrl, hyperlink: pageUrl }
+        : pageUrl;
+
+    destino.addRow({
       id: v.id,
-      criterio,
-      nivel,
-      impact,
+      criterio: `${criterio.id || ""} – ${criterio.criterio || "Criterio WCAG no identificado"}`,
+      nivel: criterio.nivel || "AA",
+      impact: v.impact || "",
       resumen,
       selector,
-      url: { text: page.url, hyperlink: page.url },
-      resultado_actual: resultadoActual,
-      resultado_esperado: resultadoEsperado,
+      url: urlCell,
+      actual,
+      esperado,
       recomendacion,
-      captura,
-      system: page.system || "macOS + Chrome (Cypress + axe-core)",
-      metodologia: "WCAG 2.1 / 2.2 (axe-core)",
+      captura: capturaLink,
+      system: "macOS + Chrome (axe-core)",
+      metodologia: "WCAG 2.1 / 2.2 (axe-core + Cypress)",
     });
 
-    if (colorPorImpacto[impact]) {
-      row.getCell("impact").fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: colorPorImpacto[impact] },
-      };
-    }
+    // 🧮 Contabilizar severidades y criterios
+    const sev = v.impact || "sin severidad";
+    severidades[sev] = (severidades[sev] || 0) + 1;
+    criterios[criterio.id] = (criterios[criterio.id] || 0) + 1;
   }
 }
 
 // ===========================================================
-// 📊 Añadir resumen global con índice IAAP
+// 📊 Hoja de resumen (formato visual centrado)
 // ===========================================================
-for (const [origen, s] of Object.entries(stats)) {
-  if (!s.urls) continue;
-  const penalizacion =
-    (s.critical || 0) * 2.5 +
-    (s.serious || 0) * 1.4 +
-    (s.moderate || 0) * 0.6 +
-    (s.minor || 0) * 0.3;
-  const conformidad = Math.max(0, 100 - penalizacion / Math.max(s.urls.size, 1)).toFixed(1);
-  hojaResumen.addRow({
-    origen,
-    urls: s.urls.size,
-    total: s.total || 0,
-    critical: s.critical || 0,
-    serious: s.serious || 0,
-    moderate: s.moderate || 0,
-    minor: s.minor || 0,
-    unclassified: s.unclassified || 0,
-    conformidad,
+hojaResumen.columns = [
+  { header: "Categoría", key: "cat", width: 30 },
+  { header: "Valor", key: "val", width: 20 },
+  { header: "Porcentaje", key: "pct", width: 20 },
+];
+
+const total = Object.values(severidades).reduce((a, b) => a + b, 0) || 1;
+
+hojaResumen.addRow(["", "", ""]);
+hojaResumen.addRow(["📊 Resumen por severidad", "", ""]);
+for (const [sev, count] of Object.entries(severidades)) {
+  hojaResumen.addRow([sev, count, count / total]);
+}
+
+hojaResumen.addRow(["", "", ""]);
+hojaResumen.addRow(["📘 Resumen por criterio WCAG", "", ""]);
+for (const [crit, count] of Object.entries(criterios)) {
+  hojaResumen.addRow([crit, count, count / total]);
+}
+
+// 🎨 Formato visual IAAP PRO
+hojaResumen.eachRow((row, rowNumber) => {
+  row.eachCell((cell) => {
+    cell.alignment = { vertical: "middle", horizontal: "center" };
+    cell.border = {
+      top: { style: "thin", color: { argb: "D9D9D9" } },
+      left: { style: "thin", color: { argb: "D9D9D9" } },
+      bottom: { style: "thin", color: { argb: "D9D9D9" } },
+      right: { style: "thin", color: { argb: "D9D9D9" } },
+    };
+    if (rowNumber === 2 || row.getCell(1).value?.toString().startsWith("📘"))
+      cell.font = { bold: true };
   });
-}
+
+  if (typeof row.getCell(3).value === "number") {
+    row.getCell(3).numFmt = "0.0%";
+  }
+});
 
 // ===========================================================
-// 💾 Guardar Excel y ZIP IAAP PRO (v4.7.5)
+// 💾 Guardar Excel
 // ===========================================================
-const reportesDir = path.join(AUDITORIAS_DIR, "reportes");
-if (!fs.existsSync(reportesDir)) {
-  fs.mkdirSync(reportesDir, { recursive: true });
-  console.log(`📁 Carpeta creada: ${reportesDir}`);
-}
-
-const excelPath = path.join(reportesDir, "Informe-WCAG-IAAP.xlsx");
-const zipPath = path.join(reportesDir, "Informe-WCAG-IAAP.zip");
-
-await wb.xlsx.writeFile(excelPath);
-console.log(`✅ Excel IAAP generado: ${excelPath}`);
-
-const output = fs.createWriteStream(zipPath);
-const archive = archiver("zip", { zlib: { level: 9 } });
-archive.pipe(output);
-archive.file(excelPath, { name: path.basename(excelPath) });
-archive.file(mergedPath, { name: path.basename(mergedPath) });
-
-const capturasDir = path.join(AUDITORIAS_DIR, "capturas");
-if (fs.existsSync(capturasDir)) {
-  archive.directory(capturasDir, "capturas");
-  console.log("📸 Capturas añadidas al ZIP IAAP.");
-}
-
-await archive.finalize();
-console.log(`📦 ZIP IAAP generado: ${zipPath}`);
-
-// ===========================================================
-// 🔄 Copias de compatibilidad para el dashboard público
-// ===========================================================
-try {
-  const publicDir = path.join(ROOT_DIR, "public", "auditorias");
-  if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir, { recursive: true });
-
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const destino = path.join(publicDir, `export-${timestamp}`);
-  fs.mkdirSync(destino, { recursive: true });
-
-  fs.copyFileSync(excelPath, path.join(destino, "Informe-WCAG-IAAP.xlsx"));
-  fs.copyFileSync(zipPath, path.join(destino, "Informe-WCAG-IAAP.zip"));
-  fs.copyFileSync(mergedPath, path.join(destino, path.basename(mergedPath)));
-
-  console.log(`🚀 Archivos exportados para dashboard: ${destino}`);
-} catch (err) {
-  console.warn(`⚠️ No se pudo copiar resultados al dashboard público: ${err.message}`);
-}
-
-console.log("✅ Exportación IAAP PRO completada con éxito.");
-
-
+await wb.xlsx.writeFile(OUTPUT_PATH);
+console.log(
+  `✅ Informe IAAP PRO (3 hojas, enlaces activos, formato español W3C) exportado correctamente: ${OUTPUT_PATH}`
+);
