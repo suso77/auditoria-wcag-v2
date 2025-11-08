@@ -1,4 +1,4 @@
-/** 
+/**
  * @module wcag-map
  * ♿ Mapa maestro WCAG 2.1 / 2.2 (A + AA)
  * Versión profesional IAAP / EN 301 549 v4.1.1 (2025)
@@ -421,6 +421,7 @@ const equivalencias = {
   "aria-expanded": "4.1.2",
   "aria-pressed": "4.1.2",
   "aria-selected": "4.1.2",
+  "role-textbox-name": "4.1.2",
   "aria-label": "3.3.2",
   "aria-labelledby": "3.3.2",
   "aria-describedby": "3.3.2",
@@ -572,104 +573,9 @@ const equivalencias = {
   "visible-label": "2.5.3",
   "accessible-name": "4.1.2",
 };
- // ===========================================================
-// 📘 Diccionario de nombres legibles de criterios WCAG 2.2
-// ===========================================================
- export const wcagNombres = {
-  // === PRINCIPIO 1: PERCEPTIBLE ===
-  "1.1.1": "Contenido no textual (A)",
-  "1.2.1": "Solo audio y solo vídeo (grabado) (A)",
-  "1.2.2": "Subtítulos (grabado) (A)",
-  "1.2.3": "Audiodescripción o alternativa multimedia (A)",
-  "1.2.4": "Subtítulos (en directo) (AA)",
-  "1.2.5": "Audiodescripción (grabado) (AA)",
-  "1.2.6": "Lengua de signos (grabado) (AAA)",
-  "1.2.7": "Audiodescripción ampliada (AAA)",
-  "1.2.8": "Alternativa multimedia (AAA)",
-  "1.2.9": "Solo audio (en directo) (AAA)",
-  "1.3.1": "Información y relaciones (A)",
-  "1.3.2": "Secuencia significativa (A)",
-  "1.3.3": "Características sensoriales (A)",
-  "1.3.4": "Orientación (AA)",
-  "1.3.5": "Identificar propósito de entrada (AA)",
-  "1.3.6": "Identificar propósito (AAA)",
-  "1.4.1": "Uso del color (A)",
-  "1.4.2": "Control del audio (A)",
-  "1.4.3": "Contraste (mínimo) (AA)",
-  "1.4.4": "Redimensionar texto (AA)",
-  "1.4.5": "Imágenes de texto (AA)",
-  "1.4.6": "Contraste (mejorado) (AAA)",
-  "1.4.7": "Audio de fondo bajo o sin sonido (AAA)",
-  "1.4.8": "Presentación visual (AAA)",
-  "1.4.9": "Imágenes de texto (sin excepción) (AAA)",
-  "1.4.10": "Reflujo (AA)",
-  "1.4.11": "Contraste no textual (AA)",
-  "1.4.12": "Espaciado del texto (AA)",
-  "1.4.13": "Contenido al pasar el puntero o foco (AA)",
-
-  // === PRINCIPIO 2: OPERABLE ===
-  "2.1.1": "Teclado (A)",
-  "2.1.2": "Sin trampa para el foco (A)",
-  "2.1.4": "Atajos de teclado (A)",
-  "2.2.1": "Tiempo ajustable (A)",
-  "2.2.2": "Pausar, detener, ocultar (A)",
-  "2.2.3": "Sin tiempo (AAA)",
-  "2.2.4": "Interrupciones (AAA)",
-  "2.2.5": "Reautenticación (AAA)",
-  "2.3.1": "Destellos (A)",
-  "2.3.2": "Destellos (AAA)",
-  "2.4.1": "Evitar bloques (A)",
-  "2.4.2": "Títulos de página (A)",
-  "2.4.3": "Orden del foco (A)",
-  "2.4.4": "Propósito de los enlaces (en contexto) (A)",
-  "2.4.5": "Múltiples vías (AA)",
-  "2.4.6": "Encabezados y etiquetas (AA)",
-  "2.4.7": "Foco visible (AA)",
-  "2.4.8": "Ubicación (AAA)",
-  "2.4.9": "Propósito de los enlaces (solo texto) (AAA)",
-  "2.4.10": "Encabezados de sección (AAA)",
-  "2.4.11": "Foco no oculto (mínimo) (AA)",
-  "2.4.12": "Foco no oculto (mejorado) (AAA)",
-  "2.4.13": "Apariencia del foco (AA)",
-  "2.5.1": "Gestos con puntero (A)",
-  "2.5.2": "Cancelación con puntero (A)",
-  "2.5.3": "Etiqueta en el nombre (A)",
-  "2.5.4": "Activación por movimiento (A)",
-  "2.5.5": "Tamaño del objetivo (mínimo) (AA)",
-  "2.5.6": "Mecanismo simultáneo (AAA)",
-  "2.5.7": "Arrastre con puntero (AA)",
-  "2.5.8": "Tamaño del objetivo (mejorado) (AA)",
-
-  // === PRINCIPIO 3: COMPRENSIBLE ===
-  "3.1.1": "Idioma de la página (A)",
-  "3.1.2": "Idioma de las partes (AA)",
-  "3.1.3": "Palabras inusuales (AAA)",
-  "3.1.4": "Abreviaturas (AAA)",
-  "3.1.5": "Nivel de lectura (AAA)",
-  "3.1.6": "Pronunciación (AAA)",
-  "3.2.1": "Al recibir foco (A)",
-  "3.2.2": "Al ingresar datos (A)",
-  "3.2.3": "Navegación consistente (AA)",
-  "3.2.4": "Identificación consistente (AA)",
-  "3.2.5": "Cambio a petición (AAA)",
-  "3.2.6": "Ayuda consistente (AA)",
-  "3.3.1": "Identificación de errores (A)",
-  "3.3.2": "Etiquetas o instrucciones (A)",
-  "3.3.3": "Sugerencias ante errores (AA)",
-  "3.3.4": "Prevención de errores (AA)",
-  "3.3.5": "Ayuda (AAA)",
-  "3.3.6": "Prevención de errores (AAA)",
-  "3.3.7": "Autenticación accesible (AA)",
-  "3.3.8": "Entrada redundante (AA)",
-
-  // === PRINCIPIO 4: ROBUSTO ===
-  "4.1.1": "Procesamiento (A)",
-  "4.1.2": "Nombre, función, valor (A)",
-  "4.1.3": "Mensajes de estado (AA)",
-};
+ 
    const match = equivalencias[normalized];
   if (match && wcagMap[match]) return { id, ...wcagMap[match] };
-
   if (wcagMap[id]) return { id, ...wcagMap[id] };
 
   const found = Object.entries(wcagMap).find(([key]) =>
@@ -677,7 +583,6 @@ const equivalencias = {
   );
   if (found) return { id, ...found[1] };
 
-  // Smart search en español
   const keywords = {
     contraste: "1.4.3",
     foco: "2.4.7",
@@ -690,17 +595,21 @@ const equivalencias = {
     if (normalized.includes(k) && wcagMap[v]) return { id, ...wcagMap[v] };
   }
 
-// Fallback
-console.warn(`[wcag-map] ⚠️ Criterio WCAG no identificado para la regla: ${id}`);
-return {
-  id,
-  criterio: "Criterio WCAG no identificado",
-  principio: "Desconocido",
-  nivel: "N/A",
-  esperado: "Debe cumplir las pautas WCAG 2.1/2.2 aplicables.",
-  resumen: `Regla sin correspondencia directa (${id}).`,
-  nota: "⚠️ Revisar correspondencia o nueva regla axe-core.",
-  url: "https://www.w3.org/WAI/WCAG22/quickref/",
-};
+  console.warn(`[wcag-map] ⚠️ Criterio WCAG no identificado para la regla: ${id}`);
+  return {
+    id,
+    criterio: "Criterio WCAG no identificado",
+    principio: "Desconocido",
+    nivel: "N/A",
+    esperado: "Debe cumplir las pautas WCAG 2.1/2.2 aplicables.",
+    resumen: `Regla sin correspondencia directa (${id}).`,
+    nota: "⚠️ Revisar correspondencia o nueva regla axe-core.",
+    url: "https://www.w3.org/WAI/WCAG22/quickref/",
+  };
 }
-
+// ===========================================================
+// 📘 Diccionario de nombres legibles WCAG
+// ===========================================================
+export const wcagNombres = Object.fromEntries(
+  Object.entries(wcagMap).map(([id, val]) => [id, `${val.criterio} (${val.nivel})`])
+);

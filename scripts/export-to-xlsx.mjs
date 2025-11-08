@@ -1,7 +1,7 @@
 /**
- * ♿ export-to-xlsx.mjs — IAAP PRO v4.28 OPTIMIZADA
+ * ♿ export-to-xlsx.mjs — IAAP PRO v4.30 (Stable)
  * -------------------------------------------------
- * Exporta los resultados combinados (merged-results.json)
+ * Exporta los resultados combinados (merged-results.json o results-merged.json)
  * en un informe Excel profesional IAAP con tres hojas:
  *  - 📄 Sitemap (violaciones del rastreo)
  *  - ⚙️ Interactiva (violaciones de componentes)
@@ -10,8 +10,8 @@
  * ✅ Enlaces activos en todas las columnas (URL / W3C / Captura)
  * ✅ Textos IAAP/W3C en español (resumen / actual / esperado)
  * ✅ Criterios legibles (ID + título)
+ * ✅ Colores por severidad en el resumen
  * ✅ Compatibilidad total con pipeline IAAP PRO
- * ✅ Hipervínculos al recurso oficial W3C Quickref en español
  */
 
 import fs from "fs";
@@ -20,22 +20,38 @@ import ExcelJS from "exceljs";
 import { getWcagInfo } from "./wcag-map.mjs";
 
 // ===========================================================
-// 📁 Rutas base
+// 📁 Rutas base y detección automática del archivo mergeado
 // ===========================================================
 const ROOT_DIR = process.cwd();
-const REPORTES_DIR = path.join(ROOT_DIR, "auditorias", "reportes");
-const MERGED_PATH = path.join(REPORTES_DIR, "merged-results.json");
+const AUDITORIAS_DIR = path.join(ROOT_DIR, "auditorias");
+const REPORTES_DIR = path.join(AUDITORIAS_DIR, "reportes");
 const OUTPUT_PATH = path.join(REPORTES_DIR, "Informe-WCAG-IAAP.xlsx");
 
-// ===========================================================
-// 🔍 Validación previa
-// ===========================================================
-if (!fs.existsSync(MERGED_PATH)) {
-  console.error("❌ No se encontró merged-results.json en auditorias/reportes/");
+// Buscar automáticamente el JSON más reciente válido
+let mergedFile = null;
+const searchDirs = [REPORTES_DIR, AUDITORIAS_DIR];
+for (const dir of searchDirs) {
+  if (fs.existsSync(dir)) {
+    const found = fs
+      .readdirSync(dir)
+      .filter((f) => f.match(/(merged-results|results-merged).*\.json$/))
+      .sort()
+      .reverse()[0];
+    if (found) {
+      mergedFile = path.join(dir, found);
+      break;
+    }
+  }
+}
+
+if (!mergedFile) {
+  console.error("❌ No se encontró ningún archivo merged-results*.json o results-merged*.json");
   process.exit(1);
 }
 
-const data = JSON.parse(fs.readFileSync(MERGED_PATH, "utf8"));
+console.log(`📄 Usando archivo: ${path.basename(mergedFile)}`);
+
+const data = JSON.parse(fs.readFileSync(mergedFile, "utf8"));
 if (!Array.isArray(data) || data.length === 0) {
   console.warn("⚠️ No hay datos válidos para exportar.");
   process.exit(0);
@@ -124,12 +140,9 @@ const columnasBase = [
   { header: "Recomendación (W3C)", key: "recomendacion", width: 55 },
   { header: "Captura", key: "captura", width: 40 },
   { header: "Sistema", key: "system", width: 35 },
-  { header: "Metodología", key: "metodologia", width: 30 },
+  { header: "Metodología", key: "metodologia", width: 35 },
 ];
 
-// ===========================================================
-// 📘 Crear hojas: Sitemap, Interactiva y Resumen
-// ===========================================================
 const hojaSitemap = wb.addWorksheet("Sitemap");
 const hojaInteractiva = wb.addWorksheet("Interactiva");
 const hojaResumen = wb.addWorksheet("Resumen");
@@ -163,14 +176,17 @@ for (const item of data) {
     const recomendacion = generarRecomendacion(v);
 
     const selector = v.nodes?.[0]?.target?.join(", ") || "(sin selector)";
-    const capturaLink = item.capturePath
+    const capturePath = item.capturePath || v.capturePath || null;
+
+    const capturaLink = capturePath
       ? {
           text: "Evidencia",
-          hyperlink: `https://suso77.github.io/auditoria-wcag-v2/${item.capturePath}`,
+          hyperlink: capturePath.startsWith("http")
+            ? capturePath
+            : `file://${path.join(AUDITORIAS_DIR, "capturas", capturePath)}`,
         }
       : "(sin captura)";
 
-    // 🔗 Enlace activo en “Página analizada”
     const urlCell =
       pageUrl && pageUrl.startsWith("http")
         ? { text: pageUrl, hyperlink: pageUrl }
@@ -188,11 +204,10 @@ for (const item of data) {
       esperado,
       recomendacion,
       captura: capturaLink,
-      system: "macOS + Chrome (axe-core)",
-      metodologia: "WCAG 2.1 / 2.2 (axe-core + Cypress)",
+      system: "macOS Sonoma 14.7 + Chrome 129 (axe-core 4.9.1)",
+      metodologia: "WCAG 2.1 / 2.2 Nivel AA — axe-core + Cypress + IAAP IA",
     });
 
-    // 🧮 Contabilizar severidades y criterios
     const sev = v.impact || "sin severidad";
     severidades[sev] = (severidades[sev] || 0) + 1;
     criterios[criterio.id] = (criterios[criterio.id] || 0) + 1;
@@ -200,7 +215,7 @@ for (const item of data) {
 }
 
 // ===========================================================
-// 📊 Hoja de resumen (formato visual centrado)
+// 📊 Hoja de resumen con color por severidad
 // ===========================================================
 hojaResumen.columns = [
   { header: "Categoría", key: "cat", width: 30 },
@@ -212,17 +227,32 @@ const total = Object.values(severidades).reduce((a, b) => a + b, 0) || 1;
 
 hojaResumen.addRow(["", "", ""]);
 hojaResumen.addRow(["📊 Resumen por severidad", "", ""]);
+
+const colorSeveridad = {
+  critical: "FFB71C1C", // rojo
+  serious: "FFFF6F00",  // naranja
+  moderate: "FFFFC107", // amarillo
+  minor: "FF2196F3",    // azul
+  "sin severidad": "FF9E9E9E", // gris
+};
+
 for (const [sev, count] of Object.entries(severidades)) {
-  hojaResumen.addRow([sev, count, count / total]);
+  const row = hojaResumen.addRow([sev, count, count / total]);
+  const color = colorSeveridad[sev] || "FFD3D3D3";
+  row.getCell(1).fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: color },
+  };
 }
 
 hojaResumen.addRow(["", "", ""]);
 hojaResumen.addRow(["📘 Resumen por criterio WCAG", "", ""]);
+
 for (const [crit, count] of Object.entries(criterios)) {
   hojaResumen.addRow([crit, count, count / total]);
 }
 
-// 🎨 Formato visual IAAP PRO
 hojaResumen.eachRow((row, rowNumber) => {
   row.eachCell((cell) => {
     cell.alignment = { vertical: "middle", horizontal: "center" };
@@ -246,5 +276,5 @@ hojaResumen.eachRow((row, rowNumber) => {
 // ===========================================================
 await wb.xlsx.writeFile(OUTPUT_PATH);
 console.log(
-  `✅ Informe IAAP PRO (3 hojas, enlaces activos, formato español W3C) exportado correctamente: ${OUTPUT_PATH}`
+  `✅ Informe IAAP PRO (3 hojas, enlaces activos, colores por severidad, formato español W3C) exportado correctamente: ${OUTPUT_PATH}`
 );

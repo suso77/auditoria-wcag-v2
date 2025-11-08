@@ -1,31 +1,23 @@
 {
   "compilerOptions": {
-    /* 🔧 Compatibilidad con Node 20 y módulos ESM */
     "target": "ES2022",
-    "module": "ESNext",
+    "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
-
-    /* 🧠 Mejora DX y compatibilidad con imports mixtos */
+    "allowJs": true,
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
-
-    /* ⚡ Control de salida y chequeos */
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
     "rootDir": ".",
     "outDir": "dist",
-
-    /* 🧩 Tipos globales */
     "types": ["node", "cypress"]
   },
   "include": [
-    "scripts/**/*.ts",
-    "scripts/**/*.mjs",
-    "cypress/**/*.ts",
-    "cypress/**/*.js",
+    "scripts/**/*",
+    "cypress/**/*",
     "cypress.config.*"
   ],
   "exclude": ["node_modules", "dist"]

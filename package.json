@@ -1,6 +1,6 @@
 {
   "name": "auditoria-wcag-v2",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "type": "module",
   "description": "Auditoría de accesibilidad automatizada con Cypress + axe-core + Puppeteer + ExcelJS + GitHub Actions (IAAP/W3C) — v4.7.4 PRO",
   "scripts": {
@@ -9,34 +9,46 @@
     "tag-origen": "node scripts/tag-origen.cjs",
     "merge-results": "node scripts/merge-results.mjs",
     "fix": "node scripts/fix-json.cjs",
+
     "crawl:auto": "node crawler/crawl-auto.mjs",
     "crawl:js": "node crawler/crawl.js",
     "crawl:puppeteer": "node crawler/crawl-puppeteer.mjs",
     "crawl:full": "MAX_DEPTH=5 CRAWL_DELAY=1200 node crawler/crawl-puppeteer.mjs",
+
     "preaudit": "node -e \"if (!require('fs').existsSync('./scripts/urls.json')) { console.error('❌ No se encontró scripts/urls.json. Ejecuta npm run crawl:auto'); process.exit(1) } else { console.log('✅ URLs detectadas, listo para auditar.') }\"",
+
     "audit:sitemap": "npx cypress run --spec cypress/e2e/accesibilidad-sitemap.cy.js --browser chrome --headless",
     "audit:interactiva": "npx cypress run --spec cypress/e2e/accesibilidad-interactiva.cy.js --browser chrome --headless",
     "audit:dev": "npx cypress open --browser chrome",
     "audit:debug": "npx cypress run --spec cypress/e2e/accesibilidad-sitemap.cy.js --browser chrome --headed",
     "test:a11y": "npx cypress run --spec cypress/e2e/accesibilidad-sitemap.cy.js --browser chrome --headless",
-    "capture:evidence": "node --max-old-space-size=4096 --experimental-specifier-resolution=node scripts/capture-evidence.mjs",
-    "export:xlsx": "node --max-old-space-size=4096 --experimental-specifier-resolution=node scripts/export-to-xlsx.mjs",
+
+    "capture:evidence": "node --max-old-space-size=4096 scripts/capture-evidence.mjs",
+    "export:xlsx": "node --max-old-space-size=4096 scripts/export-to-xlsx.mjs",
     "summary": "node scripts/generate-summary.mjs $(cat auditorias/last-merged.txt)",
+
     "quality": "node scripts/quality-gate.cjs",
     "quality:soft": "node scripts/quality-gate.cjs || echo 'Quality Gate no crítico'",
+
+    "merge:auditorias": "node scripts/merge-auditorias.mjs",
+    "generate:report": "node scripts/generate-report.mjs",
+
     "audit:all": "npm run check-env && npm run crawl:auto && npm run validate:urls && npm run audit:sitemap && npm run audit:interactiva && npm run tag-origen && npm run merge:auditorias && npm run capture:evidence && npm run export:xlsx && npm run summary && npm run quality",
     "audit:full": "npm run preaudit && npm run audit:all",
     "audit:local": "CRITICAL_MAX=9999 SERIOUS_MAX=9999 npm run audit:full",
     "audit:ci": "CRITICAL_MAX=0 SERIOUS_MAX=5 npm run audit:full",
+
     "local:ci": "bash scripts/run-local-ci.sh",
-    "merge:auditorias": "node scripts/merge-auditorias.mjs",
-    "generate:report": "node scripts/generate-report.mjs"
+
+    "audit:capture": "node scripts/capture-evidence.mjs",
+    "audit:export": "node scripts/export-to-xlsx.mjs",
+    "audit:quick": "npm run audit:capture && npm run audit:export"
   },
   "dependencies": {
     "@faker-js/faker": "^9.0.0",
     "archiver": "^7.0.1",
     "axios": "^1.7.2",
-    "chalk": "^5.6.2",
+    "chalk": "^5.3.0",
     "chart.js": "^4.5.1",
     "cheerio": "^1.0.0-rc.12",
     "date-fns": "^3.6.0",
@@ -57,7 +69,7 @@
     "cypress-real-events": "^1.15.0",
     "esbuild": "^0.25.12",
     "json2csv": "^6.0.0-alpha.2",
-    "puppeteer": "^24.29.1",
+    "puppeteer": "^24.3.3",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   },
