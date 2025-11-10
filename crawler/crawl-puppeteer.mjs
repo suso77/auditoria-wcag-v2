@@ -8,6 +8,7 @@
  * ✅ Compatible con GitHub Actions, Docker y entornos CI
  * ✅ Incluye formularios, subrutas y componentes JS dinámicos
  * ✅ Detecta enlaces renderizados tras el DOMContentLoaded
+ * ✅ Limpieza automática de SITE_URL (.trim())
  * ✅ Logs y salida unificada IAAP
  * ----------------------------------------------------------
  */
@@ -24,7 +25,10 @@ const __dirname = path.dirname(__filename);
 // ===========================================================
 // 🌐 CONFIGURACIÓN GLOBAL
 // ===========================================================
-const SITE_URL = process.env.SITE_URL?.replace(/\/$/, "") || "https://example.com";
+const SITE_URL = (process.env.SITE_URL || "https://example.com")
+  .trim()
+  .replace(/\/$/, ""); // limpia espacios y barra final
+
 let MAX_DEPTH = parseInt(process.env.MAX_DEPTH || "3", 10);
 let MAX_PAGES = parseInt(process.env.MAX_PAGES || "0", 10); // 0 = auto-scaling
 const TIMEOUT = parseInt(process.env.TIMEOUT || "70000", 10);
@@ -91,7 +95,7 @@ function calculateAutoScaling(urlCountEstimate = 0) {
 // ===========================================================
 async function crawl() {
   const browser = await puppeteer.launch({
-    headless: true, // modo clásico (no “new”) — compatible con CI
+    headless: true, // modo clásico, más estable en CI/CD
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
@@ -109,7 +113,7 @@ async function crawl() {
   );
   page.setDefaultNavigationTimeout(TIMEOUT);
 
-  // Ignorar errores benignos del sitio
+  // Ignorar errores benignos
   page.on("pageerror", (err) => {
     if (err.message.includes("location is not defined")) {
       console.warn(`⚠️ Ignorado error benigno: ${err.message}`);
