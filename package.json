@@ -1,6 +1,6 @@
 {
   "name": "auditoria-wcag-v2",
-  "version": "1.6.2",
+  "version": "1.6.3",
   "type": "module",
   "description": "Auditoría de accesibilidad automatizada con Cypress + axe-core + Puppeteer + ExcelJS + GitHub Actions (IAAP/W3C) — v4.7.4 PRO",
   "scripts": {
@@ -24,7 +24,9 @@
     "test:a11y": "npx cypress run --spec cypress/e2e/accesibilidad-sitemap.cy.js --browser chrome --headless",
 
     "capture:evidence": "node --max-old-space-size=4096 scripts/capture-evidence.mjs",
+
     "export:xlsx": "node --max-old-space-size=4096 scripts/export-to-xlsx.mjs",
+    "export": "node --max-old-space-size=4096 scripts/export-to-xlsx.mjs", 
     "summary": "node scripts/generate-summary.mjs $(cat auditorias/last-merged.txt)",
 
     "quality": "node scripts/quality-gate.cjs",
@@ -102,3 +104,4 @@
   "author": "Suso (Ilúmina Media)",
   "license": "MIT"
 }
+
