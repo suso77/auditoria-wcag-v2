@@ -1,5 +1,5 @@
 /**
- * ♿ crawl-puppeteer.mjs (v4.1 IAAP PRO / WCAG 2.2)
+ * ♿ crawl-puppeteer.mjs (v4.2 IAAP PRO / WCAG 2.2)
  * ----------------------------------------------------------
  * Rastreador dinámico con Puppeteer (renderizado real del DOM)
  *
@@ -9,6 +9,7 @@
  * ✅ Control de profundidad, timeout y retardo
  * ✅ Guarda resultados únicos en scripts/urls.json
  * ✅ Logs consistentes y CI-safe
+ * ✅ Filtro de idiomas: solo /es y /en
  * ----------------------------------------------------------
  */
 
@@ -28,7 +29,7 @@ const SITE_URL = process.env.SITE_URL?.replace(/\/$/, "") || "https://example.co
 const MAX_DEPTH = parseInt(process.env.MAX_DEPTH || "3", 10);
 const TIMEOUT = parseInt(process.env.TIMEOUT || "60000", 10);
 const DELAY_BETWEEN_PAGES = parseInt(process.env.CRAWL_DELAY || "800", 10);
-const USER_AGENT = "IAAP-A11yCrawler/4.1 (+https://github.com/iaap-pro)";
+const USER_AGENT = "IAAP-A11yCrawler/4.2 (+https://github.com/iaap-pro)";
 
 console.log(`🚀 Iniciando rastreo IAAP PRO con Puppeteer`);
 console.log(`🌍 Sitio: ${SITE_URL}`);
@@ -79,7 +80,7 @@ async function crawl() {
   await page.setUserAgent(USER_AGENT);
   page.setDefaultNavigationTimeout(TIMEOUT);
 
-  // Ignorar errores benignos de scripts del sitio
+  // Ignorar errores benignos del sitio
   page.on("pageerror", (err) => {
     if (err.message.includes("location is not defined")) {
       console.warn(`⚠️ Ignorado error benigno: ${err.message}`);
@@ -129,22 +130,36 @@ async function crawl() {
 
         results.push({ url: normalized, title });
 
-        // Buscar nuevos enlaces internos
+        // ===========================================================
+        // 🧩 FILTRO DE IDIOMAS — Solo rastrear /es y /en
+        // ===========================================================
         const foundLinks = await page.$$eval("a[href]", (anchors) =>
           anchors.map((a) => a.href).filter(Boolean)
         );
 
+        const ALLOWED_LANGS = ["/es", "/en"];
+
         for (const link of foundLinks) {
           const next = normalizeUrl(link);
-          if (
-            next &&
-            next.startsWith(SITE_URL) &&
-            !visited.has(next) &&
-            !queue.find((q) => q.url === next) &&
-            !NON_HTML_EXTENSIONS.test(next)
-          ) {
-            queue.push({ url: next, depth: depth + 1 });
+
+          // Saltar si no pertenece al dominio principal
+          if (!next || !next.startsWith(SITE_URL)) continue;
+
+          // Solo URLs que incluyan /es o /en o sean la raíz
+          if (!(next === SITE_URL || ALLOWED_LANGS.some((lang) => next.includes(lang)))) {
+            continue;
           }
+
+          // Saltar duplicados o recursos no HTML
+          if (
+            visited.has(next) ||
+            queue.find((q) => q.url === next) ||
+            NON_HTML_EXTENSIONS.test(next)
+          ) {
+            continue;
+          }
+
+          queue.push({ url: next, depth: depth + 1 });
         }
 
         success = true;
@@ -204,7 +219,7 @@ function saveResults() {
   fs.writeFileSync(logFile, log);
 
   console.log("===============================================");
-  console.log("✅ Rastreo completado correctamente IAAP PRO v4.1");
+  console.log("✅ Rastreo completado correctamente IAAP PRO v4.2");
   console.log(`📁 Archivo generado: ${outputFile}`);
   console.log(`🪵 Log: ${logFile}`);
   console.log("===============================================");
