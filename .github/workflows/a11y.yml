@@ -48,7 +48,7 @@ jobs:
           echo "📦 Instalando dependencias IAAP PRO..."
           set -e
           npm_config_production=false npm install --include=dev
-          npm install --save-dev cypress cypress-axe cypress-real-events @bahmutov/cypress-esbuild-preprocessor esbuild puppeteer
+          npm install --save-dev cypress cypress-axe cypress-real-events @bahmutov/cypress-esbuild-preprocessor esbuild puppeteer pa11y fs-extra
           node -e "require.resolve('cypress'); require.resolve('cypress-axe'); require.resolve('cypress-real-events'); console.log('✅ Dependencias detectadas correctamente');"
           npx cypress verify
           mkdir -p scripts auditorias/{capturas,auditoria-sitemap,auditoria-interactiva,reportes} public/auditorias
@@ -77,21 +77,28 @@ jobs:
         with:
           command: >
             npx cypress run --e2e --browser chrome --headless
-            --config-file cypress.config.cjs
+            --config-file cypress.config.mjs
             --spec cypress/e2e/accesibilidad-sitemap.cy.js
         env:
           CYPRESS_baseUrl: ${{ env.SITE_URL }}
 
-      - name: ♿ Auditoría WCAG – Interactiva
+      - name: ♿ Auditoría WCAG – Interactiva Híbrida
         uses: cypress-io/github-action@v6
         continue-on-error: true
         with:
           command: >
             npx cypress run --e2e --browser chrome --headless
-            --config-file cypress.config.cjs
+            --config-file cypress.config.mjs
             --spec cypress/e2e/accesibilidad-interactiva.cy.js
         env:
           CYPRESS_baseUrl: ${{ env.SITE_URL }}
+
+      - name: ♿ IAAP PRO — Exportar revisiones manuales (needs_review)
+        if: always()
+        run: |
+          echo "::group::♿ Exportando revisiones manuales..."
+          node scripts/export-needs-review.mjs || echo "⚠️ No se encontraron revisiones manuales."
+          echo "::endgroup::"
 
       - name: ♿ IAAP PRO — Combinar y exportar informes
         if: always()
@@ -144,7 +151,7 @@ jobs:
           publish_branch: gh-pages
           keep_files: true
           full_commit_message: |
-            🚀 Publicación automática IAAP PRO v4.13.6
+            🚀 Publicación automática IAAP PRO v4.16-H3
             - Fecha: ${{ github.event.head_commit.timestamp }}
             - Run ID: ${{ github.run_id }}
             - Build Date: ${{ env.BUILD_DATE }}
