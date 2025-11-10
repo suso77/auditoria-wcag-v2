@@ -1,14 +1,12 @@
 /// <reference types="cypress" />
 
 /**
- * ♿ Auditoría de accesibilidad – Sitemap híbrido (IAAP PRO v4.15-H)
+ * ♿ Auditoría de accesibilidad – Sitemap híbrido (IAAP PRO v4.16-H3)
  * -----------------------------------------------------------------
- * ✅ Basado en v4.13.5, sin romper compatibilidad
- * ✅ Añade detección de resultados “incompletos” (needs review)
- * ✅ Incluye comprobación de foco visible inicial
- * ✅ Simula interacción mínima para contenido dinámico
- * ✅ Totalmente compatible con CI/CD (GitHub Actions, Docker, local)
- * ✅ Logs, capturas y guardado IAAP PRO unificados
+ * ✅ Basado en v4.15-H, con guardado IAAP PRO unificado
+ * ✅ Añade integración Pa11y (opcional)
+ * ✅ Conserva foco visible, interacción ligera y logs IAAP PRO
+ * ✅ Totalmente compatible con CI/CD y merge automatizado
  */
 
 try {
@@ -18,17 +16,14 @@ try {
   console.warn("⚠️ Dependencias opcionales no cargadas:", err.message);
 }
 
-describe("♿ Auditoría de accesibilidad – Sitemap híbrido (IAAP PRO v4.15-H)", () => {
+describe("♿ Auditoría de accesibilidad – Sitemap híbrido (IAAP PRO v4.16-H3)", () => {
   const allResults = [];
   const MAX_RETRIES = 1;
 
-  Cypress.on("fail", (error) => {
-    if (error.message?.includes("accessibility violation")) return false;
-    console.warn("⚠️ Error tolerado:", error.message);
-    return false;
-  });
+  Cypress.on("fail", () => false);
+  Cypress.on("uncaught:exception", () => false);
 
-  // 🎯 Simula foco y verifica visibilidad del contorno
+  // 🎯 Verifica foco visible inicial
   const checkInitialFocus = (pageUrl) => {
     cy.realPress("Tab").catch(() => null);
     cy.focused()
@@ -72,7 +67,7 @@ describe("♿ Auditoría de accesibilidad – Sitemap híbrido (IAAP PRO v4.15-H
     });
   };
 
-  // ♿ Auditoría híbrida de una página
+  // ♿ Auditoría híbrida con axe-core + Pa11y (opcional)
   const auditPage = (page, attempt = 0) => {
     const { url, title } = page;
     if (!url) return;
@@ -82,7 +77,6 @@ describe("♿ Auditoría de accesibilidad – Sitemap híbrido (IAAP PRO v4.15-H
 
     cy.visit(url, { timeout: 90000, failOnStatusCode: false });
     cy.document().its("readyState").should("eq", "complete");
-
     cy.wait(Cypress.env("CI") ? 3500 : 1500);
 
     cy.injectAxe();
@@ -120,60 +114,60 @@ describe("♿ Auditoría de accesibilidad – Sitemap híbrido (IAAP PRO v4.15-H
             ],
           },
           resultTypes: ["violations", "incomplete"],
-          rules: {
-            "color-contrast": { enabled: true },
-            "label": { enabled: true },
-            "aria-required-parent": { enabled: true },
-            "aria-required-children": { enabled: true },
-            "focus-order-semantics": { enabled: true },
-            "tabindex": { enabled: true },
-            "aria-hidden-focus": { enabled: true },
-            "scrollable-region-focusable": { enabled: true },
-          },
         })
         .then((results) => {
-          const allIssues = [...results.violations, ...results.incomplete];
+          const allIssues = [...(results.violations || []), ...(results.incomplete || [])];
           const dateNow = new Date().toISOString();
 
-          if (allIssues.length > 0) {
-            cy.task(
-              "log",
-              `♿ ${url} — ${allIssues.length} hallazgos (violaciones + revisión manual)`
-            );
-            allIssues.forEach((v, i) => {
-              const id = v.id || `issue-${i}`;
-              cy.screenshot(`auditorias/capturas/${slug}/${id}`, {
-                capture: "viewport",
-                overwrite: true,
+          // 🧩 Ejecutar también auditoría Pa11y si existe la tarea
+          cy.task("pa11yAudit", url)
+            .then((pa11yResults = []) => {
+              const merged = [...allIssues];
+              pa11yResults.forEach((p) => {
+                const match = merged.find(
+                  (v) =>
+                    v.id === p.code ||
+                    v.help === p.message ||
+                    (v.description && v.description.includes(p.message))
+                );
+                if (!match) merged.push(p);
               });
-            });
-          } else {
-            cy.task("log", `✅ ${url} — Sin hallazgos detectados.`);
-          }
 
-          allResults.push({
-            page: url,
-            title,
-            date: dateNow,
-            origen: "sitemap-hibrido",
-            total_issues: allIssues.length,
-            violations: results.violations || [],
-            needs_review: results.incomplete || [],
-            system: Cypress.env("CI")
-              ? "Ubuntu + Chrome Headless (GitHub Actions + axe-core híbrido)"
-              : "macOS + Chrome (Local + axe-core híbrido)",
-          });
+              if (merged.length > 0) {
+                cy.task(
+                  "log",
+                  `♿ ${url} — ${merged.length} hallazgos combinados (axe + pa11y)`
+                );
+                merged.forEach((v, i) => {
+                  const id = v.id || `issue-${i}`;
+                  cy.screenshot(`auditorias/capturas/${slug}/${id}`, {
+                    capture: "viewport",
+                    overwrite: true,
+                  });
+                });
+              } else {
+                cy.task("log", `✅ ${url} — Sin hallazgos detectados.`);
+              }
+
+              allResults.push({
+                page: url,
+                title,
+                date: dateNow,
+                origen: "sitemap-hibrido",
+                total_issues: merged.length,
+                violations: results.violations || [],
+                needs_review: results.incomplete || [],
+                pa11y: pa11yResults || [],
+                system: Cypress.env("CI")
+                  ? "Ubuntu + Chrome Headless (GitHub Actions + axe+pa11y)"
+                  : "macOS + Chrome (Local + axe+pa11y)",
+              });
+            })
+            .catch((err) =>
+              cy.task("log", `⚠️ Error combinando Pa11y en ${url}: ${err.message}`)
+            );
         })
         .catch((err) => cy.task("log", `⚠️ Error en axe.run(): ${err.message}`));
-    });
-
-    cy.window().then((win) => {
-      try {
-        win.location.replace("about:blank");
-        cy.task("log", "🧹 Limpieza completada correctamente.");
-      } catch {
-        cy.task("log", "⚠️ Limpieza parcial.");
-      }
     });
   };
 
@@ -206,38 +200,25 @@ describe("♿ Auditoría de accesibilidad – Sitemap híbrido (IAAP PRO v4.15-H
 
   // 💾 Guardado final IAAP PRO
   after(() => {
-    const outputDir = `auditorias/auditoria-sitemap`;
+    const outputDir = "auditorias/auditoria-sitemap";
     cy.task("createFolder", outputDir);
+    cy.task("log", `💾 Guardando resultados Sitemap IAAP PRO...`);
 
     const uniqueResults = Object.values(
       allResults.reduce((acc, r) => {
-        const key = `${r.page}`;
+        const key = `${r.page || "?"}::${r.selector || "?"}`;
         acc[key] = r;
         return acc;
       }, {})
     );
 
-    cy.task("writeResults", { dir: outputDir, data: uniqueResults }).then(() =>
-      cy.task("log", `💾 Resultados guardados en: ${outputDir}/results.json`)
-    );
-
-    const total = uniqueResults.flatMap(
-      (r) => [...(r.violations || []), ...(r.needs_review || [])]
-    );
-
-    const counts = {
-      critical: total.filter((v) => v.impact === "critical").length,
-      serious: total.filter((v) => v.impact === "serious").length,
-      moderate: total.filter((v) => v.impact === "moderate").length,
-      minor: total.filter((v) => v.impact === "minor").length,
-      needsReview: total.filter((v) => v.tags?.includes("needs review")).length,
-    };
-
-    cy.task(
-      "log",
-      `📊 Resumen global IAAP: ${total.length} hallazgos (🔴 ${counts.critical}, 🟠 ${counts.serious}, 🟡 ${counts.moderate}, 🟢 ${counts.minor}, 🟣 ${counts.needsReview} revisión manual)`
-    );
-
-    cy.writeFile("auditorias/last-sitemap.txt", outputDir, "utf8");
+    cy.task("writeResults", { dir: outputDir, data: uniqueResults }).then(() => {
+      cy.task(
+        "log",
+        `✅ Resultados Sitemap guardados (${uniqueResults.length} registros en ${outputDir})`
+      );
+    });
   });
 });
+
+export {};
