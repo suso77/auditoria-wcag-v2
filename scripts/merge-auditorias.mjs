@@ -1,39 +1,37 @@
 /**
- * ♿ IAAP PRO v4.16-H3 — Merge de auditorías de accesibilidad (Estable)
- * --------------------------------------------------------------------
+ * ♿ IAAP PRO v4.44 — Merge de auditorías de accesibilidad (FINAL TOTAL)
+ * ---------------------------------------------------------------------
  * Une los resultados de:
  *  - auditorias/auditoria-sitemap/results.json
  *  - auditorias/auditoria-interactiva/results.json
- *  - auditorias/auditoria-interactiva/results-batch-*.json (si existen)
- *  - auditorias/pa11y-results.json (HTML_CodeSniffer)
- *  - auditorias/needs_review.json (axe-core)
+ *  - auditorias/auditoria-interactiva/results-batch-*.json
+ *  - auditorias/pa11y-results.json
+ *  - auditorias/needs_review.json
  *
  * Genera:
  *  - auditorias/reportes/merged-results.json
  *  - auditorias/reportes/merged-summary.md
  *  - auditorias/results-merged-[timestamp].json (compatibilidad)
+ * ---------------------------------------------------------------------
+ * ✅ IAAP PRO compatible con v4.16-H3, 4.4x y flujo híbrido Cypress
  */
 
 import fs from "fs";
 import path from "path";
 
 // =====================================================
-// 📁 Configuración de rutas
+// 📁 Configuración
 // =====================================================
-const ROOT_DIR = process.cwd();
-const AUDITORIAS_DIR = path.join(ROOT_DIR, "auditorias");
+const ROOT = process.cwd();
+const AUDITORIAS_DIR = path.join(ROOT, "auditorias");
 const OUTPUT_DIR = path.join(AUDITORIAS_DIR, "reportes");
+if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+
 const MERGED_FILE = path.join(OUTPUT_DIR, "merged-results.json");
 const SUMMARY_FILE = path.join(OUTPUT_DIR, "merged-summary.md");
 
-// Crear carpeta de salida si no existe
-if (!fs.existsSync(OUTPUT_DIR)) {
-  fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-  console.log(`📁 Carpeta creada: ${OUTPUT_DIR}`);
-}
-
 // =====================================================
-// 📦 Fuentes base de resultados
+// 📦 Fuentes principales
 // =====================================================
 const FUENTES = [
   "auditoria-sitemap/results.json",
@@ -46,30 +44,25 @@ let merged = [];
 let total = 0;
 
 // =====================================================
-// 🔍 Leer y unir resultados base
+// 🔍 Cargar resultados base
 // =====================================================
-for (const fuente of FUENTES) {
-  const filePath = path.join(AUDITORIAS_DIR, fuente);
-  if (fs.existsSync(filePath)) {
-    try {
-      const raw = fs.readFileSync(filePath, "utf8");
-      if (!raw.trim()) continue;
+for (const f of FUENTES) {
+  const file = path.join(AUDITORIAS_DIR, f);
+  if (!fs.existsSync(file)) {
+    console.warn(`⚠️ No se encontró ${f}, se omite.`);
+    continue;
+  }
 
-      if (!raw.trim().startsWith("[") && !raw.trim().startsWith("{")) {
-        console.warn(`⚠️ ${fuente} no parece un JSON válido, se omite.`);
-        continue;
-      }
-
-      const data = JSON.parse(raw);
-      const arr = Array.isArray(data) ? data : [data];
-      merged.push(...arr);
-      total += arr.length;
-      console.log(`📥 ${arr.length} resultados añadidos desde ${fuente}`);
-    } catch (err) {
-      console.error(`❌ Error al leer ${fuente}: ${err.message}`);
-    }
-  } else {
-    console.warn(`⚠️ No se encontró ${fuente}, se omitirá.`);
+  try {
+    const raw = fs.readFileSync(file, "utf8");
+    if (!raw.trim()) continue;
+    const data = JSON.parse(raw);
+    const arr = Array.isArray(data) ? data : [data];
+    merged.push(...arr);
+    total += arr.length;
+    console.log(`📥 ${arr.length} resultados añadidos desde ${f}`);
+  } catch (err) {
+    console.warn(`⚠️ Error leyendo ${f}: ${err.message}`);
   }
 }
 
@@ -81,20 +74,17 @@ if (fs.existsSync(batchDir)) {
   const batchFiles = fs
     .readdirSync(batchDir)
     .filter((f) => f.startsWith("results-batch-") && f.endsWith(".json"));
-  if (batchFiles.length > 0) {
-    console.log(`🧩 Detectados ${batchFiles.length} archivos de lotes paralelos.`);
-    for (const f of batchFiles) {
-      try {
-        const raw = fs.readFileSync(path.join(batchDir, f), "utf8");
-        if (!raw.trim()) continue;
-        const data = JSON.parse(raw);
-        const arr = Array.isArray(data) ? data : [data];
-        merged.push(...arr);
-        total += arr.length;
-        console.log(`📦 ${arr.length} resultados añadidos desde ${f}`);
-      } catch (err) {
-        console.warn(`⚠️ No se pudo leer ${f}: ${err.message}`);
-      }
+
+  for (const file of batchFiles) {
+    try {
+      const raw = fs.readFileSync(path.join(batchDir, file), "utf8");
+      const data = JSON.parse(raw);
+      const arr = Array.isArray(data) ? data : [data];
+      merged.push(...arr);
+      total += arr.length;
+      console.log(`🧩 Añadidos ${arr.length} resultados desde ${file}`);
+    } catch (err) {
+      console.warn(`⚠️ Error leyendo lote ${file}: ${err.message}`);
     }
   }
 }
@@ -105,37 +95,34 @@ if (merged.length === 0) {
 }
 
 // =====================================================
-// 🔗 Normalizar estructura IAAP PRO (violations + needs_review + pa11y)
+// 🔗 Normalizar estructura IAAP PRO
 // =====================================================
-const normalizados = merged.map((item) => {
-  const base = {
-    origen: item.origen || "combinado",
-    page: item.page || item.url || "(sin URL)",
-    violations: Array.isArray(item.violations) ? item.violations : [],
-    needs_review: Array.isArray(item.needs_review) ? item.needs_review : [],
-    pa11y: Array.isArray(item.pa11y) ? item.pa11y : [],
-  };
+const normalizados = merged.map((item) => ({
+  origen: item.origen || inferOrigen(item),
+  page: item.page || item.url || "(sin URL)",
+  violations: Array.isArray(item.violations) ? item.violations : [],
+  needs_review: Array.isArray(item.needs_review) ? item.needs_review : [],
+  pa11y: Array.isArray(item.pa11y)
+    ? item.pa11y
+    : Array.isArray(item.results)
+    ? item.results
+    : [],
+}));
 
-  // Integrar si Pa11y o Needs Review están en estructuras separadas
-  if (item.results && Array.isArray(item.results)) {
-    base.pa11y.push(...item.results);
-  }
-  if (item.review && Array.isArray(item.review)) {
-    base.needs_review.push(...item.review);
-  }
-
-  return base;
-});
+function inferOrigen(item) {
+  if (item.url?.includes("interactiva")) return "interactiva";
+  if (item.url?.includes("sitemap")) return "sitemap";
+  return "combinado";
+}
 
 // =====================================================
-// 🧩 Fusionar por página (manteniendo todos los tipos)
+// 🧩 Fusionar por página
 // =====================================================
 const mergedByPage = {};
 for (const r of normalizados) {
   const key = r.page;
-  if (!mergedByPage[key]) {
-    mergedByPage[key] = { ...r };
-  } else {
+  if (!mergedByPage[key]) mergedByPage[key] = { ...r };
+  else {
     mergedByPage[key].violations.push(...r.violations);
     mergedByPage[key].needs_review.push(...r.needs_review);
     mergedByPage[key].pa11y.push(...r.pa11y);
@@ -145,7 +132,7 @@ for (const r of normalizados) {
 const finalResults = Object.values(mergedByPage);
 
 // =====================================================
-// 🧩 Eliminar duplicados dentro de cada tipo
+// 🧩 Deduplicar
 // =====================================================
 for (const item of finalResults) {
   const dedup = (arr) =>
@@ -162,24 +149,16 @@ for (const item of finalResults) {
 }
 
 // =====================================================
-// ✅ Guardar archivo combinado
+// 💾 Guardar merged-results.json
 // =====================================================
-fs.writeFileSync(MERGED_FILE, JSON.stringify(finalResults, null, 2));
+fs.writeFileSync(MERGED_FILE, JSON.stringify(finalResults, null, 2), "utf8");
 console.log(`✅ Archivo combinado creado en: ${MERGED_FILE}`);
-console.log(
-  `📊 Total combinado: ${finalResults.length} páginas (${total} entradas originales)`
-);
+console.log(`📊 Total combinado: ${finalResults.length} páginas (${total} entradas)`);
 
 // =====================================================
-// 📊 Generar resumen Markdown IAAP PRO
+// 📈 Generar resumen Markdown
 // =====================================================
-const byImpact = {
-  critical: 0,
-  serious: 0,
-  moderate: 0,
-  minor: 0,
-  unclassified: 0,
-};
+const byImpact = { critical: 0, serious: 0, moderate: 0, minor: 0, unclassified: 0 };
 let pa11yCount = 0;
 let needsReviewCount = 0;
 
@@ -192,14 +171,11 @@ finalResults.forEach((item) => {
   pa11yCount += item.pa11y?.length || 0;
 });
 
-let summary = `# ♿ Informe Consolidado IAAP PRO v4.16-H3\n\n`;
-summary += `📅 Fecha de generación: ${new Date()
-  .toISOString()
-  .replace("T", " ")
-  .split(".")[0]}\n\n`;
-summary += `📊 **Total de páginas combinadas:** ${finalResults.length}\n`;
-summary += `🔍 **Revisiones manuales:** ${needsReviewCount}\n`;
-summary += `🧪 **Resultados Pa11y:** ${pa11yCount}\n\n`;
+let summary = `# ♿ Informe Consolidado IAAP PRO v4.44 (Final)\n\n`;
+summary += `📅 Fecha: ${new Date().toLocaleString("es-ES")}\n\n`;
+summary += `📊 **Total de páginas:** ${finalResults.length}\n`;
+summary += `🟡 **Revisiones manuales:** ${needsReviewCount}\n`;
+summary += `🔵 **Resultados Pa11y:** ${pa11yCount}\n\n`;
 
 summary += `| Severidad | Nº de violaciones |\n|------------|------------------|\n`;
 for (const [impact, count] of Object.entries(byImpact)) {
@@ -217,16 +193,7 @@ for (const item of finalResults) {
   if (totalV === 0) {
     summary += `- ✅ Sin violaciones detectadas.\n\n`;
   } else {
-    item.violations?.forEach(
-      (v) => (summary += `- **${v.id}** (${v.impact || "?"}) → ${v.help || v.description}\n`)
-    );
-    item.needs_review?.forEach(
-      (v) => (summary += `- 🟡 (Review) **${v.id}** → ${v.help || v.description}\n`)
-    );
-    item.pa11y?.forEach(
-      (v) => (summary += `- 🔵 (Pa11y) **${v.code || v.id}** → ${v.message}\n`)
-    );
-    summary += `\n`;
+    summary += `- axe-core: ${item.violations.length} | Pa11y: ${item.pa11y.length} | Review: ${item.needs_review.length}\n\n`;
   }
 }
 
@@ -234,23 +201,11 @@ fs.writeFileSync(SUMMARY_FILE, summary, "utf8");
 console.log(`📝 Resumen Markdown generado: ${SUMMARY_FILE}`);
 
 // =====================================================
-// 💾 Registrar ruta final del merge
+// 🪶 Copias adicionales
 // =====================================================
+const LEGACY_COPY = path.join(AUDITORIAS_DIR, `results-merged-${Date.now()}.json`);
+fs.copyFileSync(MERGED_FILE, LEGACY_COPY);
 fs.writeFileSync(path.join(AUDITORIAS_DIR, "last-merged.txt"), MERGED_FILE, "utf8");
-console.log("💾 Ruta registrada en auditorias/last-merged.txt");
 
-// =====================================================
-// 🧠 Copia de compatibilidad (v4.13.x)
-// =====================================================
-try {
-  const legacyCopy = path.join(
-    AUDITORIAS_DIR,
-    `results-merged-${Date.now()}.json`
-  );
-  fs.copyFileSync(MERGED_FILE, legacyCopy);
-  console.log(`🧩 Copia de compatibilidad creada: ${legacyCopy}`);
-} catch (err) {
-  console.warn(`⚠️ No se pudo crear la copia de compatibilidad: ${err.message}`);
-}
-
-console.log("🎯 Merge completado con éxito (IAAP PRO v4.16-H3)");
+console.log(`🧩 Copia de compatibilidad creada: ${LEGACY_COPY}`);
+console.log("🎯 Merge completado correctamente (IAAP PRO v4.44-FINAL)");

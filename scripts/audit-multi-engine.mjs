@@ -1,169 +1,193 @@
 /**
- * ♿ audit-multi-engine.mjs (IAAP PRO v4.1.1)
+ * ♿ audit-multi-engine.mjs (IAAP PRO v4.16-H4 - ESM Compatible)
  * ------------------------------------------------------------
- * ✅ Ejecuta auditorías con Pa11y + axe-core + WAVE (opcional)
- * ✅ Compatible con Node 18+ / ESM (sin top-level await)
- * ✅ Devuelve resultados estructurados para Cypress
- * ✅ Incluye mergeResults() para combinar múltiples auditorías
- * ✅ Elimina warnings de import.meta / esbuild
+ * ✅ Ejecuta auditorías Pa11y + axe-core (paralelo por URL)
+ * ✅ Carga URLs desde scripts/urls.json
+ * ✅ Guarda resultados en auditorias/pa11y-results.json
+ * ✅ Compatible con Node 18+, GitHub Actions, Docker
+ * ✅ Logs a color, tiempos y resumen IAAP PRO
+ * ✅ Soluciona el error “require is not defined” en ESM
+ * ✅ Cierre limpio del navegador y compatibilidad total CI
  * ------------------------------------------------------------
  */
 
-import pa11y from "pa11y";
-import { execSync } from "child_process";
-import { readFileSync, existsSync } from "fs";
+import fs from "fs";
 import path from "path";
-import { fileURLToPath, pathToFileURL } from "url";
-import { dirname } from "path";
+import pa11y from "pa11y";
+import chalk from "chalk";
+import { fileURLToPath } from "url";
+import { createRequire } from "module";
 
-// ------------------------------------------------------------------
-// Compatibilidad universal con ESM/CJS para Cypress + esbuild
-// ------------------------------------------------------------------
-const metaUrl =
-  typeof import.meta !== "undefined" && import.meta.url
-    ? import.meta.url
-    : pathToFileURL(process.cwd()).href;
-
-const __filename = fileURLToPath(metaUrl);
-const __dirname = dirname(__filename);
+const require = createRequire(import.meta.url);
 
 // ================================================================
-// 🧩 Ejecuta Pa11y sobre una URL
+// 🔧 Configuración base
+// ================================================================
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const urlsFile = path.join(__dirname, "../scripts/urls.json");
+const outputDir = path.join(__dirname, "../auditorias");
+const outputPath = path.join(outputDir, "pa11y-results.json");
+if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+
+// ================================================================
+// 🧩 Auditoría con Pa11y (HTML_CodeSniffer)
 // ================================================================
 async function runPa11y(url) {
   try {
     const results = await pa11y(url, {
       standard: "WCAG2AA",
-      runners: ["axe", "htmlcs"],
-      log: { debug: false, error: false, info: false },
       timeout: 60000,
+      runners: ["htmlcs"],
       includeNotices: true,
       includeWarnings: true,
+      log: {
+        debug: () => {},
+        error: () => {},
+        info: () => {},
+      },
     });
 
-    return results.issues.map((issue) => ({
+    return results.issues.map((i) => ({
       engine: "pa11y",
-      code: issue.code,
-      type: issue.type,
-      message: issue.message,
-      selector: issue.selector || "N/A",
-      context: issue.context || "",
+      code: i.code,
+      type: i.type,
+      message: i.message,
+      selector: i.selector || "",
+      context: i.context || "",
+      wcag: i.code?.match(/WCAG\d+\.[0-9.]+/)?.[0] || "N/A",
     }));
   } catch (err) {
-    console.error(`❌ Error ejecutando Pa11y en ${url}:`, err.message);
-    return [
-      {
-        engine: "pa11y",
-        type: "error",
-        message: `Pa11y falló en ${url}: ${err.message}`,
-        selector: "N/A",
-      },
-    ];
+    console.log(chalk.red(`❌ Pa11y falló en ${url}: ${err.message}`));
+    return [];
   }
 }
 
 // ================================================================
-// 🧩 Ejecuta axe-core con Puppeteer (aislado)
+// 🧠 Auditoría con axe-core (vía Puppeteer, ESM + Node >=18)
 // ================================================================
 async function runAxe(url) {
+  let browser;
   try {
-    // ✅ Import dinámico (evita bundling de Puppeteer en Cypress)
     const puppeteerModule = await import("puppeteer");
     const puppeteer = puppeteerModule.default || puppeteerModule;
 
-    const browser = await puppeteer.launch({ headless: true });
+    browser = await puppeteer.launch({
+      headless: "new",
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-gpu",
+        "--disable-dev-shm-usage",
+      ],
+    });
+
     const page = await browser.newPage();
     await page.goto(url, { waitUntil: "networkidle2", timeout: 60000 });
 
+    // ✅ Cargar axe-core correctamente en entorno ESM
     const axePath = require.resolve("axe-core");
     await page.addScriptTag({ path: axePath });
 
+    // ♿ Ejecutar auditoría en el contexto del navegador
     const results = await page.evaluate(async () => {
-      return await axe.run();
+      const axeConfig = {
+        runOnly: {
+          type: "tag",
+          values: ["wcag2a", "wcag2aa", "wcag21aa", "best-practice"],
+        },
+        resultTypes: ["violations"],
+      };
+
+      // Esperar un poco para que todo el DOM esté listo
+      await new Promise((r) => setTimeout(r, 500));
+      return await axe.run(document, axeConfig);
     });
 
-    await browser.close();
-
     return results.violations.map((v) => ({
-      engine: "axe",
+      engine: "axe-core",
       id: v.id,
-      impact: v.impact,
+      impact: v.impact || "unknown",
       description: v.description,
       help: v.help,
-      nodes: v.nodes.length,
+      helpUrl: v.helpUrl,
+      nodes: v.nodes?.length || 0,
+      wcag: v.tags?.find((t) => t.startsWith("wcag")) || "N/A",
     }));
   } catch (err) {
-    console.warn(`⚠️ axe-core no disponible o falló: ${err.message}`);
+    console.log(chalk.yellow(`⚠️ axe-core falló en ${url}: ${err.message}`));
     return [];
+  } finally {
+    if (browser) await browser.close().catch(() => {});
   }
 }
 
 // ================================================================
-// 🧩 Ejecuta WAVE CLI (opcional)
+// 🚀 Ejecución principal IAAP PRO
 // ================================================================
-async function runWave(url) {
-  try {
-    const wavePath = path.join(__dirname, "wave-cli.json");
-    if (!existsSync(wavePath)) {
-      console.warn("⚠️ WAVE CLI no configurado. Saltando análisis WAVE.");
-      return [];
-    }
-
-    const result = execSync(`npx wave ${url} --reportType json`).toString();
-    const parsed = JSON.parse(result);
-
-    return parsed.issues.map((i) => ({
-      engine: "wave",
-      type: i.type,
-      description: i.description,
-      selector: i.selector,
-    }));
-  } catch (err) {
-    console.warn(`⚠️ WAVE no se ejecutó: ${err.message}`);
-    return [];
+async function main() {
+  console.log(chalk.bold.cyan("\n♿ Auditoría Multi-Engine – IAAP PRO v4.16-H4"));
+  if (!fs.existsSync(urlsFile)) {
+    console.log(chalk.red(`❌ No se encontró ${urlsFile}`));
+    process.exit(1);
   }
+
+  const urls = JSON.parse(fs.readFileSync(urlsFile, "utf8")).filter((u) => u && u.url);
+  if (urls.length === 0) {
+    console.log(chalk.yellow("⚠️ No hay URLs válidas en scripts/urls.json"));
+    process.exit(0);
+  }
+
+  console.log(chalk.blue(`🌍 ${urls.length} URLs cargadas para auditoría.`));
+
+  const allResults = [];
+  const startGlobal = Date.now();
+
+  for (let i = 0; i < urls.length; i++) {
+    const { url } = urls[i];
+    console.log(chalk.white(`\n🧩 [${i + 1}/${urls.length}] Auditando:`), chalk.green(url));
+
+    const start = Date.now();
+    const [pa11yResults, axeResults] = await Promise.all([
+      runPa11y(url),
+      runAxe(url),
+    ]);
+
+    const duration = ((Date.now() - start) / 1000).toFixed(1);
+    const total = pa11yResults.length + axeResults.length;
+
+    console.log(
+      total > 0
+        ? chalk.yellow(`✅ ${total} hallazgos combinados (${duration}s)`)
+        : chalk.green(`✅ Sin hallazgos (${duration}s)`)
+    );
+
+    allResults.push({
+      page: url,
+      total_issues: total,
+      issues: [...pa11yResults, ...axeResults],
+      date: new Date().toISOString(),
+      origen: "multi-engine",
+      system: "Pa11y + axe-core (IAAP PRO)",
+    });
+  }
+
+  const durationTotal = ((Date.now() - startGlobal) / 1000 / 60).toFixed(1);
+  fs.writeFileSync(outputPath, JSON.stringify(allResults, null, 2), "utf8");
+
+  console.log(chalk.bold.green(`\n💾 Resultados guardados en ${outputPath}`));
+  console.log(
+    chalk.bold.magenta(`📊 Total páginas: ${allResults.length} | Tiempo total: ${durationTotal} min`)
+  );
+
+  const totalIssues = allResults.reduce((a, r) => a + r.total_issues, 0);
+  console.log(chalk.bold.cyan(`🎯 Auditoría completa: ${totalIssues} hallazgos totales\n`));
 }
 
 // ================================================================
-// 🚀 Motor unificado — combina resultados
+// 🏁 Ejecutar directamente
 // ================================================================
-export async function runPa11yAudit(url, options = {}) {
-  const start = Date.now();
-  console.log(`🚀 Iniciando auditoría múltiple para: ${url}`);
-
-  const engines = options.engines || ["pa11y", "axe"];
-  let results = [];
-
-  if (engines.includes("pa11y")) {
-    const pa11yResults = await runPa11y(url);
-    results = results.concat(pa11yResults);
-  }
-
-  if (engines.includes("axe")) {
-    const axeResults = await runAxe(url);
-    results = results.concat(axeResults);
-  }
-
-  if (engines.includes("wave")) {
-    const waveResults = await runWave(url);
-    results = results.concat(waveResults);
-  }
-
-  const duration = ((Date.now() - start) / 1000).toFixed(1);
-  console.log(`✅ Auditoría completada (${results.length} issues, ${duration}s)`);
-
-  return results;
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((err) => console.error(chalk.red(`❌ Error general: ${err.message}`)));
 }
-
-// ================================================================
-// 🧩 mergeResults — combina resultados de múltiples auditorías
-// ================================================================
-export function mergeResults(resultsArray) {
-  if (!Array.isArray(resultsArray)) return [];
-  return resultsArray.flatMap((r) => (Array.isArray(r) ? r : [r]));
-}
-
-
-
-
 
