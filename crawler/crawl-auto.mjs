@@ -1,16 +1,19 @@
 /**
- * ♿ crawl-auto.mjs (v4.1 IAAP PRO / WCAG 2.2)
+ * ♿ crawl-auto.mjs (v4.4 IAAP PRO / WCAG 2.2)
  * --------------------------------------------------------
- * Rastreo automático inteligente:
+ * Rastreo automático inteligente y autolimpiante:
  *  - Detecta si el sitio es estático o SPA (React, Vue, Webflow, etc.)
  *  - Usa automáticamente el crawler adecuado:
  *      → crawl.js (Cheerio, rápido, estático)
  *      → crawl-puppeteer.mjs (renderizado real)
+ *  - Elimina logs antiguos y fuerza nuevo rastreo siempre
  *
  * ✅ Detección automática de frameworks JS
  * ✅ Fallback seguro (si uno falla, usa el otro)
+ * ✅ Limpieza automática de logs (>7 días)
  * ✅ Compatible con CI/CD (GitHub Actions, Docker)
  * ✅ Unifica estructura de salida y logs IAAP
+ * ✅ Totalmente “fire and forget”
  * --------------------------------------------------------
  */
 
@@ -19,7 +22,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { execSync } from "child_process";
 import axios from "axios";
-import { format } from "date-fns";
+import { format, subDays, parseISO } from "date-fns";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,14 +33,54 @@ const SITE_URL = process.env.SITE_URL?.replace(/\/$/, "") || "https://example.co
 const urlsPath = path.join(ROOT, "scripts", "urls.json");
 const logDir = path.join(ROOT, "auditorias");
 const logFile = path.join(logDir, `${format(new Date(), "yyyy-MM-dd")}-crawl-auto.log`);
+const LOG_RETENTION_DAYS = 7; // 🗑️ Días antes de borrar logs antiguos
 
 fs.mkdirSync(path.dirname(urlsPath), { recursive: true });
 fs.mkdirSync(logDir, { recursive: true });
 
 console.log("============================================================");
-console.log(`🚀 IAAP PRO – Rastreo automático (v4.1)`);
+console.log(`🚀 IAAP PRO – Rastreo automático (v4.4)`);
 console.log(`🌍 Dominio: ${SITE_URL}`);
 console.log("============================================================");
+
+// =============================================================
+// 🧹 LIMPIEZA AUTOMÁTICA DE ARCHIVOS ANTERIORES
+// =============================================================
+if (fs.existsSync(urlsPath)) {
+  try {
+    fs.unlinkSync(urlsPath);
+    console.log("🧹 Eliminado scripts/urls.json anterior para forzar nuevo rastreo.");
+  } catch (e) {
+    console.warn("⚠️ No se pudo eliminar scripts/urls.json:", e.message);
+  }
+}
+
+// =============================================================
+// 🗑️ LIMPIEZA DE LOGS ANTIGUOS
+// =============================================================
+function cleanOldLogs() {
+  try {
+    const files = fs.readdirSync(logDir);
+    const threshold = subDays(new Date(), LOG_RETENTION_DAYS);
+
+    files.forEach((file) => {
+      if (!file.endsWith(".log")) return;
+
+      const match = file.match(/^(\d{4}-\d{2}-\d{2})/);
+      if (!match) return;
+
+      const fileDate = parseISO(match[1]);
+      if (fileDate < threshold) {
+        fs.unlinkSync(path.join(logDir, file));
+        console.log(`🗑️ Log antiguo eliminado: ${file}`);
+      }
+    });
+  } catch (err) {
+    console.warn("⚠️ No se pudieron limpiar logs antiguos:", err.message);
+  }
+}
+
+cleanOldLogs();
 
 // =============================================================
 // 🔍 Detectar tipo de sitio (SPA vs estático)
@@ -67,7 +110,7 @@ async function detectFramework() {
     }
 
     if (html.includes("<script") && html.includes("fetch(")) {
-      console.log("⚙️  Código dinámico detectado → se usará Puppeteer");
+      console.log("⚙️ Código dinámico detectado → se usará Puppeteer");
       return "puppeteer";
     }
 
@@ -147,8 +190,9 @@ async function detectFramework() {
 
   fs.appendFileSync(logFile, summary + "\n\n");
   console.log("============================================================");
-  console.log("✅ Rastreo automático completado IAAP PRO v4.1");
+  console.log("✅ Rastreo automático completado IAAP PRO v4.4");
   console.log(`📊 URLs encontradas: ${data.length}`);
   console.log(`🪵 Log: ${logFile}`);
   console.log("============================================================");
 })();
+
