@@ -1,18 +1,18 @@
 /**
- * ♿ export-to-xlsx.mjs — IAAP PRO v4.35 (Stable Dashboard + Evidencias)
+ * ♿ export-to-xlsx.mjs — IAAP PRO v4.17-H1 (Full Stable + Pa11y + Revisiones manuales + Capturas inteligentes)
  * -------------------------------------------------
- * Exporta los resultados combinados (merged-results.json o results-merged.json)
- * en un informe Excel profesional IAAP con tres hojas:
+ * Exporta los resultados combinados (axe + pa11y + needs_review)
+ * en un informe Excel profesional IAAP PRO con tres hojas:
  *  - 📄 Sitemap (violaciones del rastreo)
  *  - ⚙️ Interactiva (violaciones de componentes)
- *  - 📊 Resumen (severidades y criterios con formato dashboard IAAP)
+ *  - 📊 Resumen (totales globales + severidades + criterios)
  *
- * ✅ Enlaces activos (URL / W3C / Captura)
- * ✅ Textos IAAP/W3C en español (resumen / actual / esperado)
- * ✅ Criterios limpios sin ID técnico
- * ✅ Búsqueda automática de evidencias
+ * ✅ Compatible con merged-results.json / results-merged.json
+ * ✅ Añade columna “Tipo” (WCAG / Revisión manual / Pa11y)
+ * ✅ Detección inteligente de capturas
+ * ✅ Enlaces funcionales (URL / W3C / Evidencias)
  * ✅ Colores y formato IAAP PRO
- * ✅ Total compatibilidad con pipeline GitHub Actions
+ * ✅ 100% compatible con GitHub Actions / Docker / CI
  */
 
 import fs from "fs";
@@ -81,11 +81,7 @@ function obtenerCriterioIAAP(v) {
 
 function generarResumen(v) {
   const criterio = obtenerCriterioIAAP(v);
-  return (
-    criterio.resumen ||
-    v.help ||
-    `Elemento que incumple el criterio ${criterio.id} según las pautas WCAG.`
-  );
+  return criterio.resumen || v.help || `Elemento que incumple el criterio ${criterio.id}.`;
 }
 
 function generarResultadoActual(v) {
@@ -93,7 +89,7 @@ function generarResultadoActual(v) {
   if (v.id === "color-contrast") {
     const match = v.description?.match(/contrast of ([\d.]+)/);
     const ratio = match ? match[1] : "—";
-    return `El contraste detectado es ${ratio}:1, inferior al mínimo 4.5:1 exigido por WCAG 2.1 nivel AA. Esto afecta la legibilidad para usuarios con baja visión o daltonismo.`;
+    return `El contraste detectado es ${ratio}:1, inferior al mínimo 4.5:1 exigido por WCAG 2.1 nivel AA.`;
   }
   return (
     v.description ||
@@ -103,10 +99,7 @@ function generarResultadoActual(v) {
 
 function generarResultadoEsperado(v) {
   const criterio = obtenerCriterioIAAP(v);
-  return (
-    criterio.esperado ||
-    `El contenido debe cumplir el criterio ${criterio.id} de las WCAG. Ver detalles en el enlace W3C.`
-  );
+  return criterio.esperado || `Debe cumplir el criterio ${criterio.id} de las WCAG.`;
 }
 
 function generarRecomendacion(v) {
@@ -126,6 +119,7 @@ const columnasBase = [
   { header: "ID", key: "id", width: 20 },
   { header: "Criterio WCAG", key: "criterio", width: 40 },
   { header: "Nivel", key: "nivel", width: 10 },
+  { header: "Tipo", key: "tipo", width: 18 },
   { header: "Severidad", key: "impact", width: 12 },
   { header: "Resumen", key: "resumen", width: 60 },
   { header: "Elemento afectado", key: "selector", width: 60 },
@@ -149,7 +143,7 @@ hojaInteractiva.columns = columnasBase;
   const header = hoja.getRow(1);
   header.font = { bold: true };
   header.alignment = { vertical: "middle", horizontal: "center" };
-  hoja.autoFilter = { from: "A1", to: "M1" };
+  hoja.autoFilter = { from: "A1", to: "N1" };
 });
 
 // ===========================================================
@@ -157,85 +151,108 @@ hojaInteractiva.columns = columnasBase;
 // ===========================================================
 const severidades = {};
 const criterios = {};
+let totalWCAG = 0;
+let totalReview = 0;
+let totalPa11y = 0;
 
 for (const item of data) {
   const origen = item.origen || "sitemap";
   const destino = origen === "interactiva" ? hojaInteractiva : hojaSitemap;
   const pageUrl = item.page || item.url || "(sin URL)";
 
+  // WCAG normales
   for (const v of item.violations || []) {
-    const criterio = obtenerCriterioIAAP(v);
-    const resumen = generarResumen(v);
-    const actual = generarResultadoActual(v);
-    const esperado = generarResultadoEsperado(v);
-    const recomendacion = generarRecomendacion(v);
-    const selector = v.nodes?.[0]?.target?.join(", ") || "(sin selector)";
-    const criterioLimpio = criterio.criterio || criterio.id || "Criterio WCAG no identificado";
+    addRow(v, destino, "WCAG", pageUrl);
+    totalWCAG++;
+  }
 
-    // ✅ Nueva lógica de búsqueda automática de capturas
-    let capturaLink = "Sin captura disponible";
-    let capturePath = item.capturePath || v.capturePath || null;
+  // needs_review
+  for (const v of item.needs_review || []) {
+    addRow(v, destino, "Revisión manual", pageUrl);
+    totalReview++;
+  }
 
-    if (!capturePath) {
-      const posiblesDirs = ["sitemap", "interactiva"];
-      for (const dir of posiblesDirs) {
-        const folder = path.join(AUDITORIAS_DIR, "capturas", dir);
-        if (fs.existsSync(folder)) {
-          const found = fs
-            .readdirSync(folder)
-            .find((f) => f.toLowerCase().includes(v.id.toLowerCase()) && f.endsWith(".png"));
-          if (found) {
-            capturePath = path.join("capturas", dir, found);
-            break;
-          }
-        }
-      }
-    }
-
-    if (capturePath && fs.existsSync(path.join(AUDITORIAS_DIR, capturePath))) {
-      capturaLink = {
-        text: "Evidencia",
-        hyperlink: `file://${path.join(AUDITORIAS_DIR, capturePath)}`,
-      };
-    }
-
-    const urlCell =
-      pageUrl && pageUrl.startsWith("http")
-        ? { text: pageUrl, hyperlink: pageUrl }
-        : pageUrl;
-
-    const row = destino.addRow({
-      id: v.id,
-      criterio: criterioLimpio,
-      nivel: criterio.nivel || "AA",
-      impact: v.impact || "",
-      resumen,
-      selector,
-      url: urlCell,
-      actual,
-      esperado,
-      recomendacion,
-      captura: capturaLink,
-      system: "macOS Sonoma 14.7 + Chrome 129 (axe-core 4.9.1)",
-      metodologia: "WCAG 2.1 / 2.2 Nivel AA — axe-core + Cypress + IAAP IA",
-    });
-
-    // 💄 Enlaces azules subrayados
-    ["captura", "url", "recomendacion"].forEach((campo) => {
-      const cell = row.getCell(campo);
-      if (typeof cell.value === "object" && cell.value.hyperlink) {
-        cell.font = { color: { argb: "FF0563C1" }, underline: true };
-      }
-    });
-
-    const sev = v.impact || "sin severidad";
-    severidades[sev] = (severidades[sev] || 0) + 1;
-    criterios[criterio.id] = (criterios[criterio.id] || 0) + 1;
+  // Pa11y results
+  for (const v of item.pa11y || []) {
+    addRow(v, destino, "Pa11y", pageUrl);
+    totalPa11y++;
   }
 }
 
 // ===========================================================
-// 📊 Resumen profesional IAAP PRO
+// 🧩 Función auxiliar para añadir filas
+// ===========================================================
+function addRow(v, destino, tipo, pageUrl) {
+  const criterio = obtenerCriterioIAAP(v);
+  const resumen = generarResumen(v);
+  const actual = generarResultadoActual(v);
+  const esperado = generarResultadoEsperado(v);
+  const recomendacion = generarRecomendacion(v);
+  const selector = v.selector || v.nodes?.[0]?.target?.join(", ") || "(sin selector)";
+  const criterioLimpio = criterio.criterio || criterio.id || "Criterio WCAG no identificado";
+
+  // 🔍 Detección inteligente de capturas
+  let capturaLink = "Sin captura disponible";
+  const posiblesDirs = ["sitemap", "interactiva", "combinado"];
+  const patrones = [
+    v.id,
+    criterio.id,
+    criterio.criterio?.split(" ")[0],
+    pageUrl?.split("/").pop(),
+    selector?.replace(/[^a-z0-9]/gi, "_"),
+  ].filter(Boolean);
+
+  for (const dir of posiblesDirs) {
+    const folder = path.join(AUDITORIAS_DIR, "capturas", dir);
+    if (fs.existsSync(folder)) {
+      const archivos = fs.readdirSync(folder);
+      const found = archivos.find((f) =>
+        patrones.some((p) => f.toLowerCase().includes(p.toLowerCase()) && f.endsWith(".png"))
+      );
+      if (found) {
+        const fullPath = path.join(folder, found);
+        capturaLink = { text: "Evidencia", hyperlink: `file://${fullPath}` };
+        break;
+      }
+    }
+  }
+
+  const urlCell =
+    pageUrl && pageUrl.startsWith("http")
+      ? { text: pageUrl, hyperlink: pageUrl }
+      : pageUrl;
+
+  const row = destino.addRow({
+    id: v.id,
+    criterio: criterioLimpio,
+    nivel: criterio.nivel || "AA",
+    tipo,
+    impact: v.impact || "",
+    resumen,
+    selector,
+    url: urlCell,
+    actual,
+    esperado,
+    recomendacion,
+    captura: capturaLink,
+    system: "macOS Sonoma 14.7 + Chrome 129 (axe-core 4.9.1)",
+    metodologia: "WCAG 2.1 / 2.2 Nivel AA — axe-core + Pa11y + IAAP IA",
+  });
+
+  ["captura", "url", "recomendacion"].forEach((campo) => {
+    const cell = row.getCell(campo);
+    if (typeof cell.value === "object" && cell.value.hyperlink) {
+      cell.font = { color: { argb: "FF0563C1" }, underline: true };
+    }
+  });
+
+  const sev = v.impact || "sin severidad";
+  severidades[sev] = (severidades[sev] || 0) + 1;
+  criterios[criterio.id] = (criterios[criterio.id] || 0) + 1;
+}
+
+// ===========================================================
+// 📊 Hoja resumen IAAP PRO
 // ===========================================================
 hojaResumen.columns = [
   { header: "Categoría", key: "cat", width: 45 },
@@ -243,8 +260,13 @@ hojaResumen.columns = [
   { header: "Porcentaje", key: "pct", width: 15 },
 ];
 
-const total = Object.values(severidades).reduce((a, b) => a + b, 0) || 1;
+hojaResumen.addRow(["📊 Totales globales IAAP PRO", "", ""]);
+hojaResumen.addRow(["Violaciones WCAG", totalWCAG, ""]);
+hojaResumen.addRow(["Revisiones manuales (needs_review)", totalReview, ""]);
+hojaResumen.addRow(["Resultados Pa11y", totalPa11y, ""]);
+hojaResumen.addRow(["", "", ""]);
 
+const totalSev = Object.values(severidades).reduce((a, b) => a + b, 0) || 1;
 hojaResumen.addRow(["📊 Severidades detectadas", "", ""]);
 
 const colorSeveridad = {
@@ -257,7 +279,7 @@ const colorSeveridad = {
 
 for (const sev of ["critical", "serious", "moderate", "minor"]) {
   const count = severidades[sev] || 0;
-  const pct = count / total;
+  const pct = count / totalSev;
   const meta = colorSeveridad[sev];
   const row = hojaResumen.addRow([meta.label, count, pct]);
   row.getCell(1).fill = {
@@ -265,15 +287,6 @@ for (const sev of ["critical", "serious", "moderate", "minor"]) {
     pattern: "solid",
     fgColor: { argb: meta.color },
   };
-  row.eachCell((c) => {
-    c.alignment = { vertical: "middle", horizontal: "center" };
-    c.border = {
-      top: { style: "thin", color: { argb: "D9D9D9" } },
-      left: { style: "thin", color: { argb: "D9D9D9" } },
-      bottom: { style: "thin", color: { argb: "D9D9D9" } },
-      right: { style: "thin", color: { argb: "D9D9D9" } },
-    };
-  });
 }
 
 hojaResumen.addRow(["", "", ""]);
@@ -281,16 +294,7 @@ hojaResumen.addRow(["📘 Criterios WCAG más frecuentes", "", ""]);
 
 const criteriosOrdenados = Object.entries(criterios).sort((a, b) => b[1] - a[1]);
 for (const [crit, count] of criteriosOrdenados.slice(0, 10)) {
-  const row = hojaResumen.addRow([crit, count, count / total]);
-  row.eachCell((c) => {
-    c.alignment = { vertical: "middle", horizontal: "center" };
-    c.border = {
-      top: { style: "thin", color: { argb: "D9D9D9" } },
-      left: { style: "thin", color: { argb: "D9D9D9" } },
-      bottom: { style: "thin", color: { argb: "D9D9D9" } },
-      right: { style: "thin", color: { argb: "D9D9D9" } },
-    };
-  });
+  hojaResumen.addRow([crit, count, count / totalSev]);
 }
 
 hojaResumen.getColumn("pct").numFmt = "0.0%";
@@ -300,4 +304,4 @@ hojaResumen.getRow(1).font = { bold: true, size: 12, color: { argb: "FF0D47A1" }
 // 💾 Guardar Excel
 // ===========================================================
 await wb.xlsx.writeFile(OUTPUT_PATH);
-console.log(`✅ Informe IAAP PRO v4.35 (3 hojas, evidencias automáticas, formato dashboard) exportado correctamente: ${OUTPUT_PATH}`);
+console.log(`✅ Informe IAAP PRO v4.17-H1 exportado correctamente: ${OUTPUT_PATH}`);
