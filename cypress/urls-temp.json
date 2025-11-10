@@ -1,6 +1,82 @@
 [
   {
-    "url": "https://example.com",
-    "title": "Example Domain"
+    "url": "https://www.suntransfers.com/es",
+    "title": "Inicio"
+  },
+  {
+    "url": "https://www.suntransfers.com/es/agencies",
+    "title": "Agencias"
+  },
+  {
+    "url": "https://www.suntransfers.com/es/affiliate-program",
+    "title": "Programa de afiliados"
+  },
+  {
+    "url": "https://www.suntransfers.com/es/aeropuerto-de-gerona",
+    "title": "Aeropuerto de Gerona"
+  },
+  {
+    "url": "https://www.suntransfers.com/es/aeropuerto-de-creta-heraclion",
+    "title": "Aeropuerto de Creta Heraclión"
+  },
+  {
+    "url": "https://www.suntransfers.com/es/aeropuerto-de-sharm-el-sheij",
+    "title": "Aeropuerto de Sharm el Sheij"
+  },
+  {
+    "url": "https://www.suntransfers.com/es/about-us",
+    "title": "Sobre nosotros"
+  },
+  {
+    "url": "https://www.suntransfers.com/es/help",
+    "title": "Ayuda"
+  },
+  {
+    "url": "https://www.suntransfers.com/es/aeropuerto-de-punta-cana",
+    "title": "Aeropuerto de Punta Cana"
+  },
+  {
+    "url": "https://www.suntransfers.com/es/aeropuerto-de-lisboa",
+    "title": "Aeropuerto de Lisboa"
+  },
+  {
+    "url": "https://www.suntransfers.com/es/reviews",
+    "title": "Opiniones"
+  },
+  {
+    "url": "https://www.suntransfers.com/es/aeropuerto-de-mallorca",
+    "title": "Aeropuerto de Mallorca"
+  },
+  {
+    "url": "https://www.suntransfers.com/es/aeropuerto-de-malaga",
+    "title": "Aeropuerto de Málaga"
+  },
+  {
+    "url": "https://www.suntransfers.com/es/aeropuerto-de-madrid",
+    "title": "Aeropuerto de Madrid"
+  },
+  {
+    "url": "https://www.suntransfers.com/es/aeropuerto-de-barcelona",
+    "title": "Aeropuerto de Barcelona"
+  },
+  {
+    "url": "https://www.suntransfers.com/es/aeropuerto-de-paris-charles-de-gaulle",
+    "title": "Aeropuerto de París Charles de Gaulle"
+  },
+  {
+    "url": "https://www.suntransfers.com/es/aeropuerto-de-roma-fiumicino",
+    "title": "Aeropuerto de Roma Fiumicino"
+  },
+  {
+    "url": "https://www.suntransfers.com/es/aeropuerto-de-tenerife-sur",
+    "title": "Aeropuerto de Tenerife Sur"
+  },
+  {
+    "url": "https://www.suntransfers.com/es/terms-and-conditions",
+    "title": "Términos y condiciones"
+  },
+  {
+    "url": "https://www.suntransfers.com/es/aeropuerto-de-faro",
+    "title": "Aeropuerto de Faro"
   }
 ]

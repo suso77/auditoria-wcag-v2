@@ -1,13 +1,13 @@
 /// <reference types="cypress" />
 
 /**
- * ♿ Auditoría de accesibilidad – Interactiva Híbrida (IAAP PRO v4.15-H)
+ * ♿ Auditoría de accesibilidad – Interactiva Híbrida (IAAP PRO v4.16-H3)
  * ------------------------------------------------------------------------
- * ✅ Basado en v4.14 – 100 % compatible con CI/CD
- * ✅ Añade detección de violaciones “incompletas” (needs review)
- * ✅ Expande componentes dinámicos antes del análisis (acordeones, menús, modales)
- * ✅ Comprueba foco visible real y simula interacción con teclado
- * ✅ Mantiene logs, capturas y compatibilidad con resultados previos
+ * ✅ Basado en v4.15-H – estable y CI/CD-ready
+ * ✅ Añade integración Pa11y (fix: options.log.info)
+ * ✅ Mantiene axe-core híbrido (violations + incomplete)
+ * ✅ Logs IAAP PRO unificados + resultados JSON
+ * ✅ Expansión dinámica y foco visible sin cambios funcionales
  */
 
 try {
@@ -17,7 +17,7 @@ try {
   console.warn("⚠️ Dependencias opcionales no cargadas:", err.message);
 }
 
-describe("♿ Auditoría de accesibilidad – Interactiva Híbrida (IAAP PRO v4.15-H)", () => {
+describe("♿ Auditoría de accesibilidad – Interactiva Híbrida (IAAP PRO v4.16-H3)", () => {
   const allResults = [];
 
   Cypress.on("fail", () => false);
@@ -56,34 +56,57 @@ describe("♿ Auditoría de accesibilidad – Interactiva Híbrida (IAAP PRO v4.
           const allIssues = [...results.violations, ...results.incomplete];
           const dateNow = new Date().toISOString();
 
-          if (allIssues.length > 0) {
-            cy.task(
-              "log",
-              `♿ ${page} / ${selector} — ${allIssues.length} hallazgos (violaciones + revisión manual).`
-            );
-            allIssues.forEach((v, i) => {
-              const id = v.id || `issue-${i}`;
-              cy.screenshot(`auditorias/capturas/${slug}/${safeSel}/${id}`, {
-                capture: "viewport",
-                overwrite: true,
+          // 🧩 Ejecutar también auditoría Pa11y (sin romper el flujo existente)
+          return cy
+            .task("pa11yAudit", page)
+            .then((pa11yResults) => {
+              const merged = [...allIssues];
+              (pa11yResults || []).forEach((p) => {
+                const match = merged.find(
+                  (v) =>
+                    v.id === p.code ||
+                    v.help === p.message ||
+                    (v.description && v.description.includes(p.message))
+                );
+                if (!match) merged.push(p);
               });
-            });
 
-            allResults.push({
-              page,
-              selector,
-              date: dateNow,
-              origen: "interactiva-hibrida",
-              total_issues: allIssues.length,
-              violations: results.violations || [],
-              needs_review: results.incomplete || [],
-              system: Cypress.env("CI")
-                ? "Ubuntu + Chrome Headless (CI/CD + axe-core híbrido)"
-                : "macOS + Chrome (Local + axe-core híbrido)",
+              if (merged.length > 0) {
+                cy.task(
+                  "log",
+                  `♿ ${page} / ${selector} — ${merged.length} hallazgos combinados (axe + pa11y)`
+                );
+                merged.forEach((v, i) => {
+                  const id = v.id || `issue-${i}`;
+                  cy.screenshot(`auditorias/capturas/${slug}/${safeSel}/${id}`, {
+                    capture: "viewport",
+                    overwrite: true,
+                  });
+                });
+
+                allResults.push({
+                  page,
+                  selector,
+                  date: dateNow,
+                  origen: "interactiva-hibrida",
+                  total_issues: merged.length,
+                  violations: results.violations || [],
+                  needs_review: results.incomplete || [],
+                  pa11y: pa11yResults || [],
+                  system: Cypress.env("CI")
+                    ? "Ubuntu + Chrome Headless (CI/CD + axe+pa11y)"
+                    : "macOS + Chrome (Local + axe+pa11y)",
+                });
+              } else {
+                cy.task("log", `✅ ${page} / ${selector} — Sin hallazgos detectados.`);
+              }
+            })
+            .catch((err) => {
+              cy.task(
+                "log",
+                `⚠️ Error en auditoría combinada de ${page} / ${selector}: ${err.message}`
+              );
             });
-          } else {
-            cy.task("log", `✅ ${page} / ${selector} — Sin hallazgos detectados.`);
-          }
         })
         .catch((err) => cy.task("log", `⚠️ Error en axe.run(): ${err.message}`));
     });
@@ -161,12 +184,12 @@ describe("♿ Auditoría de accesibilidad – Interactiva Híbrida (IAAP PRO v4.
     });
   };
 
-  // Limpieza inicial
+  // 🧹 Limpieza inicial
   before(() => {
     cy.task("clearCaptures");
   });
 
-  // Cargar URLs
+  // 🌍 Cargar URLs
   it("Carga la lista de URLs", () => {
     cy.task("readUrls").then((urlsRaw) => {
       const urls = urlsRaw.filter((u) => u && u.url);
@@ -176,7 +199,7 @@ describe("♿ Auditoría de accesibilidad – Interactiva Híbrida (IAAP PRO v4.
     });
   });
 
-  // Generar tests dinámicos
+  // 🔁 Generar tests dinámicos por página
   const urls = require("../../scripts/urls.json");
 
   urls.forEach((pageObj, i) => {
@@ -273,9 +296,4 @@ describe("♿ Auditoría de accesibilidad – Interactiva Híbrida (IAAP PRO v4.
   });
 });
 
-
-
-
-
-
-
+export {};

@@ -241,13 +241,3 @@ describe("♿ Auditoría de accesibilidad – Sitemap híbrido (IAAP PRO v4.15-H
     cy.writeFile("auditorias/last-sitemap.txt", outputDir, "utf8");
   });
 });
-
-
-
-
-
-
-
-
-
-

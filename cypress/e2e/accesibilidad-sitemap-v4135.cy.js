@@ -1,12 +1,10 @@
-/// <reference types="cypress" />
-
-/**
- * ♿ Auditoría de accesibilidad – Sitemap híbrido (IAAP PRO v4.15-H)
+/// <reference types="cypress" /**
+ * ♿ Auditoría de accesibilidad – Sitemap híbrido (IAAP PRO v4.15-H2)
  * -----------------------------------------------------------------
- * ✅ Basado en v4.13.5, sin romper compatibilidad
- * ✅ Añade detección de resultados “incompletos” (needs review)
- * ✅ Incluye comprobación de foco visible inicial
- * ✅ Simula interacción mínima para contenido dinámico
+ * ✅ Detección de violaciones + resultados “incompletos” (needs review)
+ * ✅ Verificación de foco visible inicial
+ * ✅ Simulación ligera de interacción para contenido dinámico
+ * ✅ Auditoría secuencial real de todas las URLs
  * ✅ Totalmente compatible con CI/CD (GitHub Actions, Docker, local)
  * ✅ Logs, capturas y guardado IAAP PRO unificados
  */
@@ -18,7 +16,7 @@ try {
   console.warn("⚠️ Dependencias opcionales no cargadas:", err.message);
 }
 
-describe("♿ Auditoría de accesibilidad – Sitemap híbrido (IAAP PRO v4.15-H)", () => {
+describe("♿ Auditoría de accesibilidad – Sitemap híbrido (IAAP PRO v4.15-H2)", () => {
   const allResults = [];
   const MAX_RETRIES = 1;
 
@@ -28,7 +26,7 @@ describe("♿ Auditoría de accesibilidad – Sitemap híbrido (IAAP PRO v4.15-H
     return false;
   });
 
-  // 🎯 Simula foco y verifica visibilidad del contorno
+  // 🎯 Verifica foco visible inicial
   const checkInitialFocus = (pageUrl) => {
     cy.realPress("Tab").catch(() => null);
     cy.focused()
@@ -53,7 +51,7 @@ describe("♿ Auditoría de accesibilidad – Sitemap híbrido (IAAP PRO v4.15-H
       .catch(() => null);
   };
 
-  // 🎮 Simula interacción ligera (expande menús o acordeones)
+  // 🎮 Simula interacción ligera (expande menús, acordeones, tabs)
   const simulateLightInteraction = () => {
     const selectors = [
       "[aria-expanded='false']",
@@ -177,7 +175,7 @@ describe("♿ Auditoría de accesibilidad – Sitemap híbrido (IAAP PRO v4.15-H
     });
   };
 
-  // 🔁 Auditoría secuencial del sitemap
+  // 🔁 Auditoría secuencial del sitemap (v4.15-H2 corregida)
   it("Audita todas las páginas del sitemap (modo híbrido)", () => {
     cy.viewport(1280, 720);
     cy.task("clearCaptures");
@@ -191,15 +189,12 @@ describe("♿ Auditoría de accesibilidad – Sitemap híbrido (IAAP PRO v4.15-H
         return;
       }
 
-      cy.wrap(null).then(() => {
-        const runSequential = (i = 0) => {
-          if (i >= pages.length) return;
-          const page = pages[i];
-          cy.task("log", `🔎 Auditando página ${i + 1}/${pages.length}: ${page.url}`);
+      // 🔁 Recorre todas las páginas de forma síncrona
+      pages.forEach((page, index) => {
+        cy.then(() => {
+          cy.task("log", `🧭 Auditando página ${index + 1}/${pages.length}: ${page.url}`);
           auditPage(page);
-          cy.then(() => runSequential(i + 1));
-        };
-        runSequential();
+        });
       });
     });
   });
@@ -241,13 +236,3 @@ describe("♿ Auditoría de accesibilidad – Sitemap híbrido (IAAP PRO v4.15-H
     cy.writeFile("auditorias/last-sitemap.txt", outputDir, "utf8");
   });
 });
-
-
-
-
-
-
-
-
-
-

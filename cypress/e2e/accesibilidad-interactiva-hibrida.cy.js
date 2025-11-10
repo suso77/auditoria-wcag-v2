@@ -272,10 +272,3 @@ describe("♿ Auditoría de accesibilidad – Interactiva Híbrida (IAAP PRO v4.
     });
   });
 });
-
-
-
-
-
-
-
