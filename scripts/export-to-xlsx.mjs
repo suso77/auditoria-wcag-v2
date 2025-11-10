@@ -1,5 +1,5 @@
 /**
- * ♿ export-to-xlsx.mjs — IAAP PRO v4.34 (Stable Dashboard Edition)
+ * ♿ export-to-xlsx.mjs — IAAP PRO v4.35 (Stable Dashboard + Evidencias)
  * -------------------------------------------------
  * Exporta los resultados combinados (merged-results.json o results-merged.json)
  * en un informe Excel profesional IAAP con tres hojas:
@@ -10,6 +10,7 @@
  * ✅ Enlaces activos (URL / W3C / Captura)
  * ✅ Textos IAAP/W3C en español (resumen / actual / esperado)
  * ✅ Criterios limpios sin ID técnico
+ * ✅ Búsqueda automática de evidencias
  * ✅ Colores y formato IAAP PRO
  * ✅ Total compatibilidad con pipeline GitHub Actions
  */
@@ -171,15 +172,32 @@ for (const item of data) {
     const selector = v.nodes?.[0]?.target?.join(", ") || "(sin selector)";
     const criterioLimpio = criterio.criterio || criterio.id || "Criterio WCAG no identificado";
 
-    const capturePath = item.capturePath || v.capturePath || null;
-    const capturaLink = capturePath
-      ? {
-          text: "Evidencia",
-          hyperlink: capturePath.startsWith("http")
-            ? capturePath
-            : `file://${path.join(AUDITORIAS_DIR, "capturas", path.basename(capturePath))}`,
+    // ✅ Nueva lógica de búsqueda automática de capturas
+    let capturaLink = "Sin captura disponible";
+    let capturePath = item.capturePath || v.capturePath || null;
+
+    if (!capturePath) {
+      const posiblesDirs = ["sitemap", "interactiva"];
+      for (const dir of posiblesDirs) {
+        const folder = path.join(AUDITORIAS_DIR, "capturas", dir);
+        if (fs.existsSync(folder)) {
+          const found = fs
+            .readdirSync(folder)
+            .find((f) => f.toLowerCase().includes(v.id.toLowerCase()) && f.endsWith(".png"));
+          if (found) {
+            capturePath = path.join("capturas", dir, found);
+            break;
+          }
         }
-      : "Sin captura disponible";
+      }
+    }
+
+    if (capturePath && fs.existsSync(path.join(AUDITORIAS_DIR, capturePath))) {
+      capturaLink = {
+        text: "Evidencia",
+        hyperlink: `file://${path.join(AUDITORIAS_DIR, capturePath)}`,
+      };
+    }
 
     const urlCell =
       pageUrl && pageUrl.startsWith("http")
@@ -227,7 +245,6 @@ hojaResumen.columns = [
 
 const total = Object.values(severidades).reduce((a, b) => a + b, 0) || 1;
 
-// 🧩 Bloque de severidades
 hojaResumen.addRow(["📊 Severidades detectadas", "", ""]);
 
 const colorSeveridad = {
@@ -283,4 +300,4 @@ hojaResumen.getRow(1).font = { bold: true, size: 12, color: { argb: "FF0D47A1" }
 // 💾 Guardar Excel
 // ===========================================================
 await wb.xlsx.writeFile(OUTPUT_PATH);
-console.log(`✅ Informe IAAP PRO (3 hojas, formato dashboard profesional) exportado correctamente: ${OUTPUT_PATH}`);
+console.log(`✅ Informe IAAP PRO v4.35 (3 hojas, evidencias automáticas, formato dashboard) exportado correctamente: ${OUTPUT_PATH}`);
