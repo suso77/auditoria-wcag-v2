@@ -1,5 +1,5 @@
 /**
- * ♿ crawl-puppeteer.mjs (v4.2 IAAP PRO / WCAG 2.2)
+ * ♿ crawl-puppeteer.mjs (v4.3 IAAP PRO / WCAG 2.2)
  * ----------------------------------------------------------
  * Rastreador dinámico con Puppeteer (renderizado real del DOM)
  *
@@ -9,7 +9,7 @@
  * ✅ Control de profundidad, timeout y retardo
  * ✅ Guarda resultados únicos en scripts/urls.json
  * ✅ Logs consistentes y CI-safe
- * ✅ Filtro de idiomas: solo /es y /en
+ * ✅ Filtro de idiomas: raíz + /es + /en
  * ----------------------------------------------------------
  */
 
@@ -29,7 +29,7 @@ const SITE_URL = process.env.SITE_URL?.replace(/\/$/, "") || "https://example.co
 const MAX_DEPTH = parseInt(process.env.MAX_DEPTH || "3", 10);
 const TIMEOUT = parseInt(process.env.TIMEOUT || "60000", 10);
 const DELAY_BETWEEN_PAGES = parseInt(process.env.CRAWL_DELAY || "800", 10);
-const USER_AGENT = "IAAP-A11yCrawler/4.2 (+https://github.com/iaap-pro)";
+const USER_AGENT = "IAAP-A11yCrawler/4.3 (+https://github.com/iaap-pro)";
 
 console.log(`🚀 Iniciando rastreo IAAP PRO con Puppeteer`);
 console.log(`🌍 Sitio: ${SITE_URL}`);
@@ -131,26 +131,28 @@ async function crawl() {
         results.push({ url: normalized, title });
 
         // ===========================================================
-        // 🧩 FILTRO DE IDIOMAS — Solo rastrear /es y /en
+        // 🧩 FILTRO DE IDIOMAS — Solo raíz, /es y /en
         // ===========================================================
         const foundLinks = await page.$$eval("a[href]", (anchors) =>
           anchors.map((a) => a.href).filter(Boolean)
         );
 
-        const ALLOWED_LANGS = ["/es", "/en"];
-
         for (const link of foundLinks) {
           const next = normalizeUrl(link);
+          if (!next) continue;
+          if (!next.startsWith(SITE_URL)) continue;
 
-          // Saltar si no pertenece al dominio principal
-          if (!next || !next.startsWith(SITE_URL)) continue;
+          const relative = next.replace(SITE_URL, "");
 
-          // Solo URLs que incluyan /es o /en o sean la raíz
-          if (!(next === SITE_URL || ALLOWED_LANGS.some((lang) => next.includes(lang)))) {
+          // Permitir raíz, /es o /en
+          if (
+            relative &&
+            !relative.startsWith("/es") &&
+            !relative.startsWith("/en")
+          ) {
             continue;
           }
 
-          // Saltar duplicados o recursos no HTML
           if (
             visited.has(next) ||
             queue.find((q) => q.url === next) ||
@@ -219,7 +221,7 @@ function saveResults() {
   fs.writeFileSync(logFile, log);
 
   console.log("===============================================");
-  console.log("✅ Rastreo completado correctamente IAAP PRO v4.2");
+  console.log("✅ Rastreo completado correctamente IAAP PRO v4.3");
   console.log(`📁 Archivo generado: ${outputFile}`);
   console.log(`🪵 Log: ${logFile}`);
   console.log("===============================================");
