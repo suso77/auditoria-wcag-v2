@@ -130,7 +130,7 @@ jobs:
         continue-on-error: true
         with:
           command: >
-            npx cypress run --e2e --browser chrome --headless --disable-gpu
+            npx cypress run --e2e --browser chrome --headless
             --config-file cypress.config.mjs
             --spec "cypress/e2e/accesibilidad-sitemap-hibrido.cy.js"
         env:
@@ -141,7 +141,7 @@ jobs:
         continue-on-error: true
         with:
           command: >
-            npx cypress run --e2e --browser chrome --headless --disable-gpu
+            npx cypress run --e2e --browser chrome --headless
             --config-file cypress.config.mjs
             --spec "cypress/e2e/accesibilidad-interactiva-hibrida.cy.js"
         env:
