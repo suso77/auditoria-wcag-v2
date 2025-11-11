@@ -65,6 +65,15 @@ jobs:
           echo "✅ Sitio accesible (HTTP 200 OK)."
 
       # ======================================================
+      # 🧠 Configurar entorno Chrome Headless
+      # ======================================================
+      - name: 🧠 Configurar entorno Chrome Headless
+        run: |
+          export PUPPETEER_SKIP_DOWNLOAD=true
+          echo "CHROME_BIN=$(which google-chrome)" >> $GITHUB_ENV
+          echo "CHROME_PATH=$(which google-chrome)" >> $GITHUB_ENV
+
+      # ======================================================
       # 📦 Instalar dependencias IAAP PRO
       # ======================================================
       - name: 📦 Instalar dependencias IAAP PRO
@@ -87,19 +96,30 @@ jobs:
           echo "🧹 Carpetas de auditoría limpias."
 
       # ======================================================
-      # 🌍 Rastreo del sitio web
+      # 🌍 Rastreo del sitio web (IAAP PRO Crawler)
       # ======================================================
       - name: 🌍 Rastreo automático IAAP PRO
         timeout-minutes: 30
         run: |
           echo "::group::🌍 Rastreo IAAP PRO"
-          npm run crawl || echo "⚠️ Rastreo automático fallido, usando fallback..."
+          npm run crawl:auto || echo "⚠️ Rastreo automático fallido, usando fallback..."
           npm run validate:urls || echo "⚠️ Validación no crítica"
           echo "::endgroup::"
         env:
           SITE_URL: ${{ env.SITE_URL }}
           MAX_URLS: ${{ env.MAX_URLS }}
           LANG: ${{ env.LANG }}
+
+      # ======================================================
+      # 🧾 Verificar URLs generadas
+      # ======================================================
+      - name: 🧾 Verificar URLs generadas
+        run: |
+          if [ ! -s scripts/urls.json ]; then
+            echo "❌ No se generó scripts/urls.json o está vacío"
+            exit 1
+          fi
+          echo "✅ scripts/urls.json contiene URLs válidas."
 
       # ======================================================
       # ♿ Auditorías híbridas (axe-core + Pa11y)
@@ -109,7 +129,7 @@ jobs:
         continue-on-error: true
         with:
           command: >
-            npx cypress run --e2e --browser chrome --headless=new
+            npx cypress run --e2e --browser chrome --headless --no-sandbox --disable-gpu
             --config-file cypress.config.mjs
             --spec "cypress/e2e/accesibilidad-sitemap-hibrido.cy.js"
         env:
@@ -120,7 +140,7 @@ jobs:
         continue-on-error: true
         with:
           command: >
-            npx cypress run --e2e --browser chrome --headless=new
+            npx cypress run --e2e --browser chrome --headless --no-sandbox --disable-gpu
             --config-file cypress.config.mjs
             --spec "cypress/e2e/accesibilidad-interactiva-hibrida.cy.js"
         env:
@@ -211,7 +231,8 @@ jobs:
           publish_branch: gh-pages
           keep_files: true
           full_commit_message: |
-            🚀 Publicación automática IAAP PRO v5.3
+            🚀 Publicación automática IAAP PRO v5.4
             - Fecha: ${{ github.event.head_commit.timestamp }}
             - Run ID: ${{ github.run_id }}
             - Build Date: ${{ env.BUILD_DATE }}
+
