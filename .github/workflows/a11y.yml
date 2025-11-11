@@ -80,7 +80,8 @@ jobs:
         run: |
           echo "📦 Instalando dependencias IAAP PRO..."
           npm install --include=dev
-          npm install --save-dev cypress cypress-axe cypress-real-events @bahmutov/cypress-esbuild-preprocessor esbuild puppeteer pa11y fs-extra exceljs json2csv
+          npm install puppeteer  # Asegurando que Puppeteer se instale
+          npm install --save-dev cypress cypress-axe cypress-real-events @bahmutov/cypress-esbuild-preprocessor esbuild pa11y fs-extra exceljs json2csv
           npx cypress verify
           mkdir -p scripts auditorias/{capturas,auditoria-sitemap,auditoria-interactiva,reportes} public/auditorias
           [ ! -f scripts/urls.json ] && echo '[]' > scripts/urls.json
