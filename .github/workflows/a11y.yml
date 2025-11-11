@@ -26,8 +26,12 @@ jobs:
       SITE_URL: ${{ github.event.inputs.site_url || vars.SITE_URL || 'https://www.hiexperience.es' }}
       BUILD_DATE: ${{ github.run_id }}-${{ github.run_number }}
       TZ: Europe/Madrid
+      LANG: es
       NODE_ENV: production
       NODE_OPTIONS: "--max-old-space-size=4096 --no-warnings"
+      MAX_URLS: 80
+      MAX_DEPTH: 5
+      CRAWL_DELAY: 1000
       CYPRESS_screenshotsFolder: auditorias/capturas
       CYPRESS_video: false
       CYPRESS_screenshotOnRunFailure: true
@@ -35,6 +39,9 @@ jobs:
       CI: true
 
     steps:
+      # ======================================================
+      # 🧩 Repositorio y Node.js
+      # ======================================================
       - name: 🧩 Checkout del repositorio
         uses: actions/checkout@v4
 
@@ -44,6 +51,22 @@ jobs:
           node-version: "20"
           cache: "npm"
 
+      # ======================================================
+      # 🌐 Verificar que el sitio responde antes de auditar
+      # ======================================================
+      - name: 🔍 Verificar disponibilidad del sitio
+        run: |
+          echo "🔎 Verificando que $SITE_URL responde correctamente..."
+          STATUS=$(curl -o /dev/null -s -w "%{http_code}" -L "$SITE_URL")
+          if [ "$STATUS" != "200" ]; then
+            echo "❌ El sitio no respondió con HTTP 200 (recibido: $STATUS)"
+            exit 1
+          fi
+          echo "✅ Sitio accesible (HTTP 200 OK)."
+
+      # ======================================================
+      # 📦 Instalar dependencias IAAP PRO
+      # ======================================================
       - name: 📦 Instalar dependencias IAAP PRO
         run: |
           echo "📦 Instalando dependencias IAAP PRO..."
@@ -54,12 +77,18 @@ jobs:
           [ ! -f scripts/urls.json ] && echo '[]' > scripts/urls.json
           echo "✅ Entorno IAAP PRO preparado correctamente."
 
+      # ======================================================
+      # 🧹 Limpieza previa
+      # ======================================================
       - name: 🧹 Limpiar resultados anteriores
         run: |
           rm -rf auditorias/* public/* || true
           mkdir -p auditorias/{capturas,auditoria-sitemap,auditoria-interactiva,reportes} public/auditorias
           echo "🧹 Carpetas de auditoría limpias."
 
+      # ======================================================
+      # 🌍 Rastreo del sitio web
+      # ======================================================
       - name: 🌍 Rastreo automático IAAP PRO
         timeout-minutes: 30
         run: |
@@ -67,8 +96,15 @@ jobs:
           npm run crawl:auto || echo "⚠️ Rastreo automático fallido, usando fallback..."
           npm run validate:urls || echo "⚠️ Validación no crítica"
           echo "::endgroup::"
+        env:
+          SITE_URL: ${{ env.SITE_URL }}
+          MAX_URLS: ${{ env.MAX_URLS }}
+          LANG: ${{ env.LANG }}
 
-      - name: ♿ Auditoría WCAG – Sitemap Híbrido (axe + Pa11y)
+      # ======================================================
+      # ♿ Auditorías híbridas (axe-core + Pa11y)
+      # ======================================================
+      - name: ♿ Auditoría WCAG – Sitemap Híbrido
         uses: cypress-io/github-action@v6
         continue-on-error: true
         with:
@@ -79,7 +115,7 @@ jobs:
         env:
           CYPRESS_baseUrl: ${{ env.SITE_URL }}
 
-      - name: ♿ Auditoría WCAG – Interactiva Híbrida (axe + Pa11y)
+      - name: ♿ Auditoría WCAG – Interactiva Híbrida
         uses: cypress-io/github-action@v6
         continue-on-error: true
         with:
@@ -90,6 +126,9 @@ jobs:
         env:
           CYPRESS_baseUrl: ${{ env.SITE_URL }}
 
+      # ======================================================
+      # ♿ Exportar revisiones manuales y combinar resultados
+      # ======================================================
       - name: ♿ IAAP PRO — Exportar revisiones manuales (needs_review)
         if: always()
         run: |
@@ -104,6 +143,24 @@ jobs:
           node scripts/merge-auditorias.mjs || echo "⚠️ Merge IAAP no crítico."
           echo "::endgroup::"
 
+      # ======================================================
+      # 🧾 Generar resumen IAAP en Markdown
+      # ======================================================
+      - name: 🧾 Generar resumen IAAP (merged-summary.md)
+        if: always()
+        run: |
+          echo "::group::🧾 Generando resumen IAAP PRO..."
+          if [ -f auditorias/reportes/merged-results.json ]; then
+            node scripts/generate-summary.mjs auditorias/reportes/merged-results.json > auditorias/reportes/merged-summary.md || echo "⚠️ No se pudo generar merged-summary.md"
+            echo "✅ merged-summary.md generado correctamente."
+          else
+            echo "⚠️ No se encontró merged-results.json, no se genera resumen."
+          fi
+          echo "::endgroup::"
+
+      # ======================================================
+      # 📊 Exportar informes finales
+      # ======================================================
       - name: ♿ IAAP PRO — Exportar informes XLSX / CSV / PDF / HTML
         if: always()
         run: |
@@ -114,12 +171,14 @@ jobs:
             node scripts/export-to-csv.mjs || echo "⚠️ CSV no crítico."
             node scripts/export-to-pdf.mjs || echo "⚠️ PDF no crítico."
             node scripts/generate-dashboard-html.mjs "${{ env.BUILD_DATE }}" || echo "⚠️ Dashboard no crítico."
-            node scripts/generate-summary.mjs auditorias/reportes/merged-results.json > auditorias/reportes/merged-summary.md || echo "⚠️ Summary no crítico."
           else
             echo "⚠️ No hay merged-results.json, se omite exportación."
           fi
           echo "::endgroup::"
 
+      # ======================================================
+      # 📦 Crear ZIP y subir artefactos
+      # ======================================================
       - name: 📦 Crear y subir ZIP IAAP PRO completo
         if: always()
         run: |
@@ -128,7 +187,7 @@ jobs:
           zip -r "${ZIP_PATH}" auditorias/* || true
           echo "✅ ZIP IAAP PRO generado: ${ZIP_PATH}"
 
-      - name: 📤 Subir artefactos IAAP PRO (ZIP + XLSX + CSV + PDF)
+      - name: 📤 Subir artefactos IAAP PRO (ZIP + XLSX + CSV + PDF + MD)
         uses: actions/upload-artifact@v4
         with:
           name: "IAAP-PRO-${{ github.run_number }}"
@@ -137,8 +196,12 @@ jobs:
             auditorias/reportes/*.xlsx
             auditorias/reportes/*.csv
             auditorias/reportes/*.pdf
+            auditorias/reportes/*.md
           retention-days: 30
 
+      # ======================================================
+      # 🚀 Publicar Dashboard en GitHub Pages
+      # ======================================================
       - name: 🚀 Publicar Dashboard en GitHub Pages
         if: success() && (hashFiles('auditorias/reportes/merged-results.json') != '')
         uses: peaceiris/actions-gh-pages@v3
@@ -148,7 +211,7 @@ jobs:
           publish_branch: gh-pages
           keep_files: true
           full_commit_message: |
-            🚀 Publicación automática IAAP PRO v5.0
+            🚀 Publicación automática IAAP PRO v5.3
             - Fecha: ${{ github.event.head_commit.timestamp }}
             - Run ID: ${{ github.run_id }}
             - Build Date: ${{ env.BUILD_DATE }}
