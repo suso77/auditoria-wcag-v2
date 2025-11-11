@@ -130,7 +130,7 @@ jobs:
         continue-on-error: true
         with:
           command: >
-            npx cypress run --e2e --browser chrome --headless --no-sandbox --disable-gpu
+            npx cypress run --e2e --browser chrome --headless --disable-gpu
             --config-file cypress.config.mjs
             --spec "cypress/e2e/accesibilidad-sitemap-hibrido.cy.js"
         env:
@@ -141,7 +141,7 @@ jobs:
         continue-on-error: true
         with:
           command: >
-            npx cypress run --e2e --browser chrome --headless --no-sandbox --disable-gpu
+            npx cypress run --e2e --browser chrome --headless --disable-gpu
             --config-file cypress.config.mjs
             --spec "cypress/e2e/accesibilidad-interactiva-hibrida.cy.js"
         env:
@@ -236,3 +236,4 @@ jobs:
             - Fecha: ${{ github.event.head_commit.timestamp }}
             - Run ID: ${{ github.run_id }}
             - Build Date: ${{ env.BUILD_DATE }}
+
