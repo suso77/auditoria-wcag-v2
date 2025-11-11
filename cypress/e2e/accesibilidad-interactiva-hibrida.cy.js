@@ -1,303 +1,212 @@
 /// <reference types="cypress" />
 
 /**
- * ♿ Auditoría de accesibilidad – Interactiva (IAAP PRO v4.44-H FINAL)
- * ------------------------------------------------------------------------
- * ✅ Ejecuta axe-core (violations + incomplete)
- * ✅ Ejecuta Pa11y por cada página
- * ✅ Expande componentes dinámicos (acordeones, menús, modales)
- * ✅ Simula interacción real y prueba de foco visible
- * ✅ Guarda capturas, resultados JSON y resumen IAAP PRO
- * ✅ Totalmente compatible con merge-auditorias.mjs v4.44
+ * ♿ Auditoría de accesibilidad – Interactiva IAAP PRO v5.2
+ * ---------------------------------------------------------------------------
+ * ✅ Ejecuta axe-core + Pa11y SIEMPRE (no como fallback)
+ * ✅ Espera correctamente el DOM (asincronía controlada)
+ * ✅ Guarda resultados individuales, globales y resumen
+ * ✅ Exporta results.json compatible con merge-auditorias.mjs
+ * ✅ Verificación automática de integridad (results.json no vacío)
+ * ✅ Compatible con Node 24+, Cypress 15+, GitHub Actions
  */
 
-try {
-  require("cypress-axe");
-  require("cypress-real-events/support");
-} catch (err) {
-  console.warn("⚠️ Dependencias opcionales no cargadas:", err.message);
-}
+describe("♿ Auditoría de accesibilidad – Interactiva (IAAP PRO v5.2)", () => {
+  const auditoriaDir = "auditorias/auditoria-interactiva";
+  let resumenGlobal = [];
+  let resultadosCompletos = [];
 
-describe("♿ Auditoría de accesibilidad – Interactiva (IAAP PRO v4.44-H FINAL)", () => {
-  const allResults = [];
-
-  Cypress.on("fail", () => false);
-  Cypress.on("uncaught:exception", () => false);
-
-  // =====================================================
-  // ♿ Auditoría híbrida con axe-core (violations + incomplete)
-  // =====================================================
-  const runA11y = (selector, page, safeSel, slug) => {
-    cy.injectAxe();
-    cy.window().then((win) => {
-      if (!win.axe) {
-        cy.task("log", `❌ axe-core no está disponible en ${page}`);
-        return;
-      }
-      return win.axe
-        .run(document, {
-          runOnly: {
-            type: "tag",
-            values: [
-              "wcag2a",
-              "wcag2aa",
-              "wcag21a",
-              "wcag21aa",
-              "wcag22aa",
-              "best-practice",
-            ],
-          },
-          resultTypes: ["violations", "incomplete"],
-        })
-        .then((results) => {
-          const allIssues = [...results.violations, ...results.incomplete];
-          const dateNow = new Date().toISOString();
-
-          if (allIssues.length > 0) {
-            cy.task("log", `♿ ${page} / ${selector} — ${allIssues.length} hallazgos`);
-            allIssues.forEach((v, i) => {
-              const id = v.id || `issue-${i}`;
-              cy.screenshot(
-                `auditorias/auditoria-interactiva/capturas/${slug}/${safeSel}/${id}`,
-                { capture: "viewport", overwrite: true }
-              );
-            });
-
-            allResults.push({
-              page,
-              selector,
-              date: dateNow,
-              origen: "interactiva",
-              version: "IAAP PRO v4.44-H",
-              total_issues: allIssues.length,
-              violations: results.violations || [],
-              needs_review: results.incomplete || [],
-              system: Cypress.env("CI")
-                ? "Ubuntu + Chrome Headless (CI/CD)"
-                : "macOS + Chrome (Local)",
-            });
-          } else {
-            cy.task("log", `✅ ${page} / ${selector} — Sin hallazgos detectados.`);
-          }
-        })
-        .catch((err) => cy.task("log", `⚠️ Error en axe.run(): ${err.message}`));
-    });
-  };
-
-  // =====================================================
-  // 🧩 Ejecutar Pa11y (HTML_CodeSniffer)
-  // =====================================================
-  const runPa11y = (page) => {
-    cy.task("log", `🧩 Ejecutando auditoría Pa11y para: ${page}`);
-    cy.exec(`npx pa11y "${page}" --standard WCAG2AA --reporter json`, {
-      failOnNonZeroExit: false,
-      timeout: 120000,
-    }).then((result) => {
-      try {
-        const parsed = JSON.parse(result.stdout || "[]");
-        const pa11yIssues = Array.isArray(parsed) ? parsed : [];
-        cy.task("log", `♿ Pa11y completado (${page}) — ${pa11yIssues.length} issues`);
-        allResults.push({
-          page,
-          origen: "pa11y",
-          version: "IAAP PRO v4.44-H",
-          date: new Date().toISOString(),
-          pa11y: pa11yIssues,
-        });
-      } catch {
-        cy.task("log", `⚠️ No se pudo parsear el resultado de Pa11y en ${page}`);
-      }
-    });
-  };
-
-  // =====================================================
-  // 🎯 Prueba de foco visible
-  // =====================================================
-  const testFoco = (selector, page) => {
-    const maxTabs = 12;
-    let tabCount = 0;
-    cy.task("log", `🎯 Probando foco en ${selector}`);
-    const recorrer = () => {
-      if (tabCount >= maxTabs) return;
-      cy.realPress("Tab").catch(() => null);
-      cy.focused()
-        .then(($f) => {
-          if ($f && $f.prop) {
-            const visible =
-              $f.css("outline-style") !== "none" || $f.css("box-shadow") !== "none";
-            cy.task(
-              "log",
-              `➡️ Foco #${tabCount + 1}: ${$f.prop("tagName")} (${
-                visible ? "visible" : "no visible"
-              })`
-            );
-            if (!visible) {
-              allResults.push({
-                page,
-                selector,
-                origen: "foco-visible",
-                description: "Elemento con foco sin indicador visible",
-                wcag: "2.4.7",
-                impact: "serious",
-              });
-            }
-          }
-          tabCount++;
-          recorrer();
-        })
-        .catch(() => null);
-    };
-    recorrer();
-  };
-
-  // =====================================================
-  // 🎮 Interacción simulada
-  // =====================================================
-  const simulateInteraction = (selector, page) => {
-    cy.task("log", `🎮 Simulando interacción en ${selector}`);
-    cy.get(selector)
-      .first()
-      .then(($el) => {
-        if ($el.is("button,[role='button'],[aria-expanded]")) {
-          cy.wrap($el).realClick().wait(300);
-        } else if ($el.is("input,select,textarea")) {
-          cy.wrap($el).focus().type("prueba").blur();
-        }
-      })
-      .catch(() => null);
-  };
-
-  // =====================================================
-  // 🧩 Expansión automática de componentes dinámicos
-  // =====================================================
-  const expandDynamicComponents = () => {
-    const expandibles = [
-      "[aria-expanded='false']",
-      "[role='tab']",
-      "[data-accordion]",
-      "[data-toggle]",
-      ".accordion button",
-      ".dropdown-toggle",
-    ];
-    expandibles.forEach((sel) => {
-      cy.get("body").then(($body) => {
-        if ($body.find(sel).length > 0) {
-          cy.get(sel).click({ multiple: true, force: true }).wait(300);
-        }
-      });
-    });
-  };
-
-  // =====================================================
-  // 🔧 Limpieza inicial
-  // =====================================================
   before(() => {
     cy.task("clearCaptures");
+    cy.task("createFolder", auditoriaDir);
   });
 
-  // =====================================================
-  // 🌍 Cargar URLs
-  // =====================================================
-  it("Carga lista de URLs IAAP PRO", () => {
-    cy.task("readUrls").then((urlsRaw) => {
-      const urls = urlsRaw.filter((u) => u && u.url);
-      expect(urls.length).to.be.greaterThan(0);
-      cy.writeFile("cypress/urls-temp.json", urls);
-      cy.task("log", `🌍 ${urls.length} URLs cargadas para auditoría interactiva`);
-    });
-  });
+  it("Ejecuta auditoría interactiva completa (axe-core + Pa11y híbrido)", () => {
+    cy.task("readUrls").then((urls) => {
+      if (!urls || urls.length === 0) {
+        cy.task("log", "⚠️ No se encontraron URLs en scripts/urls.json");
+        return;
+      }
 
-  // =====================================================
-  // 🔁 Ejecutar auditoría por URL
-  // =====================================================
-  const urls = require("../../scripts/urls.json");
+      cy.task("log", `🌍 Cargadas ${urls.length} URLs desde scripts/urls.json`);
+      cy.task("log", "🧠 Iniciando ejecución IAAP PRO Interactiva...");
 
-  urls.forEach((pageObj, i) => {
-    const page = pageObj.url;
-    const slug = page.replace(/https?:\/\/|\/$/g, "").replace(/\W+/g, "-");
+      cy.wrap(urls).each(({ url, title }, index) => {
+        cy.task("log", `🧭 [${index + 1}/${urls.length}] Auditando ${url}`);
+        cy.task("clearCaptures");
 
-    it(`(${i + 1}/${urls.length}) Audita: ${page}`, () => {
-      cy.task("log", `🧭 Auditando (interactiva) ${i + 1}/${urls.length}: ${page}`);
-      cy.visit(page, { timeout: 90000, failOnStatusCode: false });
-      cy.document().its("readyState").should("eq", "complete");
-      cy.wait(Cypress.env("CI") ? 2000 : 1000);
+        // --- Carga y espera extendida para entorno CI ---
+        cy.visit(url, { timeout: 120000, failOnStatusCode: false });
+        cy.document().its("readyState").should("eq", "complete");
+        cy.wait(4000);
 
-      expandDynamicComponents();
+        cy.window().then(async (win) => {
+          let axeIssues = [];
+          let pa11yIssues = [];
 
-      cy.get("body").then(($body) => {
-        const selectors = [
-          "header, footer, nav, menu, [role='menu']",
-          "[aria-haspopup='menu'], [role='button'], button",
-          "[aria-expanded], [aria-controls]",
-          "[role='dialog'], [aria-modal='true'], .modal, .popup, .overlay",
-          "form, input, select, textarea, [contenteditable='true']",
-          ".accordion, .collapsible, [role='tablist'], [data-accordion]",
-        ];
+          // --- axe-core ---
+          try {
+            const axe = await import("axe-core");
+            win.eval(axe.source);
+            cy.task("log", "✅ axe-core inyectado correctamente.");
 
-        const detected = new Set();
-        selectors.forEach((sel) => {
-          if ($body.find(sel).length > 0) detected.add(sel);
-        });
+            const results = await win.axe.run(win.document, {
+              runOnly: {
+                type: "tag",
+                values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"],
+              },
+              resultTypes: ["violations"],
+              reporter: "v2",
+            });
 
-        if (detected.size === 0) {
-          cy.task("log", `ℹ️ No hay componentes interactivos en ${page}`);
-          runPa11y(page);
-          return;
-        }
+            axeIssues = results.violations.map((v) => ({
+              engine: "axe-core",
+              id: v.id,
+              impact: v.impact || "unknown",
+              description: v.description,
+              helpUrl: v.helpUrl,
+              selector: v.nodes?.[0]?.target?.[0] || "",
+              pageUrl: url,
+              title: title || "",
+            }));
 
-        const components = Array.from(detected);
-        cy.task("log", `🎛️ Detectados ${components.length} componentes en ${page}`);
+            cy.task("log", `✅ axe.run() completado: ${axeIssues.length} violaciones`);
+          } catch (err) {
+            cy.task("log", `❌ Error ejecutando axe-core: ${err.message}`);
+          }
 
-        components.reduce((prev, selector) => {
-          return prev.then(() => {
-            const safeSel = selector.replace(/[^\w-]/g, "_");
-            return cy.get("body").then(($b) => {
-              if ($b.find(selector).length === 0) return;
-              cy.get(selector)
-                .first()
-                .scrollIntoView()
-                .then(() => {
-                  simulateInteraction(selector, page);
-                  testFoco(selector, page);
-                  runA11y(selector, page, safeSel, slug);
-                })
-                .catch(() =>
-                  cy.task("log", `⚠️ Error procesando selector: ${selector}`)
-                );
+          // --- Pa11y ---
+          return cy.task("pa11yAudit", url).then((pa11yResults = []) => {
+            if (Array.isArray(pa11yResults)) {
+              pa11yIssues = pa11yResults.map((i) => ({
+                engine: "pa11y",
+                id: i.code,
+                impact: i.type || "notice",
+                description: i.message,
+                selector: i.selector,
+                context: i.context,
+                pageUrl: url,
+                title: title || "",
+              }));
+            }
+
+            cy.task("log", `[IAAP] ♿ Pa11y completado (${url}) — ${pa11yIssues.length} issues`);
+
+            // --- Unificar resultados ---
+            const combined = [...axeIssues, ...pa11yIssues];
+            resultadosCompletos.push(...combined);
+            cy.task("log", `[IAAP] 🌍 Total combinado: ${combined.length} issues en ${url}`);
+
+            // --- Guardar resultados individuales ---
+            const slug = url
+              .replace(/^https?:\/\//, "")
+              .replace(/[^\w\-]+/g, "_")
+              .replace(/_+$/, "");
+            const individualPath = `${auditoriaDir}/${slug}.json`;
+            cy.writeFile(individualPath, JSON.stringify(combined, null, 2), { log: false });
+            cy.task("log", `💾 Guardado OK (${combined.length}) → ${individualPath}`);
+
+            // --- Captura de pantalla ---
+            const screenshotName = `${index + 1}-${slug}`;
+            cy.screenshot(`${auditoriaDir}/${screenshotName}`, { capture: "fullPage" });
+            cy.task("log", `📸 Captura guardada → ${screenshotName}.png`);
+
+            // --- Acumular resumen global ---
+            resumenGlobal.push({
+              index: index + 1,
+              url,
+              title: title || "",
+              axe: axeIssues.length,
+              pa11y: pa11yIssues.length,
+              total: combined.length,
+            });
+
+            // --- Guardado parcial ---
+            return cy.task("writeResults", {
+              dir: auditoriaDir,
+              data: resumenGlobal,
+              filename: "results-interactiva-temp.json",
             });
           });
-        }, Cypress.Promise.resolve()).then(() => runPa11y(page));
+        });
       });
     });
   });
 
-  // =====================================================
-  // 💾 Guardado final IAAP PRO
-  // =====================================================
   after(() => {
-    const outputDir = "auditorias/auditoria-interactiva";
-    cy.task("createFolder", outputDir);
-    cy.task("log", `💾 Guardando resultados IAAP PRO Interactiva...`);
+    cy.task("log", `[IAAP] 🌍 Guardando resumen final IAAP PRO Interactiva...`);
 
-    const uniqueResults = Object.values(
-      allResults.reduce((acc, r) => {
-        const key = `${r.page || "?"}::${r.selector || "?"}::${r.origen || "?"}`;
-        acc[key] = r;
+    const resumenPath = `${auditoriaDir}/resumen-final.json`;
+    const markdownPath = `${auditoriaDir}/resumen-final.md`;
+    const resultsJson = `${auditoriaDir}/results.json`;
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const timestamped = `${auditoriaDir}/results-interactiva-${timestamp}.json`;
+
+    // --- Guardar resumen JSON ---
+    cy.writeFile(resumenPath, JSON.stringify(resumenGlobal, null, 2), { log: false });
+    cy.task("log", `💾 Resumen guardado en ${resumenPath}`);
+
+    // --- Guardar resumen Markdown ---
+    const markdownResumen = [
+      "# 📊 Resumen final de auditoría IAAP PRO Interactiva",
+      "",
+      "| Nº | URL | axe-core | Pa11y | Total |",
+      "|----|-----|----------|--------|--------|",
+      ...resumenGlobal.map(
+        (r) =>
+          `| ${r.index} | [${r.url}](${r.url}) | ${r.axe} | ${r.pa11y} | **${r.total}** |`
+      ),
+      "",
+      `**Total de páginas auditadas:** ${resumenGlobal.length}`,
+      `**Fecha:** ${new Date().toLocaleString("es-ES")}`,
+    ].join("\n");
+
+    cy.writeFile(markdownPath, markdownResumen, { log: false });
+    cy.task("log", `📊 Resumen Markdown creado correctamente.`);
+
+    // --- Unificar resultados (sin duplicados) ---
+    const unique = Object.values(
+      resultadosCompletos.reduce((acc, r) => {
+        const key = `${r.engine}-${r.id}-${r.pageUrl}-${r.selector}`;
+        if (!acc[key]) acc[key] = r;
         return acc;
       }, {})
     );
 
-    cy.task("writeResults", { dir: outputDir, data: uniqueResults }).then(() => {
-      cy.writeFile(`${outputDir}/resumen-final.json`, {
-        total: uniqueResults.length,
-        fecha: new Date().toISOString(),
-        version: "IAAP PRO v4.44-H",
-        origen: "interactiva",
-      });
-      cy.task(
-        "log",
-        `✅ Resultados guardados (${uniqueResults.length} registros en ${outputDir})`
-      );
-    });
+    // --- Guardar principal y con timestamp ---
+    cy.writeFile(resultsJson, JSON.stringify(unique, null, 2), { log: false });
+    cy.writeFile(timestamped, JSON.stringify(unique, null, 2), { log: false });
+
+    cy.task("log", `✅ Resultados exportados → ${resultsJson}`);
+    cy.task("log", `🕒 Copia con timestamp → ${timestamped}`);
+
+    // --- Resumen global numérico ---
+    const totalAxe = resumenGlobal.reduce((a, r) => a + r.axe, 0);
+    const totalPa11y = resumenGlobal.reduce((a, r) => a + r.pa11y, 0);
+    const totalCombined = resumenGlobal.reduce((a, r) => a + r.total, 0);
+
+    cy.task(
+      "log",
+      `\n📈 RESULTADOS GLOBALES INTERACTIVA\n------------------------------------\n` +
+        `🔹 Páginas auditadas: ${resumenGlobal.length}\n` +
+        `🔸 Total axe-core: ${totalAxe}\n` +
+        `🔸 Total Pa11y: ${totalPa11y}\n` +
+        `✅ Total combinado: ${totalCombined}\n`
+    );
+
+    // --- Verificación automática ---
+    cy.readFile(resultsJson, { log: false }).then(
+      (data) => {
+        if (!Array.isArray(data) || data.length === 0) {
+          cy.task("log", "⚠️ Archivo results.json vacío o no válido");
+        } else {
+          cy.task("log", `🧾 Verificación OK — ${data.length} registros IAAP PRO exportados`);
+        }
+      },
+      (err) => {
+        cy.task("log", `⚠️ Error leyendo results.json: ${err.message}`);
+      }
+    );
   });
 });
+

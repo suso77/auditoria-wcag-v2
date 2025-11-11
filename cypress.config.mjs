@@ -1,14 +1,3 @@
-/**
- * ♿ Configuración universal Cypress – IAAP PRO v4.44-H (FINAL)
- * ------------------------------------------------------------
- * ✅ Compatible con auditorías híbridas (sitemap + interactiva)
- * ✅ Soporte integrado para axe-core, Pa11y y logs IAAP PRO
- * ✅ readUrls(), writeResults(), clearCaptures() y pa11yAudit()
- * ✅ Totalmente compatible con Node 24+, Cypress 15+ y CI/CD
- * ✅ Rutas estandarizadas para merge-auditorias.mjs
- * ------------------------------------------------------------
- */
-
 import { defineConfig } from "cypress";
 import fs from "fs-extra";
 import path from "path";
@@ -16,22 +5,16 @@ import pa11y from "pa11y";
 
 let createBundler = null;
 
-// =============================================================
-// ⚙️ Carga dinámica del preprocesador esbuild
-// =============================================================
 async function loadBundler() {
   try {
     const pre = await import("@bahmutov/cypress-esbuild-preprocessor");
     return pre.default;
   } catch (e) {
-    console.warn("⚠️ No se pudo cargar el preprocesador:", e.message);
+    console.warn("⚠️ No se pudo cargar el preprocesador esbuild:", e.message);
     return null;
   }
 }
 
-// =============================================================
-// 🚀 Configuración principal Cypress E2E
-// =============================================================
 export default defineConfig({
   e2e: {
     baseUrl: process.env.SITE_URL || "https://www.hiexperience.es",
@@ -40,213 +23,162 @@ export default defineConfig({
     screenshotsFolder: "auditorias/capturas",
     screenshotOnRunFailure: true,
     video: false,
-    chromeWebSecurity: false,
+    chromeWebSecurity: false, // Deshabilitar la seguridad de Chrome si es necesario para iframes
     defaultCommandTimeout: 20000,
-    pageLoadTimeout: 90000,
+    pageLoadTimeout: 120000,
     viewportWidth: 1366,
     viewportHeight: 768,
     retries: { runMode: 1, openMode: 0 },
 
     async setupNodeEvents(on, config) {
-      // =========================================================
-      // 🧠 Preprocesador moderno (esbuild)
-      // =========================================================
+      // Cargar el bundler de esbuild
       createBundler = await loadBundler();
       if (!createBundler) {
-        console.error("❌ No se pudo cargar el preprocesador esbuild.");
-        process.exit(1);
+        console.warn("[IAAP] ⚠️ No se cargó esbuild, usando configuración predeterminada.");
+      } else {
+        const bundler = createBundler({
+          define: { "process.env.NODE_ENV": JSON.stringify("test") },
+          platform: "node",
+          format: "esm",
+        });
+
+        on("file:preprocessor", bundler);
+        console.log("[IAAP] 🧠 Preprocesador configurado correctamente con esbuild moderno.");
       }
 
-      const bundler = createBundler({
-        define: { "process.env.NODE_ENV": JSON.stringify("test") },
-        platform: "node",
-        format: "esm",
-      });
+      // Registrar tareas personalizadas
+      const registerAxeTask = require("./cypress/plugins/get-axe-source.cjs");
+      registerAxeTask(on);
 
-      on("file:preprocessor", bundler);
-      console.log("🧠 Preprocesador configurado correctamente con esbuild moderno");
+      on("task", {
+        log(message) {
+          console.log(message);
+          return null;
+        },
 
-      // =========================================================
-      // 🧩 Utilidades IAAP PRO
-      // =========================================================
-      const ensureDir = (dirPath) => {
-        if (!fs.existsSync(dirPath)) fs.mkdirSync(dirPath, { recursive: true });
-      };
+        verifyAxeSource() {
+          const axePath = path.resolve("node_modules/axe-core/axe.min.js");
+          if (fs.existsSync(axePath)) {
+            console.log(`[IAAP] ✅ axe-core detectado correctamente: ${axePath}`);
+            return true;
+          } else {
+            console.error("[IAAP] ❌ axe-core no encontrado en node_modules.");
+            return false;
+          }
+        },
 
-      const clearCaptures = () => {
-        const dir = path.join(process.cwd(), "auditorias", "capturas");
-        try {
-          fs.emptyDirSync(dir);
-          console.log("🧹 Capturas anteriores eliminadas correctamente.");
-        } catch (err) {
-          console.warn("⚠️ Error al limpiar capturas:", err.message);
-        }
-        return true;
-      };
-
-      // =========================================================
-      // 🌍 readUrls() – Corrige Promise real
-      // =========================================================
-      const readUrls = () => {
-        return new Promise((resolve) => {
+        clearCaptures() {
+          const dir = path.join(process.cwd(), "auditorias", "capturas");
           try {
-            const urlsPath = path.join(process.cwd(), "scripts", "urls.json");
-            if (!fs.existsSync(urlsPath)) {
-              console.warn(`⚠️ No se encontró ${urlsPath}`);
-              return resolve([]);
-            }
-            const raw = fs.readFileSync(urlsPath, "utf8").trim();
-            if (!raw) {
-              console.warn("⚠️ El archivo urls.json está vacío.");
-              return resolve([]);
-            }
+            fs.emptyDirSync(dir);
+            console.log("[IAAP] 🧹 Capturas anteriores eliminadas correctamente.");
+          } catch (err) {
+            console.warn("[IAAP] ⚠️ Error al limpiar capturas:", err.message);
+          }
+          return true;
+        },
+
+        createFolder(dir) {
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+          console.log(`[IAAP] 📁 Carpeta creada/verificada: ${dir}`);
+          return true;
+        },
+
+        readUrls() {
+          const urlsPath = path.join(process.cwd(), "scripts", "urls.json");
+          if (!fs.existsSync(urlsPath)) {
+            console.warn(`[IAAP] ⚠️ No se encontró ${urlsPath}`);
+            return [];
+          }
+          const raw = fs.readFileSync(urlsPath, "utf8").trim();
+          if (!raw) {
+            console.warn("[IAAP] ⚠️ El archivo urls.json está vacío.");
+            return [];
+          }
+          try {
             const parsed = JSON.parse(raw);
-            const valid = parsed
+            return parsed
               .filter((u) => u && u.url)
               .map((u) => ({
                 url: u.url.trim(),
                 title: u.title?.trim() || "(sin título)",
               }));
-            console.log(`🌍 Cargadas ${valid.length} URLs desde ${urlsPath}`);
-            resolve(valid);
           } catch (err) {
-            console.error("❌ Error leyendo urls.json:", err.message);
-            resolve([]);
+            console.error(`[IAAP] ❌ Error parseando urls.json: ${err.message}`);
+            return [];
           }
-        });
-      };
+        },
 
-      // =========================================================
-      // 💾 writeResults() – Con filename dinámico
-      // =========================================================
-      const writeResults = ({ dir, data, filename = "results.json" }) => {
-        ensureDir(dir);
-        const filePath = path.join(dir, filename);
-        try {
-          const existing = fs.existsSync(filePath)
-            ? JSON.parse(fs.readFileSync(filePath, "utf8"))
-            : [];
-          const merged = Array.isArray(data)
-            ? existing.concat(data)
-            : [...existing, data];
-          fs.writeFileSync(filePath, JSON.stringify(merged, null, 2));
-          console.log(`💾 Resultados guardados correctamente en ${filePath}`);
-        } catch (err) {
-          console.error("❌ Error guardando resultados:", err.message);
-        }
-        return true;
-      };
+        writeResults({ dir, data, filename }) {
+          const isInteractiva = dir.toLowerCase().includes("interactiva");
+          const safeName =
+            filename || `results-${isInteractiva ? "interactiva" : "sitemap"}-${Date.now()}.json`;
+          const filePath = path.join(dir, safeName);
 
-      // =========================================================
-      // 🧭 Logs IAAP PRO
-      // =========================================================
-      const safeLog = (message) => {
-        const text = typeof message === "string" ? message : JSON.stringify(message);
-        const logDir = path.join(process.cwd(), "auditorias");
-        const logPath = path.join(logDir, "logs.txt");
-        ensureDir(logDir);
-        try {
-          fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${text}\n`);
-        } catch (err) {
-          console.warn("⚠️ No se pudo escribir en logs.txt:", err.message);
-        }
-        console.log(`🧭 ${text}`);
-        return true;
-      };
+          try {
+            const existing = fs.existsSync(filePath)
+              ? JSON.parse(fs.readFileSync(filePath, "utf8"))
+              : [];
+            const merged = Array.isArray(data)
+              ? [...existing, ...data]
+              : [...existing, data];
 
-      const createFolder = (dir) => {
-        ensureDir(dir);
-        console.log(`📁 Carpeta creada/verificada: ${dir}`);
-        return true;
-      };
+            console.log(`[IAAP] 💾 Guardando ${merged.length} resultados en ${filePath}`);
+            fs.writeFileSync(filePath, JSON.stringify(merged, null, 2), "utf8");
+            console.log(`[IAAP] ✅ Resultados guardados correctamente.`);
+          } catch (err) {
+            console.error("[IAAP] ❌ Error guardando resultados:", err.message);
+          }
+          return filePath;
+        },
 
-      // =========================================================
-      // ♿ Task: Auditoría Pa11y
-      // =========================================================
-      const pa11yAudit = async (url) => {
-        if (!url) return [];
-        console.log(`🧩 Ejecutando auditoría Pa11y para: ${url}`);
-        try {
-          const results = await pa11y(url, {
-            standard: "WCAG2AA",
-            runners: ["htmlcs"],
-            timeout: 60000,
-            includeNotices: true,
-            includeWarnings: true,
-            log: { debug: () => {}, error: () => {}, info: () => {} },
-            chromeLaunchConfig: {
-              headless: true,
-              args: ["--no-sandbox", "--disable-setuid-sandbox"],
-            },
-          });
-          const mapped = (results?.issues || []).map((issue) => ({
-            engine: "pa11y",
-            code: issue.code,
-            message: issue.message,
-            context: issue.context,
-            selector: issue.selector,
-            type: issue.type,
-            wcag: issue.code?.match(/WCAG\\d+\\.\\d+/)?.[0] || "N/A",
-          }));
-          console.log(`♿ Pa11y completado (${url}) — ${mapped.length} issues`);
-          return mapped;
-        } catch (err) {
-          console.error(`❌ Error en Pa11y (${url}): ${err.message}`);
-          return [];
-        }
-      };
+        async pa11yAudit(url) {
+          if (!url) return [];
+          console.log(`[IAAP] 🧩 Ejecutando auditoría Pa11y para: ${url}`);
+          try {
+            const results = await pa11y(url, {
+              standard: "WCAG2AA",
+              runners: ["htmlcs"],
+              timeout: 60000,
+              includeNotices: true,
+              includeWarnings: true,
+              log: { debug: () => {}, error: () => {}, info: () => {} },
+              chromeLaunchConfig: {
+                headless: true,
+                args: [
+                  "--no-sandbox",
+                  "--disable-setuid-sandbox",
+                  "--disable-gpu",
+                  "--disable-dev-shm-usage",
+                  "--window-size=1366,768",
+                ],
+              },
+            });
 
-      // =========================================================
-      // 🔗 Registrar tasks IAAP PRO
-      // =========================================================
-      on("task", {
-        log: safeLog,
-        clearCaptures,
-        createFolder,
-        readUrls,
-        writeResults,
-        pa11yAudit,
+            const mapped = (results?.issues || []).map((issue) => ({
+              engine: "pa11y",
+              code: issue.code,
+              message: issue.message,
+              context: issue.context,
+              selector: issue.selector,
+              type: issue.type,
+              wcag: issue.code?.match(/WCAG\d+\.\d+/)?.[0] || "N/A",
+            }));
+
+            console.log(`[IAAP] ♿ Pa11y completado (${url}) — ${mapped.length} issues`);
+            return mapped;
+          } catch (err) {
+            console.error(`[IAAP] ❌ Error en Pa11y (${url}): ${err.message}`);
+            return [];
+          }
+        },
       });
-
-      // =========================================================
-      // 🚀 Configuración de navegador (CI/local)
-      // =========================================================
-      on("before:browser:launch", (browser = {}, launchOptions) => {
-        if (["chrome", "chromium", "edge"].includes(browser.name)) {
-          launchOptions.args.push(
-            "--no-sandbox",
-            "--disable-gpu",
-            "--disable-dev-shm-usage"
-          );
-        }
-        return launchOptions;
-      });
-
-      // =========================================================
-      // 🧾 Inicialización de logs
-      // =========================================================
-      try {
-        ensureDir(path.join(process.cwd(), "auditorias"));
-        fs.writeFileSync(
-          path.join(process.cwd(), "auditorias", "logs.txt"),
-          `\n===== INICIO AUDITORÍA ${new Date().toISOString()} =====\n`
-        );
-      } catch (err) {
-        console.warn("⚠️ No se pudo inicializar logs:", err.message);
-      }
 
       return config;
     },
   },
-
-  // =========================================================
-  // 📊 Reporter y entorno
-  // =========================================================
-  reporter: "spec",
-  reporterOptions: { toConsole: true },
-  env: {
-    SITE_URL: process.env.SITE_URL || "https://www.hiexperience.es",
-  },
 });
+
+
 
 

@@ -1,5 +1,5 @@
 /**
- * ♿ crawl.js (v4.1 IAAP PRO / WCAG 2.2)
+ * ♿ crawl.js (v5.3 IAAP PRO / WCAG 2.2)
  * ----------------------------------------------------------
  * Rastreador rápido y ligero basado en Cheerio.
  * Ideal para webs estáticas o con sitemap.xml accesible.
@@ -28,7 +28,7 @@ const __dirname = path.dirname(__filename);
 const SITE_URL = process.env.SITE_URL?.replace(/\/$/, "") || "https://example.com";
 const MAX_DEPTH = parseInt(process.env.MAX_DEPTH || "3", 10);
 const TIMEOUT = parseInt(process.env.TIMEOUT || "15000", 10);
-const USER_AGENT = "IAAP-A11yCrawler/4.1 (+https://github.com/iaap-pro)";
+const USER_AGENT = "IAAP-A11yCrawler/5.3 (+https://github.com/iaap-pro)";
 
 // 📂 Directorios
 const outputDir = path.join(__dirname, "..", "scripts");
@@ -55,14 +55,21 @@ function normalizeUrl(url) {
   }
 }
 
-function shouldVisit(url) {
-  return (
-    url.startsWith(SITE_URL) &&
-    !visited.has(url) &&
-    !NON_HTML_EXTENSIONS.test(url) &&
-    !url.includes("mailto:") &&
-    !url.includes("#")
-  );
+function isSpanishUrl(url) {
+  try {
+    const u = new URL(url);
+    const normalizedPath = u.pathname.trim().replace(/\/$/, "");  // Eliminar espacios y la barra final
+    const spanishPath = `/${process.env.LANG || 'es'}`;
+
+    // Compara el hostname y verifica si la ruta empieza con "/es" o es exactamente "/es"
+    return (
+      u.hostname === new URL(SITE_URL).hostname &&
+      (normalizedPath === spanishPath || normalizedPath.startsWith(spanishPath + "/"))
+    );
+  } catch (e) {
+    console.warn(`⚠️ Error al analizar la URL: ${url}`);
+    return false;
+  }
 }
 
 async function delay(ms) {
@@ -112,7 +119,7 @@ async function crawl(url, depth = 0) {
 function saveResults() {
   fs.mkdirSync(outputDir, { recursive: true });
   const outputPath = path.join(outputDir, "urls.json");
-  fs.writeFileSync(outputPath, JSON.stringify(results, null, 2));
+  fs.writeFileSync(outputPath, JSON.stringify(results.slice(0, MAX_URLS), null, 2));
 
   fs.mkdirSync(logDir, { recursive: true });
   const logPath = path.join(logDir, `${format(new Date(), "yyyy-MM-dd")}-crawler.log`);
@@ -139,7 +146,7 @@ function saveResults() {
 // 🚀 Ejecución principal
 // ==========================================================
 (async () => {
-  console.log(`🚀 Iniciando rastreo IAAP PRO v4.1`);
+  console.log(`🚀 Iniciando rastreo IAAP PRO v5.3`);
   console.log(`🌍 Dominio base: ${SITE_URL}`);
   console.log(`🔎 Profundidad máxima: ${MAX_DEPTH}`);
   console.log("-----------------------------------------------");
@@ -159,3 +166,4 @@ function saveResults() {
   const duration = ((Date.now() - start) / 1000).toFixed(1);
   console.log(`⏱️ Rastreo finalizado en ${duration}s`);
 })();
+

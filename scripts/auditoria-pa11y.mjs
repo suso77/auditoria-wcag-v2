@@ -34,30 +34,37 @@ const options = {
   }
 };
 
-// Ejecución secuencial
-const resultados = [];
+// Función async para ejecutar la auditoría
+const ejecutarAuditoria = async () => {
+  const resultados = [];
 
-for (const url of urls) {
-  console.log(`🔍 Ejecutando Pa11y en ${url}`);
-  try {
-    const result = await pa11y(url, options);
-    resultados.push({
-      pageUrl: url,
-      pa11y: result.issues.map((i) => ({
-        code: i.code,
-        type: i.type,
-        message: i.message,
-        selector: i.selector,
-        context: i.context,
-      })),
-    });
-    console.log(`✅ ${result.issues.length} hallazgos en ${url}`);
-  } catch (err) {
-    console.error(`❌ Error analizando ${url}: ${err.message}`);
+  // Ejecución secuencial
+  for (const url of urls) {
+    console.log(`🔍 Ejecutando Pa11y en ${url}`);
+    try {
+      const result = await pa11y(url, options);
+      resultados.push({
+        pageUrl: url,
+        pa11y: result.issues.map((i) => ({
+          code: i.code,
+          type: i.type,
+          message: i.message,
+          selector: i.selector,
+          context: i.context,
+        })),
+      });
+      console.log(`✅ ${result.issues.length} hallazgos en ${url}`);
+    } catch (err) {
+      console.error(`❌ Error analizando ${url}: ${err.message}`);
+    }
   }
-}
 
-// Guardar resultados
-fs.writeFileSync(OUTPUT, JSON.stringify(resultados, null, 2), "utf8");
-console.log(`💾 Resultados Pa11y guardados en: ${OUTPUT}`);
-console.log("🎯 Auditoría Pa11y completada IAAP PRO v4.16-H3");
+  // Guardar resultados
+  fs.writeFileSync(OUTPUT, JSON.stringify(resultados, null, 2), "utf8");
+  console.log(`💾 Resultados Pa11y guardados en: ${OUTPUT}`);
+  console.log("🎯 Auditoría Pa11y completada IAAP PRO v4.16-H3");
+};
+
+// Ejecutar la función
+ejecutarAuditoria();
+

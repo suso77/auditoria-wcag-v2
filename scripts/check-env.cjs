@@ -1,10 +1,9 @@
 /**
- * ✅ check-env.cjs (versión avanzada, estable y CI-safe)
+ * ✅ check-env.cjs (IAAP PRO v5.0 híbrido compatible)
  * ----------------------------------------------------------------------
  * Verifica que existan los archivos y carpetas mínimos
- * antes de ejecutar la auditoría WCAG.
- * Incluye comprobación HTTP no bloqueante del SITE_URL.
- * Compatible con chalk v5+, Node 20+ y entornos CI.
+ * antes de ejecutar la auditoría WCAG (Cypress + axe-core + Pa11y).
+ * Compatible con Cypress moderno (ESM), Node 20+, y entornos CI/CD.
  * ----------------------------------------------------------------------
  */
 
@@ -20,62 +19,60 @@ let chalk;
     const mod = await import("chalk");
     chalk = mod.default;
   } catch {
-    // Fallback sin colores
-    chalk = new Proxy({}, { get: () => (txt) => txt });
+    chalk = new Proxy({}, { get: () => (txt) => txt }); // fallback sin color
   }
 
   // ============================
-  // 🧩 Funciones de utilidad
+  // 🧩 Utilidades
   // ============================
-  function check(p, label) {
+  const check = (p, label) => {
     if (!fs.existsSync(p)) {
       console.error(chalk.redBright(`❌ ${label}: no encontrado → ${p}`));
       process.exit(1);
     } else {
       console.log(chalk.green(`✅ ${label}: OK`));
     }
-  }
+  };
 
-  function ensureDir(p, label) {
+  const ensureDir = (p, label) => {
     if (!fs.existsSync(p)) {
       fs.mkdirSync(p, { recursive: true });
       console.log(chalk.yellow(`📁 Carpeta creada automáticamente: ${label}`));
     }
-  }
+  };
 
-  async function checkSite(url) {
-    return new Promise((resolve) => {
+  const checkSite = async (url) =>
+    new Promise((resolve) => {
       if (!url || url.startsWith("(")) {
-        console.log(chalk.yellow("⚠️ SITE_URL no definido. Se omitirá la comprobación HTTP."));
+        console.log(chalk.yellow("⚠️ SITE_URL no definido. Se omite la comprobación HTTP."));
         return resolve();
       }
 
       const client = url.startsWith("https") ? https : http;
       console.log(chalk.cyan(`\n🌐 Verificando disponibilidad del sitio: ${url}`));
 
-      const req = client.get(url, { timeout: 10000 }, (res) => {
+      const req = client.get(url, { timeout: 8000 }, (res) => {
         if (res.statusCode >= 200 && res.statusCode < 300) {
           console.log(chalk.green(`✅ Sitio accesible (HTTP ${res.statusCode})`));
         } else {
-          console.warn(chalk.yellow(`⚠️ El sitio respondió con HTTP ${res.statusCode}. Se continuará igualmente.`));
+          console.warn(chalk.yellow(`⚠️ El sitio respondió con HTTP ${res.statusCode}. Se continuará.`));
         }
-        res.resume(); // ✅ consume el flujo antes de cerrar
+        res.resume();
         req.destroy();
         resolve();
       });
 
       req.on("error", (err) => {
-        console.warn(chalk.yellow(`⚠️ No se pudo acceder al sitio: ${err.message}. Se continuará igualmente.`));
+        console.warn(chalk.yellow(`⚠️ No se pudo acceder al sitio: ${err.message}`));
         resolve();
       });
 
       req.on("timeout", () => {
         req.destroy();
-        console.warn(chalk.yellow("⚠️ Timeout al intentar acceder al sitio. Se continuará igualmente."));
+        console.warn(chalk.yellow("⚠️ Timeout en la comprobación HTTP."));
         resolve();
       });
     });
-  }
 
   // ============================
   // 🧾 Mostrar entorno
@@ -89,30 +86,53 @@ let chalk;
     "⚠️ SERIOUS_MAX": process.env.SERIOUS_MAX || "(no definido)",
     "🕒 TZ": process.env.TZ || "(no definido)",
   };
-
   for (const [k, v] of Object.entries(envVars)) {
     console.log(`${k}: ${chalk.whiteBright?.(v) || v}`);
   }
 
   // ============================
-  // 🧱 Validaciones básicas
+  // 🧱 Validaciones principales
   // ============================
   console.log(chalk.cyan?.("\n🔍 Validando estructura mínima...") || "\n🔍 Validando estructura mínima...");
 
   const possibleConfigs = ["cypress.config.js", "cypress.config.cjs", "cypress.config.mjs"];
   const foundConfig = possibleConfigs.find((f) => fs.existsSync(f));
-
   if (foundConfig) {
-    console.log(chalk.green(`✅ Archivo de configuración Cypress detectado: ${foundConfig}`));
+    console.log(chalk.green(`✅ Configuración Cypress detectada: ${foundConfig}`));
   } else {
-    console.error(chalk.redBright(`❌ No se encontró ningún archivo de configuración Cypress (${possibleConfigs.join(", ")})`));
+    console.error(chalk.redBright(`❌ No se encontró archivo de configuración Cypress (${possibleConfigs.join(", ")})`));
     process.exit(1);
   }
 
   check("scripts", "Carpeta scripts");
   check("cypress/e2e", "Carpeta de tests e2e");
-  check("cypress/e2e/accesibilidad-sitemap.cy.js", "Test accesibilidad-sitemap.cy.js");
 
+  // ✅ Buscar automáticamente los tests híbridos
+  const possibleTests = [
+    "cypress/e2e/accesibilidad-sitemap-hibrido.cy.js",
+    "cypress/e2e/accesibilidad-sitemap.cy.js",
+  ];
+  const sitemapTest = possibleTests.find((f) => fs.existsSync(f));
+  if (sitemapTest) {
+    console.log(chalk.green(`✅ Test sitemap detectado: ${sitemapTest}`));
+  } else {
+    console.error(chalk.redBright("❌ No se encontró ningún test de sitemap válido (híbrido o estándar)."));
+    process.exit(1);
+  }
+
+  const possibleInteractiva = [
+    "cypress/e2e/accesibilidad-interactiva-hibrida.cy.js",
+    "cypress/e2e/accesibilidad-interactiva.cy.js",
+  ];
+  const interactivaTest = possibleInteractiva.find((f) => fs.existsSync(f));
+  if (interactivaTest) {
+    console.log(chalk.green(`✅ Test interactivo detectado: ${interactivaTest}`));
+  } else {
+    console.error(chalk.redBright("❌ No se encontró ningún test de auditoría interactiva (híbrido o estándar)."));
+    process.exit(1);
+  }
+
+  // URLs detectadas
   if (fs.existsSync("scripts/urls.json")) {
     console.log(chalk.green("✅ scripts/urls.json detectado correctamente."));
   } else {
@@ -120,10 +140,11 @@ let chalk;
   }
 
   // ============================
-  // 🧱 Directorios de salida
+  // 📂 Directorios de salida
   // ============================
   ensureDir("auditorias", "auditorias/");
   ensureDir("auditorias/capturas", "auditorias/capturas/");
+  ensureDir("auditorias/reportes", "auditorias/reportes/");
 
   // ============================
   // 🌐 Verificación HTTP opcional
@@ -133,8 +154,9 @@ let chalk;
   // ============================
   // ✅ Resultado final
   // ============================
-  console.log(chalk.bold?.green?.("\n✅ Entorno validado correctamente. Todo listo para la auditoría WCAG.\n") || "\n✅ Entorno validado correctamente. Todo listo para la auditoría WCAG.\n");
+  console.log(chalk.bold?.green?.("\n✅ Entorno validado correctamente. Todo listo para la auditoría WCAG IAAP PRO.\n") || "\n✅ Entorno validado correctamente. Todo listo para la auditoría WCAG IAAP PRO.\n");
 })();
+
 
 
 

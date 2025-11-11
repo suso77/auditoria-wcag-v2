@@ -1,18 +1,15 @@
 /**
- * ♿ export-to-xlsx.mjs — IAAP PRO v4.17-H1 (Full Stable + Pa11y + Revisiones manuales + Capturas inteligentes)
- * -------------------------------------------------
- * Exporta los resultados combinados (axe + pa11y + needs_review)
- * en un informe Excel profesional IAAP PRO con tres hojas:
+ * ♿ export-to-xlsx.mjs — IAAP PRO v5.5 (Full Stable + axe-core + Pa11y + Revisiones manuales)
+ * ------------------------------------------------------------------------------------------------
+ * Exporta los resultados combinados en un informe Excel IAAP PRO con tres hojas:
  *  - 📄 Sitemap (violaciones del rastreo)
  *  - ⚙️ Interactiva (violaciones de componentes)
- *  - 📊 Resumen (totales globales + severidades + criterios)
+ *  - 📊 Resumen global (usando merged-summary.json si existe)
  *
- * ✅ Compatible con merged-results.json / results-merged.json
- * ✅ Añade columna “Tipo” (WCAG / Revisión manual / Pa11y)
- * ✅ Detección inteligente de capturas
- * ✅ Enlaces funcionales (URL / W3C / Evidencias)
- * ✅ Colores y formato IAAP PRO
- * ✅ 100% compatible con GitHub Actions / Docker / CI
+ * ✅ Compatible con merge-auditorias.mjs v5.5
+ * ✅ Normaliza severidades de Pa11y (error, warning, notice → critical, moderate, minor)
+ * ✅ Limpieza de campos vacíos, descripción contextual y vínculos W3C
+ * ✅ Colores y agrupación por origen
  */
 
 import fs from "fs";
@@ -28,44 +25,49 @@ const AUDITORIAS_DIR = path.join(ROOT_DIR, "auditorias");
 const REPORTES_DIR = path.join(AUDITORIAS_DIR, "reportes");
 const OUTPUT_PATH = path.join(REPORTES_DIR, "Informe-WCAG-IAAP.xlsx");
 
-let mergedFile = null;
-for (const dir of [REPORTES_DIR, AUDITORIAS_DIR]) {
-  if (fs.existsSync(dir)) {
-    const found = fs
-      .readdirSync(dir)
-      .filter((f) => f.match(/(merged-results|results-merged).*\.json$/))
-      .sort()
-      .reverse()[0];
-    if (found) {
-      mergedFile = path.join(dir, found);
-      break;
-    }
-  }
-}
+const MERGED_PATH = path.join(REPORTES_DIR, "merged-results.json");
+const SUMMARY_PATH = path.join(REPORTES_DIR, "merged-summary.json");
 
-if (!mergedFile) {
-  console.error("❌ No se encontró ningún archivo merged-results*.json o results-merged*.json");
+if (!fs.existsSync(MERGED_PATH)) {
+  console.error("❌ No se encontró merged-results.json en auditorias/reportes/");
   process.exit(1);
 }
 
-console.log(`📄 Usando archivo: ${path.basename(mergedFile)}`);
-const data = JSON.parse(fs.readFileSync(mergedFile, "utf8"));
+const data = JSON.parse(fs.readFileSync(MERGED_PATH, "utf8"));
 if (!Array.isArray(data) || data.length === 0) {
   console.warn("⚠️ No hay datos válidos para exportar.");
   process.exit(0);
 }
 
+let summary = null;
+if (fs.existsSync(SUMMARY_PATH)) {
+  summary = JSON.parse(fs.readFileSync(SUMMARY_PATH, "utf8"));
+  console.log(`📊 Usando resumen global IAAP PRO de: ${SUMMARY_PATH}`);
+}
+
+console.log(`📄 Usando archivo de resultados: ${MERGED_PATH}`);
+
 // ===========================================================
-// 🧠 Funciones IAAP PRO — Traducción y contexto W3C
+// 🧠 Funciones auxiliares IAAP PRO
 // ===========================================================
+function normalizeImpact(impact) {
+  if (!impact) return "sin severidad";
+  const i = impact.toLowerCase();
+  if (["critical", "serious", "moderate", "minor"].includes(i)) return i;
+  if (i === "error") return "critical";
+  if (i === "warning") return "moderate";
+  if (i === "notice") return "minor";
+  return "sin severidad";
+}
+
 function obtenerCriterioIAAP(v) {
-  const info = getWcagInfo(v.id);
+  const info = getWcagInfo(v.wcag || v.id || "");
   if (!info) {
     return {
-      id: v.id || "(sin id)",
+      id: v.wcag || "(sin id)",
       criterio: "Criterio no identificado",
       nivel: "—",
-      resumen: "Elemento con problema de accesibilidad detectado.",
+      resumen: v.description || "Elemento con problema de accesibilidad detectado.",
       esperado: "Debe cumplir las pautas WCAG 2.1/2.2 aplicables.",
       url: "https://www.w3.org/WAI/WCAG22/quickref/?showtechniques=es",
     };
@@ -75,26 +77,22 @@ function obtenerCriterioIAAP(v) {
     url:
       info.url?.includes("w3.org") && !info.url.includes("?showtechniques=es")
         ? `${info.url}?showtechniques=es`
-        : info.url || "https://www.w3.org/WAI/WCAG22/quickref/?showtechniques=es",
+        : info.url,
   };
 }
 
 function generarResumen(v) {
   const criterio = obtenerCriterioIAAP(v);
-  return criterio.resumen || v.help || `Elemento que incumple el criterio ${criterio.id}.`;
+  return criterio.resumen || v.help || v.description || `Elemento que incumple el criterio ${criterio.id}.`;
 }
 
 function generarResultadoActual(v) {
-  const criterio = obtenerCriterioIAAP(v);
-  if (v.id === "color-contrast") {
+  if (v.id === "color-contrast" || v.wcag?.includes("1.4.3")) {
     const match = v.description?.match(/contrast of ([\d.]+)/);
     const ratio = match ? match[1] : "—";
     return `El contraste detectado es ${ratio}:1, inferior al mínimo 4.5:1 exigido por WCAG 2.1 nivel AA.`;
   }
-  return (
-    v.description ||
-    `El contenido no cumple con el criterio ${criterio.id}, afectando la accesibilidad percibida o funcional.`
-  );
+  return v.description || v.message || "El elemento no cumple con el criterio WCAG aplicable.";
 }
 
 function generarResultadoEsperado(v) {
@@ -111,7 +109,7 @@ function generarRecomendacion(v) {
 // 📊 Crear el Excel IAAP PRO
 // ===========================================================
 const wb = new ExcelJS.Workbook();
-wb.creator = "Ilúmina Audit IAAP PRO";
+wb.creator = "Ilúmina Audit IAAP PRO v5.5";
 wb.created = new Date();
 wb.properties.subject = "Auditoría de Accesibilidad WCAG – IAAP PRO";
 
@@ -152,103 +150,67 @@ hojaInteractiva.columns = columnasBase;
 const severidades = {};
 const criterios = {};
 let totalWCAG = 0;
-let totalReview = 0;
 let totalPa11y = 0;
 
-for (const item of data) {
-  const origen = item.origen || "sitemap";
+for (const issue of data) {
+  const origen = issue.origen || "sitemap";
   const destino = origen === "interactiva" ? hojaInteractiva : hojaSitemap;
-  const pageUrl = item.page || item.url || "(sin URL)";
+  const color = origen === "interactiva" ? "FF2196F3" : "FF2E7D32"; // Azul / Verde
 
-  // WCAG normales
-  for (const v of item.violations || []) {
-    addRow(v, destino, "WCAG", pageUrl);
-    totalWCAG++;
-  }
+  const criterio = obtenerCriterioIAAP(issue);
+  const resumen = generarResumen(issue);
+  const actual = generarResultadoActual(issue);
+  const esperado = generarResultadoEsperado(issue);
+  const recomendacion = generarRecomendacion(issue);
 
-  // needs_review
-  for (const v of item.needs_review || []) {
-    addRow(v, destino, "Revisión manual", pageUrl);
-    totalReview++;
-  }
+  const impactNorm = normalizeImpact(issue.impact);
+  const urlCell = issue.pageUrl
+    ? { text: issue.pageUrl, hyperlink: issue.pageUrl }
+    : "(sin URL)";
 
-  // Pa11y results
-  for (const v of item.pa11y || []) {
-    addRow(v, destino, "Pa11y", pageUrl);
-    totalPa11y++;
-  }
-}
-
-// ===========================================================
-// 🧩 Función auxiliar para añadir filas
-// ===========================================================
-function addRow(v, destino, tipo, pageUrl) {
-  const criterio = obtenerCriterioIAAP(v);
-  const resumen = generarResumen(v);
-  const actual = generarResultadoActual(v);
-  const esperado = generarResultadoEsperado(v);
-  const recomendacion = generarRecomendacion(v);
-  const selector = v.selector || v.nodes?.[0]?.target?.join(", ") || "(sin selector)";
-  const criterioLimpio = criterio.criterio || criterio.id || "Criterio WCAG no identificado";
-
-  // 🔍 Detección inteligente de capturas
   let capturaLink = "Sin captura disponible";
-  const posiblesDirs = ["sitemap", "interactiva", "combinado"];
-  const patrones = [
-    v.id,
-    criterio.id,
-    criterio.criterio?.split(" ")[0],
-    pageUrl?.split("/").pop(),
-    selector?.replace(/[^a-z0-9]/gi, "_"),
-  ].filter(Boolean);
-
-  for (const dir of posiblesDirs) {
-    const folder = path.join(AUDITORIAS_DIR, "capturas", dir);
-    if (fs.existsSync(folder)) {
-      const archivos = fs.readdirSync(folder);
-      const found = archivos.find((f) =>
-        patrones.some((p) => f.toLowerCase().includes(p.toLowerCase()) && f.endsWith(".png"))
-      );
-      if (found) {
-        const fullPath = path.join(folder, found);
-        capturaLink = { text: "Evidencia", hyperlink: `file://${fullPath}` };
-        break;
-      }
-    }
+  const capturePath = issue.capturePath
+    ? path.join(AUDITORIAS_DIR, issue.capturePath)
+    : null;
+  if (capturePath && fs.existsSync(capturePath)) {
+    capturaLink = { text: "Evidencia", hyperlink: `file://${capturePath}` };
   }
-
-  const urlCell =
-    pageUrl && pageUrl.startsWith("http")
-      ? { text: pageUrl, hyperlink: pageUrl }
-      : pageUrl;
 
   const row = destino.addRow({
-    id: v.id,
-    criterio: criterioLimpio,
+    id: issue.wcag || issue.id,
+    criterio: criterio.criterio || criterio.id,
     nivel: criterio.nivel || "AA",
-    tipo,
-    impact: v.impact || "",
+    tipo: issue.engine || "WCAG",
+    impact: impactNorm,
     resumen,
-    selector,
+    selector: issue.selector || "(sin selector)",
     url: urlCell,
     actual,
     esperado,
     recomendacion,
     captura: capturaLink,
-    system: "macOS Sonoma 14.7 + Chrome 129 (axe-core 4.9.1)",
+    system: "macOS Sonoma 14.7 + Chrome 129 (axe-core 4.9.1 + Pa11y 6.x)",
     metodologia: "WCAG 2.1 / 2.2 Nivel AA — axe-core + Pa11y + IAAP IA",
   });
 
-  ["captura", "url", "recomendacion"].forEach((campo) => {
+  row.getCell("id").fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: color },
+  };
+
+  ["url", "recomendacion", "captura"].forEach((campo) => {
     const cell = row.getCell(campo);
     if (typeof cell.value === "object" && cell.value.hyperlink) {
       cell.font = { color: { argb: "FF0563C1" }, underline: true };
     }
   });
 
-  const sev = v.impact || "sin severidad";
+  const sev = impactNorm;
   severidades[sev] = (severidades[sev] || 0) + 1;
   criterios[criterio.id] = (criterios[criterio.id] || 0) + 1;
+  totalWCAG++;
+  if (issue.engine === "pa11y") totalPa11y++;
 }
 
 // ===========================================================
@@ -256,15 +218,22 @@ function addRow(v, destino, tipo, pageUrl) {
 // ===========================================================
 hojaResumen.columns = [
   { header: "Categoría", key: "cat", width: 45 },
-  { header: "Valor", key: "val", width: 15 },
+  { header: "Valor", key: "val", width: 20 },
   { header: "Porcentaje", key: "pct", width: 15 },
 ];
 
-hojaResumen.addRow(["📊 Totales globales IAAP PRO", "", ""]);
-hojaResumen.addRow(["Violaciones WCAG", totalWCAG, ""]);
-hojaResumen.addRow(["Revisiones manuales (needs_review)", totalReview, ""]);
-hojaResumen.addRow(["Resultados Pa11y", totalPa11y, ""]);
+hojaResumen.getRow(1).font = { bold: true, size: 12, color: { argb: "FF0D47A1" } };
+hojaResumen.addRow(["📊 Resumen IAAP PRO v5.5", "", ""]);
 hojaResumen.addRow(["", "", ""]);
+
+if (summary) {
+  hojaResumen.addRow(["URLs auditadas (total)", summary.totalUrls, ""]);
+  hojaResumen.addRow(["Violaciones combinadas", summary.totalIssues, ""]);
+  hojaResumen.addRow(["Violaciones Sitemap", summary.sitemap.total, ""]);
+  hojaResumen.addRow(["Violaciones Interactiva", summary.interactiva.total, ""]);
+  hojaResumen.addRow(["Fecha", summary.fecha, ""]);
+  hojaResumen.addRow(["", "", ""]);
+}
 
 const totalSev = Object.values(severidades).reduce((a, b) => a + b, 0) || 1;
 hojaResumen.addRow(["📊 Severidades detectadas", "", ""]);
@@ -277,7 +246,7 @@ const colorSeveridad = {
   "sin severidad": { color: "FF9E9E9E", label: "⚪ Sin severidad" },
 };
 
-for (const sev of ["critical", "serious", "moderate", "minor"]) {
+for (const sev of Object.keys(colorSeveridad)) {
   const count = severidades[sev] || 0;
   const pct = count / totalSev;
   const meta = colorSeveridad[sev];
@@ -298,10 +267,10 @@ for (const [crit, count] of criteriosOrdenados.slice(0, 10)) {
 }
 
 hojaResumen.getColumn("pct").numFmt = "0.0%";
-hojaResumen.getRow(1).font = { bold: true, size: 12, color: { argb: "FF0D47A1" } };
 
 // ===========================================================
 // 💾 Guardar Excel
 // ===========================================================
 await wb.xlsx.writeFile(OUTPUT_PATH);
-console.log(`✅ Informe IAAP PRO v4.17-H1 exportado correctamente: ${OUTPUT_PATH}`);
+console.log(`✅ Informe IAAP PRO v5.5 exportado correctamente: ${OUTPUT_PATH}`);
+

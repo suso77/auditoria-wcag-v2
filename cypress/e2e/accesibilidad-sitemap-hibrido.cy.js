@@ -1,41 +1,44 @@
 /// <reference types="cypress" />
 
 /**
- * ♿ Auditoría de accesibilidad – Sitemap híbrido IAAP PRO v4.44 (FINAL TOTAL)
+ * ♿ Auditoría de accesibilidad – Sitemap híbrido IAAP PRO v5.2
  * ---------------------------------------------------------------------------
- * ✅ axe-core + Pa11y
- * ✅ results.json global + JSON por URL
- * ✅ Captura de pantalla por cada URL
- * ✅ Resumen global con totales
- * ✅ Compatible con Cypress 15+ / Node 24+ / Chrome Headed
+ * ✅ Ejecuta axe-core + Pa11y SIEMPRE
+ * ✅ Espera correctamente los resultados (asincronía controlada)
+ * ✅ Guarda resultados individuales, globales y resumen
+ * ✅ Exporta results.json compatible con merge-auditorias.mjs
+ * ✅ Verificación automática de integridad (results.json no vacío)
+ * ✅ Compatible con Node 24+, Cypress 15+, GitHub Actions
  */
 
-describe("♿ Auditoría de accesibilidad – Sitemap híbrido (IAAP PRO v4.44-FINAL TOTAL)", () => {
+describe("♿ Auditoría de accesibilidad – Sitemap híbrido (IAAP PRO v5.2)", () => {
   const auditoriaDir = "auditorias/auditoria-sitemap";
   let resumenGlobal = [];
+  let resultadosCompletos = [];
 
   before(() => {
     cy.task("clearCaptures");
     cy.task("createFolder", auditoriaDir);
   });
 
-  it("Audita todas las páginas del sitemap (modo híbrido completo con capturas y resumen)", () => {
+  it("Audita todas las páginas del sitemap (axe-core + Pa11y híbrido)", () => {
     cy.task("readUrls").then((urls) => {
       if (!urls || urls.length === 0) {
         cy.task("log", "⚠️ No se encontraron URLs en scripts/urls.json");
         return;
       }
 
-      cy.task("log", `🌍 URLs cargadas (${urls.length}) desde scripts/urls.json`);
-      cy.task("log", "🧠 Iniciando ejecución secuencial IAAP PRO...");
+      cy.task("log", `🌍 ${urls.length} URLs cargadas desde scripts/urls.json`);
+      cy.task("log", "🧠 Iniciando ejecución secuencial IAAP PRO Sitemap...");
 
-      urls.forEach(({ url, title }, index) => {
+      cy.wrap(urls).each(({ url, title }, index) => {
         cy.task("log", `🧭 [${index + 1}/${urls.length}] Auditando ${url}`);
         cy.task("clearCaptures");
 
-        cy.visit(url, { timeout: 90000, failOnStatusCode: false });
+        // --- Espera extendida para CI y páginas pesadas ---
+        cy.visit(url, { timeout: 120000, failOnStatusCode: false });
         cy.document().its("readyState").should("eq", "complete");
-        cy.wait(3000);
+        cy.wait(4000);
 
         cy.window().then(async (win) => {
           let axeIssues = [];
@@ -50,17 +53,21 @@ describe("♿ Auditoría de accesibilidad – Sitemap híbrido (IAAP PRO v4.44-F
             const results = await win.axe.run(win.document, {
               runOnly: {
                 type: "tag",
-                values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"],
+                values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"],
               },
+              resultTypes: ["violations"],
+              reporter: "v2",
             });
 
             axeIssues = results.violations.map((v) => ({
               engine: "axe-core",
               id: v.id,
-              impact: v.impact,
+              impact: v.impact || "unknown",
               description: v.description,
               helpUrl: v.helpUrl,
-              nodes: v.nodes.length,
+              selector: v.nodes?.[0]?.target?.[0] || "",
+              pageUrl: url,
+              title: title || "",
             }));
 
             cy.task("log", `✅ axe.run() completado: ${axeIssues.length} violaciones`);
@@ -69,21 +76,26 @@ describe("♿ Auditoría de accesibilidad – Sitemap híbrido (IAAP PRO v4.44-F
           }
 
           // --- Pa11y ---
-          cy.task("pa11yAudit", url).then((pa11yResults = []) => {
-            pa11yIssues = pa11yResults.map((i) => ({
-              engine: "pa11y",
-              code: i.code,
-              message: i.message,
-              selector: i.selector,
-              context: i.context,
-              wcag: i.wcag,
-            }));
+          return cy.task("pa11yAudit", url).then((pa11yResults = []) => {
+            if (Array.isArray(pa11yResults)) {
+              pa11yIssues = pa11yResults.map((i) => ({
+                engine: "pa11y",
+                id: i.code,
+                impact: i.type || "notice",
+                description: i.message,
+                selector: i.selector,
+                context: i.context,
+                pageUrl: url,
+                title: title || "",
+              }));
+            }
 
+            cy.task("log", `[IAAP] ♿ Pa11y completado (${url}) — ${pa11yIssues.length} issues`);
+
+            // --- Unificar resultados ---
             const combined = [...axeIssues, ...pa11yIssues];
-            cy.task("log", `♿ Pa11y completado (${url}) — ${pa11yIssues.length} issues`);
-
-            // --- Guardar resultados globales ---
-            cy.task("writeResults", { dir: auditoriaDir, data: combined });
+            resultadosCompletos.push(...combined);
+            cy.task("log", `[IAAP] 🌍 Total combinado: ${combined.length} issues en ${url}`);
 
             // --- Guardar resultados individuales ---
             const slug = url
@@ -93,14 +105,14 @@ describe("♿ Auditoría de accesibilidad – Sitemap híbrido (IAAP PRO v4.44-F
             const individualPath = `${auditoriaDir}/${slug}.json`;
 
             cy.writeFile(individualPath, JSON.stringify(combined, null, 2), { log: false });
-            cy.task("log", `💾 Guardado OK (${combined.length} issues) → ${individualPath}`);
+            cy.task("log", `💾 Guardado OK (${combined.length}) → ${individualPath}`);
 
-            // --- Captura de pantalla ---
+            // --- Captura ---
             const screenshotName = `${index + 1}-${slug}`;
             cy.screenshot(`${auditoriaDir}/${screenshotName}`, { capture: "fullPage" });
-            cy.task("log", `📸 Captura guardada → ${screenshotName}.png`);
+            cy.task("log", `📸 Captura → ${screenshotName}.png`);
 
-            // --- Acumular resumen global ---
+            // --- Añadir al resumen global ---
             resumenGlobal.push({
               index: index + 1,
               url,
@@ -109,6 +121,13 @@ describe("♿ Auditoría de accesibilidad – Sitemap híbrido (IAAP PRO v4.44-F
               pa11y: pa11yIssues.length,
               total: combined.length,
             });
+
+            // --- Guardado parcial ---
+            return cy.task("writeResults", {
+              dir: auditoriaDir,
+              data: resumenGlobal,
+              filename: `results-sitemap-temp.json`,
+            });
           });
         });
       });
@@ -116,13 +135,21 @@ describe("♿ Auditoría de accesibilidad – Sitemap híbrido (IAAP PRO v4.44-F
   });
 
   after(() => {
-    // --- Guardar resumen global ---
-    const resumenPath = `${auditoriaDir}/resumen-final.json`;
-    cy.writeFile(resumenPath, JSON.stringify(resumenGlobal, null, 2), { log: false });
+    cy.task("log", `[IAAP] 🌍 Guardando resumen final IAAP PRO Sitemap...`);
 
-    // --- Crear resumen legible (Markdown) ---
+    const resumenPath = `${auditoriaDir}/resumen-final.json`;
+    const markdownPath = `${auditoriaDir}/resumen-final.md`;
+    const resultsJson = `${auditoriaDir}/results.json`;
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const timestamped = `${auditoriaDir}/results-sitemap-${timestamp}.json`;
+
+    // --- Guardar resumen JSON ---
+    cy.writeFile(resumenPath, JSON.stringify(resumenGlobal, null, 2), { log: false });
+    cy.task("log", `💾 Resumen guardado en ${resumenPath}`);
+
+    // --- Guardar resumen Markdown ---
     const markdownResumen = [
-      "# 📊 Resumen final de auditoría IAAP PRO",
+      "# 📊 Resumen final de auditoría IAAP PRO Sitemap",
       "",
       "| Nº | URL | axe-core | Pa11y | Total |",
       "|----|-----|----------|--------|--------|",
@@ -135,22 +162,53 @@ describe("♿ Auditoría de accesibilidad – Sitemap híbrido (IAAP PRO v4.44-F
       `**Fecha:** ${new Date().toLocaleString("es-ES")}`,
     ].join("\n");
 
-    cy.writeFile(`${auditoriaDir}/resumen-final.md`, markdownResumen, { log: false });
-    cy.task("log", `📊 Resumen final guardado en JSON y Markdown en ${auditoriaDir}`);
+    cy.writeFile(markdownPath, markdownResumen, { log: false });
+    cy.task("log", `📊 Resumen Markdown creado correctamente.`);
+
+    // --- Unificar resultados (sin duplicados) ---
+    const unique = Object.values(
+      resultadosCompletos.reduce((acc, r) => {
+        const key = `${r.engine}-${r.id}-${r.pageUrl}-${r.selector}`;
+        if (!acc[key]) acc[key] = r;
+        return acc;
+      }, {})
+    );
+
+    // --- Guardado principal ---
+    cy.writeFile(resultsJson, JSON.stringify(unique, null, 2), { log: false });
+    cy.task("log", `✅ Archivo principal exportado → ${resultsJson}`);
+
+    // --- Guardado con timestamp ---
+    cy.writeFile(timestamped, JSON.stringify(unique, null, 2), { log: false }).then(() => {
+      const totalAxe = resumenGlobal.reduce((acc, r) => acc + r.axe, 0);
+      const totalPa11y = resumenGlobal.reduce((acc, r) => acc + r.pa11y, 0);
+      const totalCombined = resumenGlobal.reduce((acc, r) => acc + r.total, 0);
+
+      cy.task(
+        "log",
+        `\n📈 RESULTADOS GLOBALES SITEMAP\n------------------------------------\n` +
+          `🔹 Páginas auditadas: ${resumenGlobal.length}\n` +
+          `🔸 Total axe-core: ${totalAxe}\n` +
+          `🔸 Total Pa11y: ${totalPa11y}\n` +
+          `✅ Total combinado: ${totalCombined}\n`
+      );
+
+      cy.task("log", `[IAAP] ✅ Guardado final completado en ${timestamped}`);
+    });
+
+    // --- 🔍 Verificación automática del results.json ---
+    cy.readFile(resultsJson, { log: false }).then(
+      (data) => {
+        if (!Array.isArray(data) || data.length === 0) {
+          cy.task("log", "⚠️ Archivo results.json vacío o no válido");
+        } else {
+          cy.task("log", `🧾 Verificación OK — ${data.length} registros IAAP PRO exportados`);
+        }
+      },
+      (err) => {
+        cy.task("log", `⚠️ Error leyendo results.json: ${err.message}`);
+      }
+    );
   });
 });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 

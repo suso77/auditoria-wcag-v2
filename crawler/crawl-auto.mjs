@@ -1,5 +1,5 @@
 /**
- * ♿ crawl-auto.mjs (v4.4 IAAP PRO / WCAG 2.2)
+ * ♿ crawl-auto.mjs (v4.7 IAAP PRO / WCAG 2.2)
  * --------------------------------------------------------
  * Rastreo automático inteligente y autolimpiante:
  *  - Detecta si el sitio es estático o SPA (React, Vue, Webflow, etc.)
@@ -8,7 +8,9 @@
  *      → crawl-puppeteer.mjs (renderizado real)
  *  - Elimina logs antiguos y fuerza nuevo rastreo siempre
  *
+ * ✅ Límite global de URLs configurable (MAX_URLS)
  * ✅ Detección automática de frameworks JS
+ * ✅ Idioma español (/es)
  * ✅ Fallback seguro (si uno falla, usa el otro)
  * ✅ Limpieza automática de logs (>7 días)
  * ✅ Compatible con CI/CD (GitHub Actions, Docker)
@@ -30,6 +32,7 @@ const ROOT = path.join(__dirname, "..");
 
 // 🌐 Configuración base
 const SITE_URL = process.env.SITE_URL?.replace(/\/$/, "") || "https://example.com";
+const MAX_URLS = parseInt(process.env.MAX_URLS || "80", 10);
 const urlsPath = path.join(ROOT, "scripts", "urls.json");
 const logDir = path.join(ROOT, "auditorias");
 const logFile = path.join(logDir, `${format(new Date(), "yyyy-MM-dd")}-crawl-auto.log`);
@@ -39,8 +42,10 @@ fs.mkdirSync(path.dirname(urlsPath), { recursive: true });
 fs.mkdirSync(logDir, { recursive: true });
 
 console.log("============================================================");
-console.log(`🚀 IAAP PRO – Rastreo automático (v4.4)`);
+console.log(`🚀 IAAP PRO – Rastreo automático (v4.7)`);
 console.log(`🌍 Dominio: ${SITE_URL}`);
+console.log(`🗣️ Idioma preferido: Español (/es)`);
+console.log(`📏 Límite global de URLs: ${MAX_URLS}`);
 console.log("============================================================");
 
 // =============================================================
@@ -181,7 +186,9 @@ async function detectFramework() {
   const summary = [
     `📅 Fecha: ${new Date().toISOString()}`,
     `🌍 Sitio: ${SITE_URL}`,
+    `🗣️ Idioma: Español (/es)`,
     `🧩 Tipo de rastreo: ${type.toUpperCase()}`,
+    `📏 Límite global de URLs: ${MAX_URLS}`,
     `📊 URLs encontradas: ${data.length}`,
     `⏱️ Duración: ${duration}s`,
     "",
@@ -190,9 +197,13 @@ async function detectFramework() {
 
   fs.appendFileSync(logFile, summary + "\n\n");
   console.log("============================================================");
-  console.log("✅ Rastreo automático completado IAAP PRO v4.4");
+  console.log("✅ Rastreo automático completado IAAP PRO v4.7");
   console.log(`📊 URLs encontradas: ${data.length}`);
+  if (data.length >= MAX_URLS) {
+    console.log(`⚠️ Rastreo detenido automáticamente al alcanzar ${MAX_URLS} URLs.`);
+  }
   console.log(`🪵 Log: ${logFile}`);
   console.log("============================================================");
 })();
+
 

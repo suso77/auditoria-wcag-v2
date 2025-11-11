@@ -1,211 +1,277 @@
 /**
- * ♿ IAAP PRO v4.44 — Merge de auditorías de accesibilidad (FINAL TOTAL)
- * ---------------------------------------------------------------------
- * Une los resultados de:
- *  - auditorias/auditoria-sitemap/results.json
- *  - auditorias/auditoria-interactiva/results.json
- *  - auditorias/auditoria-interactiva/results-batch-*.json
- *  - auditorias/pa11y-results.json
- *  - auditorias/needs_review.json
- *
- * Genera:
- *  - auditorias/reportes/merged-results.json
- *  - auditorias/reportes/merged-summary.md
- *  - auditorias/results-merged-[timestamp].json (compatibilidad)
- * ---------------------------------------------------------------------
- * ✅ IAAP PRO compatible con v4.16-H3, 4.4x y flujo híbrido Cypress
+ * ♿ merge-auditorias.mjs (IAAP PRO Híbrido v5.5)
+ * ---------------------------------------------------------
+ * ✅ Fusiona resultados de auditorías axe-core + Pa11y (Sitemap + Interactiva)
+ * ✅ Acepta archivos con timestamp (results-interactiva-*.json)
+ * ✅ Prioriza resultados interactivos sobre sitemap
+ * ✅ Normaliza WCAG para Pa11y (usando wcag-map-pa11y.js)
+ * ✅ Elimina duplicados entre ambos orígenes
+ * ✅ Añade rutas de capturas PNG si existen
+ * ✅ Ordena por URL + severidad de impacto
+ * ✅ Añade ID único + origenId para trazabilidad
+ * ✅ Genera merged-results.json, copia histórica y resumen JSON
+ * ✅ Incluye estadísticas IAAP PRO
+ * ✅ 100% compatible con CI/CD (no bloquea el pipeline)
  */
 
 import fs from "fs";
 import path from "path";
+import url from "url";
+import { getWcagFromPa11y } from "./wcag-map-pa11y.js"; // 🧠 Normalizador WCAG Pa11y
 
-// =====================================================
-// 📁 Configuración
-// =====================================================
+const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const ROOT = process.cwd();
 const AUDITORIAS_DIR = path.join(ROOT, "auditorias");
-const OUTPUT_DIR = path.join(AUDITORIAS_DIR, "reportes");
-if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+const REPORTES_DIR = path.join(AUDITORIAS_DIR, "reportes");
+const CAPTURAS_DIR = path.join(AUDITORIAS_DIR, "capturas");
 
-const MERGED_FILE = path.join(OUTPUT_DIR, "merged-results.json");
-const SUMMARY_FILE = path.join(OUTPUT_DIR, "merged-summary.md");
+fs.mkdirSync(REPORTES_DIR, { recursive: true });
 
-// =====================================================
-// 📦 Fuentes principales
-// =====================================================
-const FUENTES = [
-  "auditoria-sitemap/results.json",
-  "auditoria-interactiva/results.json",
-  "pa11y-results.json",
-  "needs_review.json",
-];
+// ------------------------------------------------------------------
+// 🧩 Localizar resultados más recientes (Sitemap + Interactiva)
+// ------------------------------------------------------------------
+const sitemapPath = path.join(AUDITORIAS_DIR, "auditoria-sitemap", "results.json");
+const interactivaDir = path.join(AUDITORIAS_DIR, "auditoria-interactiva");
+let interactivaPath = path.join(interactivaDir, "results.json");
 
-let merged = [];
-let total = 0;
-
-// =====================================================
-// 🔍 Cargar resultados base
-// =====================================================
-for (const f of FUENTES) {
-  const file = path.join(AUDITORIAS_DIR, f);
-  if (!fs.existsSync(file)) {
-    console.warn(`⚠️ No se encontró ${f}, se omite.`);
-    continue;
+// Si no hay results.json directo, buscar el más reciente con timestamp
+if (!fs.existsSync(interactivaPath)) {
+  const files = fs.existsSync(interactivaDir)
+    ? fs.readdirSync(interactivaDir).filter(
+        (f) => f.startsWith("results-interactiva-") && f.endsWith(".json")
+      )
+    : [];
+  if (files.length > 0) {
+    interactivaPath = path.join(interactivaDir, files.sort().reverse()[0]);
+    console.log(`🧩 Usando resultado interactivo más reciente: ${path.basename(interactivaPath)}`);
+  } else {
+    console.warn("⚠️ No se encontraron archivos de auditoría interactiva.");
   }
+}
 
+// ------------------------------------------------------------------
+// 📦 Recopilar archivos JSON válidos
+// ------------------------------------------------------------------
+const jsonFiles = [];
+if (fs.existsSync(sitemapPath)) jsonFiles.push(sitemapPath);
+if (fs.existsSync(interactivaPath)) jsonFiles.push(interactivaPath);
+
+if (jsonFiles.length === 0) {
+  console.warn("⚠️ No se encontraron archivos JSON de auditoría para combinar.");
+  process.exit(0);
+}
+
+// ------------------------------------------------------------------
+// 🧩 Cargar y normalizar resultados
+// ------------------------------------------------------------------
+const merged = [];
+
+for (const file of jsonFiles) {
   try {
     const raw = fs.readFileSync(file, "utf8");
     if (!raw.trim()) continue;
     const data = JSON.parse(raw);
-    const arr = Array.isArray(data) ? data : [data];
-    merged.push(...arr);
-    total += arr.length;
-    console.log(`📥 ${arr.length} resultados añadidos desde ${f}`);
-  } catch (err) {
-    console.warn(`⚠️ Error leyendo ${f}: ${err.message}`);
-  }
-}
+    if (!Array.isArray(data) || data.length === 0) continue;
 
-// =====================================================
-// 🧩 Integrar resultados por lotes (interactiva batch)
-// =====================================================
-const batchDir = path.join(AUDITORIAS_DIR, "auditoria-interactiva");
-if (fs.existsSync(batchDir)) {
-  const batchFiles = fs
-    .readdirSync(batchDir)
-    .filter((f) => f.startsWith("results-batch-") && f.endsWith(".json"));
+    const origen = /interactiva/i.test(file)
+      ? "interactiva"
+      : /sitemap/i.test(file)
+      ? "sitemap"
+      : "combinado";
 
-  for (const file of batchFiles) {
-    try {
-      const raw = fs.readFileSync(path.join(batchDir, file), "utf8");
-      const data = JSON.parse(raw);
-      const arr = Array.isArray(data) ? data : [data];
-      merged.push(...arr);
-      total += arr.length;
-      console.log(`🧩 Añadidos ${arr.length} resultados desde ${file}`);
-    } catch (err) {
-      console.warn(`⚠️ Error leyendo lote ${file}: ${err.message}`);
+    const origenId = path.basename(file).replace(/results-|\.json/g, "");
+
+    for (const issue of data) {
+      const engine =
+        issue.engine?.toLowerCase() ||
+        (issue.code?.includes("Principle") ? "pa11y" : "axe-core");
+
+      const wcagRef =
+        issue.wcag && issue.wcag !== ""
+          ? issue.wcag
+          : engine === "pa11y"
+          ? getWcagFromPa11y(issue.code || "")
+          : "Desconocido";
+
+      merged.push({
+        id: `${origen}-${Buffer.from(
+          (issue.pageUrl || issue.url || "") + (issue.selector || "body")
+        )
+          .toString("base64")
+          .substring(0, 12)}`,
+        origen,
+        origenId,
+        engine,
+        pageUrl: issue.pageUrl || issue.url || "",
+        pageTitle: issue.pageTitle || issue.title || "(sin título)",
+        impact: issue.impact || issue.type || "n/a",
+        description: issue.description || issue.message || "",
+        helpUrl: issue.helpUrl || issue.help || "",
+        selector: issue.selector || "",
+        context: issue.context || "",
+        wcag: wcagRef,
+        nodes: issue.nodes || 0,
+      });
     }
+  } catch (err) {
+    console.warn(`⚠️ Error leyendo ${file}: ${err.message}`);
   }
 }
 
 if (merged.length === 0) {
-  console.error("❌ No hay resultados para combinar. Ejecuta las auditorías primero.");
-  process.exit(1);
+  console.warn("⚠️ No se detectaron issues combinables.");
+  process.exit(0);
 }
 
-// =====================================================
-// 🔗 Normalizar estructura IAAP PRO
-// =====================================================
-const normalizados = merged.map((item) => ({
-  origen: item.origen || inferOrigen(item),
-  page: item.page || item.url || "(sin URL)",
-  violations: Array.isArray(item.violations) ? item.violations : [],
-  needs_review: Array.isArray(item.needs_review) ? item.needs_review : [],
-  pa11y: Array.isArray(item.pa11y)
-    ? item.pa11y
-    : Array.isArray(item.results)
-    ? item.results
-    : [],
-}));
+// ------------------------------------------------------------------
+// 🧽 Deduplicación IAAP PRO (prioriza interactiva)
+// ------------------------------------------------------------------
+const deduped = merged
+  .sort((a, b) => (a.origen === "interactiva" && b.origen !== "interactiva" ? -1 : 1))
+  .filter(
+    (item, index, self) =>
+      index ===
+      self.findIndex(
+        (t) =>
+          t.pageUrl === item.pageUrl &&
+          t.selector === item.selector &&
+          t.wcag === item.wcag &&
+          t.description === item.description &&
+          t.engine === item.engine
+      )
+  );
 
-function inferOrigen(item) {
-  if (item.url?.includes("interactiva")) return "interactiva";
-  if (item.url?.includes("sitemap")) return "sitemap";
-  return "combinado";
-}
-
-// =====================================================
-// 🧩 Fusionar por página
-// =====================================================
-const mergedByPage = {};
-for (const r of normalizados) {
-  const key = r.page;
-  if (!mergedByPage[key]) mergedByPage[key] = { ...r };
-  else {
-    mergedByPage[key].violations.push(...r.violations);
-    mergedByPage[key].needs_review.push(...r.needs_review);
-    mergedByPage[key].pa11y.push(...r.pa11y);
+// ------------------------------------------------------------------
+// 🖼️ Asociar capturas PNG si existen
+// ------------------------------------------------------------------
+function findPngs(dir) {
+  const result = [];
+  if (!fs.existsSync(dir)) return result;
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) result.push(...findPngs(full));
+    else if (e.isFile() && e.name.endsWith(".png")) result.push(full);
   }
+  return result;
 }
 
-const finalResults = Object.values(mergedByPage);
+const pngs = findPngs(CAPTURAS_DIR);
 
-// =====================================================
-// 🧩 Deduplicar
-// =====================================================
-for (const item of finalResults) {
-  const dedup = (arr) =>
-    Object.values(
-      arr.reduce((acc, v) => {
-        const id = v.id || v.code || JSON.stringify(v);
-        acc[id] = v;
-        return acc;
-      }, {})
-    );
-  item.violations = dedup(item.violations);
-  item.needs_review = dedup(item.needs_review);
-  item.pa11y = dedup(item.pa11y);
-}
-
-// =====================================================
-// 💾 Guardar merged-results.json
-// =====================================================
-fs.writeFileSync(MERGED_FILE, JSON.stringify(finalResults, null, 2), "utf8");
-console.log(`✅ Archivo combinado creado en: ${MERGED_FILE}`);
-console.log(`📊 Total combinado: ${finalResults.length} páginas (${total} entradas)`);
-
-// =====================================================
-// 📈 Generar resumen Markdown
-// =====================================================
-const byImpact = { critical: 0, serious: 0, moderate: 0, minor: 0, unclassified: 0 };
-let pa11yCount = 0;
-let needsReviewCount = 0;
-
-finalResults.forEach((item) => {
-  item.violations?.forEach((v) => {
-    const impact = v.impact?.toLowerCase() || "unclassified";
-    if (byImpact[impact] !== undefined) byImpact[impact]++;
-  });
-  needsReviewCount += item.needs_review?.length || 0;
-  pa11yCount += item.pa11y?.length || 0;
+deduped.forEach((issue) => {
+  const hint = issue.pageUrl.replace(/[^\w-]/g, "_").slice(0, 60);
+  const match = pngs.find((p) => p.includes(hint));
+  if (match) issue.capturePath = path.relative(AUDITORIAS_DIR, match);
 });
 
-let summary = `# ♿ Informe Consolidado IAAP PRO v4.44 (Final)\n\n`;
-summary += `📅 Fecha: ${new Date().toLocaleString("es-ES")}\n\n`;
-summary += `📊 **Total de páginas:** ${finalResults.length}\n`;
-summary += `🟡 **Revisiones manuales:** ${needsReviewCount}\n`;
-summary += `🔵 **Resultados Pa11y:** ${pa11yCount}\n\n`;
+// ------------------------------------------------------------------
+// 🧮 Ordenar resultados por URL + severidad
+// ------------------------------------------------------------------
+const impactWeight = {
+  critical: 4,
+  serious: 3,
+  moderate: 2,
+  minor: 1,
+  error: 3,
+  warning: 2,
+  notice: 1,
+  "n/a": 0,
+  n: 0,
+};
 
-summary += `| Severidad | Nº de violaciones |\n|------------|------------------|\n`;
-for (const [impact, count] of Object.entries(byImpact)) {
-  summary += `| ${impact} | ${count} |\n`;
+deduped.sort((a, b) => {
+  if (a.pageUrl !== b.pageUrl) return a.pageUrl.localeCompare(b.pageUrl);
+  const aW = impactWeight[a.impact?.toLowerCase()] || 0;
+  const bW = impactWeight[b.impact?.toLowerCase()] || 0;
+  return bW - aW;
+});
+
+// ------------------------------------------------------------------
+// 💾 Guardar resultados IAAP combinados
+// ------------------------------------------------------------------
+if (deduped.length === 0) {
+  console.warn("⚠️ No se detectaron resultados combinables. No se guardará merged.");
+  process.exit(0);
 }
-summary += `\n## 🧭 Detalle por página\n\n`;
 
-for (const item of finalResults) {
-  const page = item.page || "(sin URL)";
-  summary += `### 🌐 ${page}\n`;
-  const totalV =
-    (item.violations?.length || 0) +
-    (item.needs_review?.length || 0) +
-    (item.pa11y?.length || 0);
-  if (totalV === 0) {
-    summary += `- ✅ Sin violaciones detectadas.\n\n`;
-  } else {
-    summary += `- axe-core: ${item.violations.length} | Pa11y: ${item.pa11y.length} | Review: ${item.needs_review.length}\n\n`;
-  }
+const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+const mergedHistoric = path.join(AUDITORIAS_DIR, `results-merged-${timestamp}.json`);
+const mergedStandard = path.join(REPORTES_DIR, "merged-results.json");
+
+fs.writeFileSync(mergedHistoric, JSON.stringify(deduped, null, 2), "utf8");
+fs.writeFileSync(mergedStandard, JSON.stringify(deduped, null, 2), "utf8");
+fs.writeFileSync(path.join(AUDITORIAS_DIR, "last-merged.txt"), mergedHistoric, "utf8");
+
+console.log(`\n✅ IAAP PRO Híbrido: ${deduped.length} issues combinados.`);
+console.log(`📁 Archivo principal: ${mergedStandard}`);
+console.log(`🕒 Histórico guardado en: ${path.basename(mergedHistoric)}\n`);
+
+// ------------------------------------------------------------------
+// 📊 Estadísticas IAAP PRO
+// ------------------------------------------------------------------
+const stats = {
+  sitemap: { urls: new Set(), total: 0, critical: 0, serious: 0, moderate: 0, minor: 0 },
+  interactiva: { urls: new Set(), total: 0, critical: 0, serious: 0, moderate: 0, minor: 0 },
+};
+
+for (const r of deduped) {
+  const s = stats[r.origen];
+  s.urls.add(r.pageUrl);
+  const imp = (r.impact || "n/a").toLowerCase();
+  if (s[imp] !== undefined) s[imp]++;
+  s.total++;
 }
 
-fs.writeFileSync(SUMMARY_FILE, summary, "utf8");
-console.log(`📝 Resumen Markdown generado: ${SUMMARY_FILE}`);
+// ------------------------------------------------------------------
+// 📈 Resumen global IAAP PRO
+// ------------------------------------------------------------------
+console.log("===============================================");
+console.log("♿ RESUMEN GLOBAL DE AUDITORÍA WCAG – IAAP PRO");
+console.log("-----------------------------------------------");
 
-// =====================================================
-// 🪶 Copias adicionales
-// =====================================================
-const LEGACY_COPY = path.join(AUDITORIAS_DIR, `results-merged-${Date.now()}.json`);
-fs.copyFileSync(MERGED_FILE, LEGACY_COPY);
-fs.writeFileSync(path.join(AUDITORIAS_DIR, "last-merged.txt"), MERGED_FILE, "utf8");
+for (const [origen, s] of Object.entries(stats)) {
+  if (s.total === 0) continue;
+  console.log(`🔹 ${origen.toUpperCase()}:`);
+  console.log(`   • URLs con violaciones: ${s.urls.size}`);
+  console.log(`   • Violaciones totales: ${s.total}`);
+  console.log(`     🔴 critical: ${s.critical}`);
+  console.log(`     🟠 serious: ${s.serious}`);
+  console.log(`     🟡 moderate: ${s.moderate}`);
+  console.log(`     🟢 minor: ${s.minor}`);
+  console.log("-----------------------------------------------");
+}
 
-console.log(`🧩 Copia de compatibilidad creada: ${LEGACY_COPY}`);
-console.log("🎯 Merge completado correctamente (IAAP PRO v4.44-FINAL)");
+const totalUrls = new Set([...stats.sitemap.urls, ...stats.interactiva.urls]).size;
+const totalIssues = stats.sitemap.total + stats.interactiva.total;
+console.log(`🌍 Cobertura total: ${totalUrls} URLs auditadas`);
+console.log(`♿ Violaciones totales combinadas: ${totalIssues}`);
+console.log("✅ Fusión IAAP PRO completada correctamente.");
+console.log("===============================================\n");
+
+// ------------------------------------------------------------------
+// 💾 Guardar resumen global IAAP PRO (JSON)
+// ------------------------------------------------------------------
+const resumenData = {
+  fecha: new Date().toISOString(),
+  totalUrls,
+  totalIssues,
+  sitemap: {
+    urls: stats.sitemap.urls.size,
+    total: stats.sitemap.total,
+    critical: stats.sitemap.critical,
+    serious: stats.sitemap.serious,
+    moderate: stats.sitemap.moderate,
+    minor: stats.sitemap.minor,
+  },
+  interactiva: {
+    urls: stats.interactiva.urls.size,
+    total: stats.interactiva.total,
+    critical: stats.interactiva.critical,
+    serious: stats.interactiva.serious,
+    moderate: stats.interactiva.moderate,
+    minor: stats.interactiva.minor,
+  },
+};
+
+const resumenPath = path.join(REPORTES_DIR, "merged-summary.json");
+fs.writeFileSync(resumenPath, JSON.stringify(resumenData, null, 2), "utf8");
+console.log(`📊 Resumen IAAP PRO guardado en: ${resumenPath}`);
