@@ -48,7 +48,7 @@ jobs:
       - name: ⚙️ Configurar Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
 
       # ======================================================
@@ -93,7 +93,7 @@ jobs:
         timeout-minutes: 30
         run: |
           echo "::group::🌍 Rastreo IAAP PRO"
-          npm run crawl:auto || echo "⚠️ Rastreo automático fallido, usando fallback..."
+          npm run crawl || echo "⚠️ Rastreo automático fallido, usando fallback..."
           npm run validate:urls || echo "⚠️ Validación no crítica"
           echo "::endgroup::"
         env:
@@ -109,7 +109,7 @@ jobs:
         continue-on-error: true
         with:
           command: >
-            npx cypress run --e2e --browser chrome --headless
+            npx cypress run --e2e --browser chrome --headless=new
             --config-file cypress.config.mjs
             --spec "cypress/e2e/accesibilidad-sitemap-hibrido.cy.js"
         env:
@@ -120,7 +120,7 @@ jobs:
         continue-on-error: true
         with:
           command: >
-            npx cypress run --e2e --browser chrome --headless
+            npx cypress run --e2e --browser chrome --headless=new
             --config-file cypress.config.mjs
             --spec "cypress/e2e/accesibilidad-interactiva-hibrida.cy.js"
         env:
@@ -203,7 +203,7 @@ jobs:
       # 🚀 Publicar Dashboard en GitHub Pages
       # ======================================================
       - name: 🚀 Publicar Dashboard en GitHub Pages
-        if: success() && (hashFiles('auditorias/reportes/merged-results.json') != '')
+        if: always() && hashFiles('auditorias/reportes/merged-results.json') != ''
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
