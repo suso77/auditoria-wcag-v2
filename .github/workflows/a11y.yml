@@ -137,7 +137,7 @@ jobs:
           command: >
             npx cypress run --e2e --browser chrome --headless
             --config-file cypress.config.mjs
-            --spec "cypress/e2e/accesibilidad-sitemap-hibrido.cy.js"
+            --spec cypress/e2e/accesibilidad-sitemap-hibrido.cy.js
         env:
           CYPRESS_baseUrl: ${{ env.SITE_URL }}
 
@@ -148,7 +148,7 @@ jobs:
           command: >
             npx cypress run --e2e --browser chrome --headless
             --config-file cypress.config.mjs
-            --spec "cypress/e2e/accesibilidad-interactiva-hibrida.cy.js"
+            --spec cypress/e2e/accesibilidad-interactiva-hibrida.cy.js
         env:
           CYPRESS_baseUrl: ${{ env.SITE_URL }}
 
