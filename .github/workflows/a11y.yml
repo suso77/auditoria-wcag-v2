@@ -20,14 +20,14 @@ permissions:
 jobs:
   a11y:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180   # ⏱️ más margen para auditorías grandes
 
     env:
       SITE_URL: ${{ github.event.inputs.site_url || vars.SITE_URL || 'https://www.hiexperience.es' }}
       BUILD_DATE: ${{ github.run_id }}-${{ github.run_number }}
       TZ: Europe/Madrid
       LANG: es
-      NODE_ENV: production
+      NODE_ENV: development
       NODE_OPTIONS: "--max-old-space-size=4096 --no-warnings"
       MAX_URLS: 80
       MAX_DEPTH: 5
@@ -36,6 +36,8 @@ jobs:
       CYPRESS_video: false
       CYPRESS_screenshotOnRunFailure: true
       PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome
+      CHROME_BIN: /usr/bin/google-chrome
+      CHROME_PATH: /usr/bin/google-chrome
       CI: true
 
     steps:
@@ -65,13 +67,15 @@ jobs:
           echo "✅ Sitio accesible (HTTP 200 OK)."
 
       # ======================================================
-      # 🧠 Configurar entorno Chrome Headless
+      # 🧠 Configurar entorno Chrome Headless (instalación robusta)
       # ======================================================
       - name: 🧠 Configurar entorno Chrome Headless
         run: |
+          sudo apt-get update && sudo apt-get install -y google-chrome-stable
           export PUPPETEER_SKIP_DOWNLOAD=true
           echo "CHROME_BIN=$(which google-chrome)" >> $GITHUB_ENV
           echo "CHROME_PATH=$(which google-chrome)" >> $GITHUB_ENV
+          echo "✅ Chrome instalado y disponible en: $(which google-chrome)"
 
       # ======================================================
       # 📦 Instalar dependencias IAAP PRO
@@ -79,8 +83,8 @@ jobs:
       - name: 📦 Instalar dependencias IAAP PRO
         run: |
           echo "📦 Instalando dependencias IAAP PRO..."
-          npm install --include=dev
-          npm install puppeteer  # Asegurando que Puppeteer se instale
+          npm ci --include=dev || npm install --include=dev
+          npm install puppeteer
           npm install --save-dev cypress cypress-axe cypress-real-events @bahmutov/cypress-esbuild-preprocessor esbuild pa11y fs-extra exceljs json2csv
           npx cypress verify
           mkdir -p scripts auditorias/{capturas,auditoria-sitemap,auditoria-interactiva,reportes} public/auditorias
@@ -109,6 +113,7 @@ jobs:
         env:
           SITE_URL: ${{ env.SITE_URL }}
           MAX_URLS: ${{ env.MAX_URLS }}
+          MAX_DEPTH: ${{ env.MAX_DEPTH }}
           LANG: ${{ env.LANG }}
 
       # ======================================================
@@ -148,6 +153,15 @@ jobs:
           CYPRESS_baseUrl: ${{ env.SITE_URL }}
 
       # ======================================================
+      # 📁 Crear estructura base de auditorías (garantizado)
+      # ======================================================
+      - name: 📁 Crear estructura base de auditorías
+        if: always()
+        run: |
+          mkdir -p auditorias/{capturas,auditoria-sitemap,auditoria-interactiva,reportes}
+          echo "✅ Carpetas base creadas."
+
+      # ======================================================
       # ♿ Exportar revisiones manuales y combinar resultados
       # ======================================================
       - name: ♿ IAAP PRO — Exportar revisiones manuales (needs_review)
@@ -162,21 +176,6 @@ jobs:
         run: |
           echo "::group::♿ Fusión completa IAAP PRO..."
           node scripts/merge-auditorias.mjs || echo "⚠️ Merge IAAP no crítico."
-          echo "::endgroup::"
-
-      # ======================================================
-      # 🧾 Generar resumen IAAP en Markdown
-      # ======================================================
-      - name: 🧾 Generar resumen IAAP (merged-summary.md)
-        if: always()
-        run: |
-          echo "::group::🧾 Generando resumen IAAP PRO..."
-          if [ -f auditorias/reportes/merged-results.json ]; then
-            node scripts/generate-summary.mjs auditorias/reportes/merged-results.json > auditorias/reportes/merged-summary.md || echo "⚠️ No se pudo generar merged-summary.md"
-            echo "✅ merged-summary.md generado correctamente."
-          else
-            echo "⚠️ No se encontró merged-results.json, no se genera resumen."
-          fi
           echo "::endgroup::"
 
       # ======================================================
@@ -195,6 +194,30 @@ jobs:
           else
             echo "⚠️ No hay merged-results.json, se omite exportación."
           fi
+          echo "::endgroup::"
+
+      # ======================================================
+      # 🧾 Generar resumen ejecutivo IAAP PRO
+      # ======================================================
+      - name: 🧾 IAAP PRO — Generar resumen ejecutivo Markdown
+        if: always()
+        run: |
+          echo "::group::🧾 Generando resumen ejecutivo IAAP PRO..."
+          if [ -f auditorias/reportes/merged-results.json ]; then
+            node scripts/generate-summary.mjs auditorias/reportes/merged-results.json || echo "⚠️ No se pudo generar Resumen-WCAG.md"
+          else
+            echo "⚠️ No se encontró merged-results.json, se omite generación del resumen."
+          fi
+          echo "::endgroup::"
+
+      # ======================================================
+      # 🔍 Verificar integridad del pipeline IAAP PRO
+      # ======================================================
+      - name: 🔍 Verificar pipeline IAAP PRO
+        if: always()
+        run: |
+          echo "::group::🔍 Verificando pipeline IAAP PRO..."
+          node scripts/verify-pipeline.mjs || echo "⚠️ Verificación con advertencias."
           echo "::endgroup::"
 
       # ======================================================
@@ -218,6 +241,7 @@ jobs:
             auditorias/reportes/*.csv
             auditorias/reportes/*.pdf
             auditorias/reportes/*.md
+            auditorias/Resumen-WCAG.md
           retention-days: 30
 
       # ======================================================
@@ -232,7 +256,7 @@ jobs:
           publish_branch: gh-pages
           keep_files: true
           full_commit_message: |
-            🚀 Publicación automática IAAP PRO v5.4
+            🚀 Publicación automática IAAP PRO v5.6.3
             - Fecha: ${{ github.event.head_commit.timestamp }}
             - Run ID: ${{ github.run_id }}
             - Build Date: ${{ env.BUILD_DATE }}
