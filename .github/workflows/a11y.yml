@@ -1,4 +1,4 @@
-name: ♿ Auditoría de Accesibilidad – Ilúmina Audit IAAP PRO
+name: ♿ Auditoría de Accesibilidad – Ilúmina Audit IAAP PRO v6.3
 run-name: "♿ Auditoría WCAG (${{ github.event.inputs.site_url || 'default' }})"
 
 on:
@@ -20,7 +20,7 @@ permissions:
 jobs:
   a11y:
     runs-on: ubuntu-latest
-    timeout-minutes: 180   # ⏱️ más margen para auditorías grandes
+    timeout-minutes: 180
 
     env:
       SITE_URL: ${{ github.event.inputs.site_url || vars.SITE_URL || 'https://www.hiexperience.es' }}
@@ -54,7 +54,7 @@ jobs:
           cache: "npm"
 
       # ======================================================
-      # 🌐 Verificar que el sitio responde antes de auditar
+      # 🌐 Verificar disponibilidad del sitio
       # ======================================================
       - name: 🔍 Verificar disponibilidad del sitio
         run: |
@@ -67,29 +67,28 @@ jobs:
           echo "✅ Sitio accesible (HTTP 200 OK)."
 
       # ======================================================
-      # 🧠 Configurar entorno Chrome Headless (instalación robusta)
+      # 🧠 Instalar Chrome Headless
       # ======================================================
-      - name: 🧠 Configurar entorno Chrome Headless
+      - name: 🧠 Instalar entorno Chrome Headless
         run: |
           sudo apt-get update && sudo apt-get install -y google-chrome-stable
           export PUPPETEER_SKIP_DOWNLOAD=true
           echo "CHROME_BIN=$(which google-chrome)" >> $GITHUB_ENV
           echo "CHROME_PATH=$(which google-chrome)" >> $GITHUB_ENV
-          echo "✅ Chrome instalado y disponible en: $(which google-chrome)"
+          echo "✅ Chrome disponible en: $(which google-chrome)"
 
       # ======================================================
       # 📦 Instalar dependencias IAAP PRO
       # ======================================================
       - name: 📦 Instalar dependencias IAAP PRO
         run: |
-          echo "📦 Instalando dependencias IAAP PRO..."
+          echo "📦 Instalando dependencias..."
           npm ci --include=dev || npm install --include=dev
           npm install puppeteer
           npm install --save-dev cypress cypress-axe cypress-real-events @bahmutov/cypress-esbuild-preprocessor esbuild pa11y fs-extra exceljs json2csv
           npx cypress verify
           mkdir -p scripts auditorias/{capturas,auditoria-sitemap,auditoria-interactiva,reportes} public/auditorias
           [ ! -f scripts/urls.json ] && echo '[]' > scripts/urls.json
-          echo "✅ Entorno IAAP PRO preparado correctamente."
 
       # ======================================================
       # 🧹 Limpieza previa
@@ -98,10 +97,10 @@ jobs:
         run: |
           rm -rf auditorias/* public/* || true
           mkdir -p auditorias/{capturas,auditoria-sitemap,auditoria-interactiva,reportes} public/auditorias
-          echo "🧹 Carpetas de auditoría limpias."
+          echo "🧹 Limpieza completada."
 
       # ======================================================
-      # 🌍 Rastreo del sitio web (IAAP PRO Crawler)
+      # 🌍 Rastreo automático IAAP PRO
       # ======================================================
       - name: 🌍 Rastreo automático IAAP PRO
         timeout-minutes: 30
@@ -116,138 +115,94 @@ jobs:
           MAX_DEPTH: ${{ env.MAX_DEPTH }}
           LANG: ${{ env.LANG }}
 
-      # ======================================================
-      # 🧾 Verificar URLs generadas
-      # ======================================================
       - name: 🧾 Verificar URLs generadas
         run: |
           if [ ! -s scripts/urls.json ]; then
-            echo "❌ No se generó scripts/urls.json o está vacío"
+            echo "❌ No se generó scripts/urls.json o está vacío."
             exit 1
           fi
           echo "✅ scripts/urls.json contiene URLs válidas."
 
       # ======================================================
-      # ♿ Auditorías híbridas (axe-core + Pa11y)
+      # ♿ Auditorías WCAG (Sitemap + Interactiva)
       # ======================================================
-      - name: ♿ Auditoría WCAG – Sitemap Híbrido
+      - name: ♿ Auditoría WCAG – Sitemap
         uses: cypress-io/github-action@v6
         continue-on-error: true
         with:
           command: >
             npx cypress run --e2e --browser chrome --headless
             --config-file cypress.config.mjs
-            --spec cypress/e2e/accesibilidad-sitemap-hibrido.cy.js
+            --spec cypress/e2e/auditoría-sitemap.cy.js
         env:
           CYPRESS_baseUrl: ${{ env.SITE_URL }}
 
-      - name: ♿ Auditoría WCAG – Interactiva Híbrida
+      - name: ♿ Auditoría WCAG – Interactiva
         uses: cypress-io/github-action@v6
         continue-on-error: true
         with:
           command: >
             npx cypress run --e2e --browser chrome --headless
             --config-file cypress.config.mjs
-            --spec cypress/e2e/accesibilidad-interactiva-hibrida.cy.js
+            --spec cypress/e2e/auditoría-interactiva.cy.js
         env:
           CYPRESS_baseUrl: ${{ env.SITE_URL }}
 
       # ======================================================
-      # 📁 Crear estructura base de auditorías (garantizado)
+      # ♿ Revisiones manuales y merge
       # ======================================================
-      - name: 📁 Crear estructura base de auditorías
+      - name: ♿ Exportar revisiones manuales
         if: always()
-        run: |
-          mkdir -p auditorias/{capturas,auditoria-sitemap,auditoria-interactiva,reportes}
-          echo "✅ Carpetas base creadas."
+        run: node scripts/export-needs-review.mjs || echo "⚠️ Sin revisiones manuales."
+
+      - name: ♿ Fusionar resultados (merge-auditorias v6.1)
+        if: always()
+        run: node scripts/merge-auditorias.mjs || echo "⚠️ Merge no crítico."
 
       # ======================================================
-      # ♿ Exportar revisiones manuales y combinar resultados
+      # 📊 Generar informes IAAP PRO
       # ======================================================
-      - name: ♿ IAAP PRO — Exportar revisiones manuales (needs_review)
+      - name: 📊 Exportar informes IAAP PRO
         if: always()
         run: |
-          echo "::group::♿ Exportando revisiones manuales..."
-          node scripts/export-needs-review.mjs || echo "⚠️ No se encontraron revisiones manuales."
-          echo "::endgroup::"
-
-      - name: ♿ IAAP PRO — Combinar resultados (axe + Pa11y)
-        if: always()
-        run: |
-          echo "::group::♿ Fusión completa IAAP PRO..."
-          node scripts/merge-auditorias.mjs || echo "⚠️ Merge IAAP no crítico."
-          echo "::endgroup::"
-
-      # ======================================================
-      # 📊 Exportar informes finales
-      # ======================================================
-      - name: ♿ IAAP PRO — Exportar informes XLSX / CSV / PDF / HTML
-        if: always()
-        run: |
-          echo "::group::📊 Exportando informes IAAP PRO..."
           mkdir -p auditorias/reportes
           if [ -f auditorias/reportes/merged-results.json ]; then
-            node scripts/export-to-xlsx.mjs || echo "⚠️ XLSX no crítico."
-            node scripts/export-to-csv.mjs || echo "⚠️ CSV no crítico."
-            node scripts/export-to-pdf.mjs || echo "⚠️ PDF no crítico."
-            node scripts/generate-dashboard-html.mjs "${{ env.BUILD_DATE }}" || echo "⚠️ Dashboard no crítico."
+            node scripts/generate-summary.mjs || true
+            node scripts/export-to-xlsx.mjs || true
           else
-            echo "⚠️ No hay merged-results.json, se omite exportación."
+            echo "⚠️ No se encontró merged-results.json, se omite exportación."
           fi
-          echo "::endgroup::"
 
       # ======================================================
-      # 🧾 Generar resumen ejecutivo IAAP PRO
-      # ======================================================
-      - name: 🧾 IAAP PRO — Generar resumen ejecutivo Markdown
-        if: always()
-        run: |
-          echo "::group::🧾 Generando resumen ejecutivo IAAP PRO..."
-          if [ -f auditorias/reportes/merged-results.json ]; then
-            node scripts/generate-summary.mjs auditorias/reportes/merged-results.json || echo "⚠️ No se pudo generar Resumen-WCAG.md"
-          else
-            echo "⚠️ No se encontró merged-results.json, se omite generación del resumen."
-          fi
-          echo "::endgroup::"
-
-      # ======================================================
-      # 🔍 Verificar integridad del pipeline IAAP PRO
+      # 🔍 Verificación del pipeline
       # ======================================================
       - name: 🔍 Verificar pipeline IAAP PRO
         if: always()
-        run: |
-          echo "::group::🔍 Verificando pipeline IAAP PRO..."
-          node scripts/verify-pipeline.mjs || echo "⚠️ Verificación con advertencias."
-          echo "::endgroup::"
+        run: node scripts/verify-pipeline.mjs || echo "⚠️ Advertencias menores."
 
       # ======================================================
-      # 📦 Crear ZIP y subir artefactos
+      # 📦 ZIP y artefactos
       # ======================================================
-      - name: 📦 Crear y subir ZIP IAAP PRO completo
+      - name: 📦 Comprimir resultados IAAP PRO
         if: always()
         run: |
-          ZIP_NAME="IAAP-PRO-${{ env.BUILD_DATE }}.zip"
-          ZIP_PATH="auditorias/${ZIP_NAME}"
-          zip -r "${ZIP_PATH}" auditorias/* || true
-          echo "✅ ZIP IAAP PRO generado: ${ZIP_PATH}"
+          ZIP_NAME="IAAP-PRO-v6.3-${{ env.BUILD_DATE }}.zip"
+          zip -r "auditorias/${ZIP_NAME}" auditorias/* || true
 
-      - name: 📤 Subir artefactos IAAP PRO (ZIP + XLSX + CSV + PDF + MD)
+      - name: 📤 Subir artefactos IAAP PRO
         uses: actions/upload-artifact@v4
         with:
-          name: "IAAP-PRO-${{ github.run_number }}"
+          name: "IAAP-PRO-v6.3-${{ github.run_number }}"
           path: |
-            auditorias/IAAP-PRO-*.zip
+            auditorias/IAAP-PRO-v6.3-*.zip
             auditorias/reportes/*.xlsx
-            auditorias/reportes/*.csv
-            auditorias/reportes/*.pdf
-            auditorias/reportes/*.md
             auditorias/Resumen-WCAG.md
           retention-days: 30
 
       # ======================================================
       # 🚀 Publicar Dashboard en GitHub Pages
       # ======================================================
-      - name: 🚀 Publicar Dashboard en GitHub Pages
+      - name: 🚀 Publicar Dashboard IAAP PRO v6.3
         if: always() && hashFiles('auditorias/reportes/merged-results.json') != ''
         uses: peaceiris/actions-gh-pages@v3
         with:
@@ -256,7 +211,7 @@ jobs:
           publish_branch: gh-pages
           keep_files: true
           full_commit_message: |
-            🚀 Publicación automática IAAP PRO v5.6.3
+            🚀 Publicación automática IAAP PRO v6.3
             - Fecha: ${{ github.event.head_commit.timestamp }}
             - Run ID: ${{ github.run_id }}
             - Build Date: ${{ env.BUILD_DATE }}
