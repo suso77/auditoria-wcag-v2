@@ -101,20 +101,26 @@ jobs:
           echo "🧹 Limpieza completada."
 
       # ======================================================
-      # 🌍 Rastreo automático IAAP PRO
+      # 🌍 Rastreo automático IAAP PRO (forzado idioma /es/)
       # ======================================================
-      - name: 🌍 Rastreo automático IAAP PRO
+      - name: 🌍 Rastreo automático IAAP PRO (solo idioma /es/)
         timeout-minutes: 30
         run: |
           echo "::group::🌍 Rastreo IAAP PRO"
+          echo "🌐 Forzando idioma /es/ y límite máximo de 80 URLs"
+          export LANG_FILTER="/es/"
+          export MAX_URLS=80
+          echo "🔧 SITE_URL=$SITE_URL"
+          echo "🔧 LANG_FILTER=$LANG_FILTER"
+          echo "🔧 MAX_URLS=$MAX_URLS"
           npm run crawl:auto || echo "⚠️ Rastreo automático fallido, usando fallback..."
           npm run validate:urls || echo "⚠️ Validación no crítica"
           echo "::endgroup::"
         env:
           SITE_URL: ${{ env.SITE_URL }}
-          MAX_URLS: ${{ env.MAX_URLS }}
-          MAX_DEPTH: ${{ env.MAX_DEPTH }}
-          LANG: ${{ env.LANG }}
+          MAX_URLS: 80
+          LANG: es
+          LANG_FILTER: "/es/"
 
       # ======================================================
       # 🧾 Verificar URLs generadas
@@ -125,7 +131,17 @@ jobs:
             echo "❌ No se generó scripts/urls.json o está vacío."
             exit 1
           fi
-          echo "✅ scripts/urls.json contiene URLs válidas."
+          COUNT=$(jq length scripts/urls.json)
+          FILTERED=$(jq '[.[] | select(.url | contains("/es/"))] | length' scripts/urls.json)
+          if [ "$COUNT" -gt 80 ]; then
+            echo "❌ Se superó el límite de 80 URLs ($COUNT detectadas)."
+            exit 1
+          fi
+          if [ "$FILTERED" -eq 0 ]; then
+            echo "❌ No se detectaron URLs que contengan /es/."
+            exit 1
+          fi
+          echo "✅ scripts/urls.json contiene $FILTERED URLs válidas con /es/."
 
       # ======================================================
       # 🔍 Verificación de scripts Cypress
