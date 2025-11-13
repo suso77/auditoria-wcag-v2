@@ -139,29 +139,45 @@ jobs:
           echo "✅ scripts/urls.json contiene URLs válidas."
 
       # ======================================================
-      # ♿ Auditorías WCAG (Sitemap + Interactiva)
+      # ♿ Auditorías WCAG (Sitemap Híbrido + Interactiva Híbrida)
       # ======================================================
-      - name: ♿ Auditoría WCAG – Sitemap
+
+      - name: 🧾 Verificar existencia de specs
+        run: |
+          echo "🔍 Verificando existencia de archivos Cypress..."
+          for file in \
+            "cypress/e2e/accesibilidad-sitemap-hibrido.cy.js" \
+            "cypress/e2e/accesibilidad-interactiva-hibrida.cy.js"; do
+            if [ ! -f "$file" ]; then
+              echo "❌ No se encontró el archivo de prueba: $file"
+              echo "Asegúrate de que el nombre y la ruta coincidan exactamente (sin tildes ni mayúsculas)."
+              exit 1
+            fi
+            echo "✅ Detectado: $file"
+          done
+
+      - name: ♿ Auditoría WCAG – Sitemap Híbrido
         uses: cypress-io/github-action@v6
         continue-on-error: true
         with:
           command: >
             npx cypress run --e2e --browser chrome --headless
             --config-file cypress.config.mjs
-            --spec cypress/e2e/auditoría-sitemap.cy.js
+            --spec cypress/e2e/accesibilidad-sitemap-hibrido.cy.js
         env:
           CYPRESS_baseUrl: ${{ env.SITE_URL }}
 
-      - name: ♿ Auditoría WCAG – Interactiva
+      - name: ♿ Auditoría WCAG – Interactiva Híbrida
         uses: cypress-io/github-action@v6
         continue-on-error: true
         with:
           command: >
             npx cypress run --e2e --browser chrome --headless
             --config-file cypress.config.mjs
-            --spec cypress/e2e/auditoría-interactiva.cy.js
+            --spec cypress/e2e/accesibilidad-interactiva-hibrida.cy.js
         env:
           CYPRESS_baseUrl: ${{ env.SITE_URL }}
+
 
       # ======================================================
       # ♿ Revisiones manuales y merge
