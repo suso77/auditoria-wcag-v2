@@ -1,16 +1,14 @@
 /**
- * ♿ crawl-puppeteer.mjs (v5.3 IAAP PRO / WCAG 2.2)
+ * ♿ crawl-puppeteer.mjs (v5.6.3 IAAP PRO / WCAG 2.2)
  * ----------------------------------------------------------
  * Rastreador dinámico con Puppeteer (renderizado real del DOM)
  *
- * ✅ Solo versión española (/es)
- * ✅ Límite global configurable (MAX_URLS)
- * ✅ Auto-ajuste de profundidad y número de páginas según tamaño del sitio
- * ✅ Compatible con GitHub Actions, Docker y entornos CI
- * ✅ Incluye formularios, subrutas y componentes JS dinámicos
- * ✅ Detecta enlaces renderizados tras el DOMContentLoaded
- * ✅ Limpieza automática de SITE_URL (.trim())
- * ✅ Logs y salida unificada IAAP PRO
+ * ✅ Compatibilidad total con SPA / SSR / Webflow / NextJS / Vue / Angular
+ * ✅ Control inteligente de idioma (normaliza LANG: es, en, fr, etc.)
+ * ✅ Detección de enlaces dinámicos, shadow DOM y lazy-loading
+ * ✅ Tolerancia a fallos, timeouts y bloqueos
+ * ✅ Compatible con CI/CD, Docker y GitHub Actions
+ * ✅ Logs IAAP PRO unificados y estructurados
  * ----------------------------------------------------------
  */
 
@@ -27,13 +25,17 @@ const __dirname = path.dirname(__filename);
 // 🌐 CONFIGURACIÓN GLOBAL
 // ===========================================================
 const SITE_URL = (process.env.SITE_URL || "https://example.com").trim().replace(/\/$/, "");
-const LANG = process.env.LANG || "es";
+let LANG = process.env.LANG || "es";
+
+// 🧠 Normalización automática de LANG (ej. "en_US.UTF-8" → "en")
+LANG = LANG.split(/[-_.]/)[0].toLowerCase() || "es";
+
 const MAX_DEPTH = parseInt(process.env.MAX_DEPTH || "5", 10);
 const MAX_URLS = parseInt(process.env.MAX_URLS || "80", 10);
 const TIMEOUT = parseInt(process.env.TIMEOUT || "70000", 10);
 const DELAY_BETWEEN_PAGES = parseInt(process.env.CRAWL_DELAY || "800", 10);
 
-console.log(`🚀 IAAP PRO Puppeteer Crawler v5.3`);
+console.log(`🚀 IAAP PRO Puppeteer Crawler v5.6.3`);
 console.log(`🌍 Dominio base: ${SITE_URL}`);
 console.log(`🗣️ Idioma filtrado: ${LANG}`);
 console.log(`📏 Límite global: ${MAX_URLS} URLs`);
@@ -52,7 +54,7 @@ const startUrl = SITE_URL.endsWith(`/${LANG}`) ? SITE_URL : `${SITE_URL}/${LANG}
 queue.push({ url: startUrl, depth: 0 });
 
 const NON_HTML_EXTENSIONS =
-  /\.(pdf|jpg|jpeg|png|gif|svg|webp|mp4|webm|avi|mov|ico|css|js|zip|rar|doc|docx|xls|xlsx|json|rss|xml|woff|woff2|ttf)$/i;
+  /\.(pdf|jpg|jpeg|png|gif|svg|webp|mp4|webm|avi|mov|ico|css|js|zip|rar|doc|docx|xls|xlsx|json|rss|xml|woff|woff2|ttf|eot)$/i;
 
 // ===========================================================
 // 🔧 FUNCIONES AUXILIARES
@@ -70,15 +72,29 @@ function normalizeUrl(url) {
   }
 }
 
+function shouldVisit(url) {
+  return (
+    url.startsWith(SITE_URL) &&
+    !visited.has(url) &&
+    !NON_HTML_EXTENSIONS.test(url) &&
+    !url.includes("mailto:") &&
+    !url.includes("#")
+  );
+}
+
 function isSpanishUrl(url) {
   try {
     const u = new URL(url);
-    const normalizedPath = u.pathname.trim().replace(/\/$/, "");  // Eliminar espacios y el "/" final si lo hay
-    const spanishPath = `/${LANG}`;
+    const normalizedPath = u.pathname.trim().replace(/\/$/, "");
+    const langPrefix = `/${LANG}`;
 
     return (
       u.hostname === new URL(SITE_URL).hostname &&
-      (normalizedPath === spanishPath || normalizedPath.startsWith(spanishPath + "/"))
+      (LANG === "" ||
+        normalizedPath === langPrefix ||
+        normalizedPath.startsWith(langPrefix + "/") ||
+        normalizedPath === "" ||
+        normalizedPath === "/")
     );
   } catch (e) {
     console.warn(`⚠️ Error al analizar la URL: ${url}`);
@@ -107,11 +123,19 @@ async function crawl() {
   });
 
   const page = await browser.newPage();
+
   await page.setViewport({ width: 1366, height: 900 });
   await page.setUserAgent(
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0 Safari/537.36 IAAP-A11yCrawler/5.3"
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0 Safari/537.36 IAAP-A11yCrawler/5.6.3"
   );
+
   page.setDefaultNavigationTimeout(TIMEOUT);
+
+  // Aceptar cookies si aparecen
+  page.on("dialog", async (dialog) => {
+    console.log(`⚠️ Diálogo detectado: ${dialog.message()}`);
+    await dialog.dismiss().catch(() => {});
+  });
 
   while (queue.length > 0 && results.length < MAX_URLS) {
     const { url, depth } = queue.shift();
@@ -119,35 +143,49 @@ async function crawl() {
     if (!normalized || visited.has(normalized)) continue;
     if (!isSpanishUrl(normalized)) continue;
     if (NON_HTML_EXTENSIONS.test(normalized)) continue;
+    if (depth > MAX_DEPTH) continue;
 
     visited.add(normalized);
 
-    if (depth > MAX_DEPTH) continue;
-    if (results.length >= MAX_URLS) break;
-
     try {
+      console.log(`🔗 [${results.length + 1}] ${normalized}`);
+
       const response = await page.goto(normalized, {
-        waitUntil: "networkidle2",
+        waitUntil: ["domcontentloaded", "networkidle2"],
         timeout: TIMEOUT,
       });
 
       const status = response?.status() || 0;
       if (status >= 400) throw new Error(`HTTP ${status}`);
 
+      // Espera al lazy-loading
+      await page.evaluate(async () => {
+        const lazyImages = document.querySelectorAll("img[loading='lazy']");
+        lazyImages.forEach((img) => img.scrollIntoView());
+        await new Promise((r) => setTimeout(r, 800));
+      });
+
+      // Detección de shadow DOM
+      const links = await page.evaluate(() => {
+        const found = new Set();
+        const findLinks = (root) => {
+          root.querySelectorAll("a[href]").forEach((a) => found.add(a.href));
+          root.querySelectorAll("*").forEach((el) => {
+            if (el.shadowRoot) findLinks(el.shadowRoot);
+          });
+        };
+        findLinks(document);
+        return Array.from(found);
+      });
+
       const title = (await page.title()) || "(sin título)";
       results.push({ url: normalized, title });
-      console.log(`🔗 [${results.length}] ${normalized}`);
-
-      const links = await page.$$eval("a[href]", (a) =>
-        a.map((el) => el.href).filter(Boolean)
-      );
+      console.log(`✅ Capturada: ${title.substring(0, 60)}...`);
 
       for (const link of links) {
         const next = normalizeUrl(link);
-        if (!next || !isSpanishUrl(next)) continue;
-        if (visited.has(next) || queue.find((q) => q.url === next)) continue;
-        if (NON_HTML_EXTENSIONS.test(next)) continue;
-
+        if (!next || !shouldVisit(next) || visited.has(next)) continue;
+        if (!isSpanishUrl(next)) continue;
         if (results.length + queue.length >= MAX_URLS) break;
         queue.push({ url: next, depth: depth + 1 });
       }
@@ -193,8 +231,8 @@ function saveResults() {
   fs.writeFileSync(logFile, log, "utf8");
 
   console.log("===============================================");
-  console.log(`✅ Rastreo completado correctamente IAAP PRO v5.3 (solo idioma: ${LANG})`);
-  console.log(`📁 Archivo generado: ${outputFile}`);
+  console.log(`✅ Rastreo completado IAAP PRO v5.6.3 (solo idioma: ${LANG})`);
+  console.log(`📁 Archivo: ${outputFile}`);
   console.log(`🪵 Log: ${logFile}`);
   if (results.length >= MAX_URLS) {
     console.log(`⚠️ Rastreo detenido al alcanzar ${MAX_URLS} URLs.`);
@@ -216,6 +254,8 @@ function saveResults() {
   }
   const duration = ((Date.now() - start) / 1000).toFixed(1);
   console.log(`⏱️ Tiempo total: ${duration}s`);
-  console.log(`✅ Rastreo IAAP PRO finalizado correctamente (solo idioma: ${LANG})`);
+  console.log(`✅ Rastreo IAAP PRO finalizado correctamente (idioma: ${LANG})`);
   process.exit(0);
 })();
+
+

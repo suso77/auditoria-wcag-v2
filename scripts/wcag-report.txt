@@ -1,0 +1,27 @@
+♿️ INFORME DE CORRESPONDENCIAS WCAG — IAAP PRO v6.5
+Fecha: 13/11/2025, 15:38:13
+
+🔹 Total de reglas analizadas: 2
+🔹 Cobertura del mapa: 100.00%
+
+============================
+✅ Reglas mapeadas correctamente
+============================
+• color-contrast → 1.4.3 Contraste (mínimo)
+• image-alt → 1.1.1 Contenido no textual
+
+============================
+⚠️ Reglas sin correspondencia WCAG
+============================
+
+============================
+🔁 Reglas duplicadas entre axe-core y Pa11y
+============================
+
+============================
+🧱 Detalle completo por regla
+============================
+color-contrast                                     → 1.4.3 Contraste (mínimo)       Nivel: AA  (Perceptible)
+image-alt                                          → 1.1.1 Contenido no textual     Nivel: A  (Perceptible)
+
+🧩 Fin del informe WCAG MAP TEST

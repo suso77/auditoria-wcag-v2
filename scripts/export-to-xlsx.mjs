@@ -1,15 +1,12 @@
 /**
- * ♿ export-to-xlsx.mjs — IAAP PRO v5.5 (Full Stable + axe-core + Pa11y + Revisiones manuales)
- * ------------------------------------------------------------------------------------------------
- * Exporta los resultados combinados en un informe Excel IAAP PRO con tres hojas:
- *  - 📄 Sitemap (violaciones del rastreo)
- *  - ⚙️ Interactiva (violaciones de componentes)
- *  - 📊 Resumen global (usando merged-summary.json si existe)
- *
- * ✅ Compatible con merge-auditorias.mjs v5.5
- * ✅ Normaliza severidades de Pa11y (error, warning, notice → critical, moderate, minor)
- * ✅ Limpieza de campos vacíos, descripción contextual y vínculos W3C
- * ✅ Colores y agrupación por origen
+ * ♿ export-to-xlsx.mjs — IAAP PRO v6.5 (WCAG 2.2 + Recomendaciones IAAP)
+ * -----------------------------------------------------------------------------
+ * Exporta los resultados combinados a Excel IAAP PRO con:
+ * ✅ Sitemap + Interactiva + Manual
+ * ✅ Capturas vinculadas (una por violación o URL)
+ * ✅ Columnas actualizadas: Resultado actual, Resultado esperado y Recomendación W3C
+ * ✅ Severidades y resumen global
+ * ✅ Compatibilidad con merge-auditorias v6.5 y generate-summary v6.5
  */
 
 import fs from "fs";
@@ -17,17 +14,22 @@ import path from "path";
 import ExcelJS from "exceljs";
 import { getWcagInfo } from "./wcag-map.mjs";
 
-// ===========================================================
-// 📁 Configuración base
-// ===========================================================
-const ROOT_DIR = process.cwd();
-const AUDITORIAS_DIR = path.join(ROOT_DIR, "auditorias");
+// ============================================================
+// 📁 Directorios principales
+// ============================================================
+const ROOT = process.cwd();
+const AUDITORIAS_DIR = path.join(ROOT, "auditorias");
 const REPORTES_DIR = path.join(AUDITORIAS_DIR, "reportes");
-const OUTPUT_PATH = path.join(REPORTES_DIR, "Informe-WCAG-IAAP.xlsx");
-
+const CAPTURAS_DIR = path.join(AUDITORIAS_DIR, "capturas");
 const MERGED_PATH = path.join(REPORTES_DIR, "merged-results.json");
-const SUMMARY_PATH = path.join(REPORTES_DIR, "merged-summary.json");
+const OUTPUT_PATH = path.join(REPORTES_DIR, "Informe-WCAG-IAAP-v6.5.xlsx");
 
+fs.mkdirSync(REPORTES_DIR, { recursive: true });
+fs.mkdirSync(CAPTURAS_DIR, { recursive: true });
+
+// ============================================================
+// 📄 Cargar merged-results.json
+// ============================================================
 if (!fs.existsSync(MERGED_PATH)) {
   console.error("❌ No se encontró merged-results.json en auditorias/reportes/");
   process.exit(1);
@@ -39,238 +41,187 @@ if (!Array.isArray(data) || data.length === 0) {
   process.exit(0);
 }
 
-let summary = null;
-if (fs.existsSync(SUMMARY_PATH)) {
-  summary = JSON.parse(fs.readFileSync(SUMMARY_PATH, "utf8"));
-  console.log(`📊 Usando resumen global IAAP PRO de: ${SUMMARY_PATH}`);
-}
-
-console.log(`📄 Usando archivo de resultados: ${MERGED_PATH}`);
-
-// ===========================================================
-// 🧠 Funciones auxiliares IAAP PRO
-// ===========================================================
+// ============================================================
+// 🧠 Funciones auxiliares
+// ============================================================
 function normalizeImpact(impact) {
-  if (!impact) return "sin severidad";
-  const i = impact.toLowerCase();
-  if (["critical", "serious", "moderate", "minor"].includes(i)) return i;
-  if (i === "error") return "critical";
-  if (i === "warning") return "moderate";
-  if (i === "notice") return "minor";
-  return "sin severidad";
+  const i = (impact || "").toLowerCase();
+  const map = {
+    critical: "Critical",
+    serious: "Serious",
+    moderate: "Moderate",
+    minor: "Minor",
+    "needs-review": "Revisión manual",
+  };
+  return map[i] || "Sin severidad";
 }
 
-function obtenerCriterioIAAP(v) {
+function enrichCriterio(v) {
   const info = getWcagInfo(v.wcag || v.id || "");
   if (!info) {
     return {
-      id: v.wcag || "(sin id)",
-      criterio: "Criterio no identificado",
+      criterio: v.wcag || "(sin criterio)",
       nivel: "—",
-      resumen: v.description || "Elemento con problema de accesibilidad detectado.",
-      esperado: "Debe cumplir las pautas WCAG 2.1/2.2 aplicables.",
+      resumen: v.description || "Elemento con posible problema de accesibilidad.",
       url: "https://www.w3.org/WAI/WCAG22/quickref/?showtechniques=es",
+      principio: "",
     };
   }
   return {
-    ...info,
-    url:
-      info.url?.includes("w3.org") && !info.url.includes("?showtechniques=es")
-        ? `${info.url}?showtechniques=es`
-        : info.url,
+    criterio: info.criterio,
+    nivel: info.nivel,
+    resumen: info.resumen,
+    url: info.url?.includes("w3.org")
+      ? `${info.url}?showtechniques=es`
+      : info.url,
+    principio: info.principio || "",
   };
 }
 
-function generarResumen(v) {
-  const criterio = obtenerCriterioIAAP(v);
-  return criterio.resumen || v.help || v.description || `Elemento que incumple el criterio ${criterio.id}.`;
-}
-
-function generarResultadoActual(v) {
-  if (v.id === "color-contrast" || v.wcag?.includes("1.4.3")) {
-    const match = v.description?.match(/contrast of ([\d.]+)/);
-    const ratio = match ? match[1] : "—";
-    return `El contraste detectado es ${ratio}:1, inferior al mínimo 4.5:1 exigido por WCAG 2.1 nivel AA.`;
+function getCapturePath(issue) {
+  if (issue.capturePath) {
+    const abs = path.join(AUDITORIAS_DIR, issue.capturePath);
+    if (fs.existsSync(abs)) return abs;
   }
-  return v.description || v.message || "El elemento no cumple con el criterio WCAG aplicable.";
+  const hint = (issue.pageUrl || "").replace(/[^\w-]/g, "_").slice(0, 60);
+  const found = fs
+    .readdirSync(CAPTURAS_DIR)
+    .find((f) => f.endsWith(".png") && f.includes(hint));
+  return found ? path.join(CAPTURAS_DIR, found) : null;
 }
 
-function generarResultadoEsperado(v) {
-  const criterio = obtenerCriterioIAAP(v);
-  return criterio.esperado || `Debe cumplir el criterio ${criterio.id} de las WCAG.`;
-}
-
-function generarRecomendacion(v) {
-  const criterio = obtenerCriterioIAAP(v);
-  return { text: "Ver recomendación W3C", hyperlink: criterio.url };
-}
-
-// ===========================================================
-// 📊 Crear el Excel IAAP PRO
-// ===========================================================
+// ============================================================
+// 📘 Configuración del libro Excel
+// ============================================================
 const wb = new ExcelJS.Workbook();
-wb.creator = "Ilúmina Audit IAAP PRO v5.5";
+wb.creator = "Ilúmina Audit IAAP PRO v6.5";
 wb.created = new Date();
-wb.properties.subject = "Auditoría de Accesibilidad WCAG – IAAP PRO";
 
-const columnasBase = [
-  { header: "ID", key: "id", width: 20 },
+// ============================================================
+// 🧱 Definición de columnas IAAP PRO v6.5
+// ============================================================
+const columnas = [
+  { header: "Origen", key: "origen", width: 15 },
+  { header: "Motor", key: "engine", width: 15 },
   { header: "Criterio WCAG", key: "criterio", width: 40 },
   { header: "Nivel", key: "nivel", width: 10 },
-  { header: "Tipo", key: "tipo", width: 18 },
-  { header: "Severidad", key: "impact", width: 12 },
-  { header: "Resumen", key: "resumen", width: 60 },
-  { header: "Elemento afectado", key: "selector", width: 60 },
-  { header: "Página analizada", key: "url", width: 60 },
-  { header: "Resultado actual", key: "actual", width: 70 },
-  { header: "Resultado esperado", key: "esperado", width: 70 },
-  { header: "Recomendación (W3C)", key: "recomendacion", width: 55 },
+  { header: "Principio", key: "principio", width: 20 },
+  { header: "Impacto", key: "impact", width: 15 },
+  { header: "Descripción", key: "descripcion", width: 70 },
+  { header: "Resultado actual", key: "resultadoActual", width: 60 },
+  { header: "Resultado esperado", key: "resultadoEsperado", width: 60 },
+  { header: "Recomendación W3C", key: "recomendacionW3C", width: 80 },
+  { header: "Elemento Afectado", key: "selector", width: 50 },
+  { header: "Página", key: "url", width: 70 },
   { header: "Captura", key: "captura", width: 40 },
-  { header: "Sistema", key: "system", width: 35 },
-  { header: "Metodología", key: "metodologia", width: 35 },
 ];
 
-const hojaSitemap = wb.addWorksheet("Sitemap");
-const hojaInteractiva = wb.addWorksheet("Interactiva");
-const hojaResumen = wb.addWorksheet("Resumen");
-
-hojaSitemap.columns = columnasBase;
-hojaInteractiva.columns = columnasBase;
-
-[hojaSitemap, hojaInteractiva].forEach((hoja) => {
-  const header = hoja.getRow(1);
-  header.font = { bold: true };
-  header.alignment = { vertical: "middle", horizontal: "center" };
-  hoja.autoFilter = { from: "A1", to: "N1" };
-});
-
-// ===========================================================
-// 🧮 Procesar resultados
-// ===========================================================
-const severidades = {};
-const criterios = {};
-let totalWCAG = 0;
-let totalPa11y = 0;
-
-for (const issue of data) {
-  const origen = issue.origen || "sitemap";
-  const destino = origen === "interactiva" ? hojaInteractiva : hojaSitemap;
-  const color = origen === "interactiva" ? "FF2196F3" : "FF2E7D32"; // Azul / Verde
-
-  const criterio = obtenerCriterioIAAP(issue);
-  const resumen = generarResumen(issue);
-  const actual = generarResultadoActual(issue);
-  const esperado = generarResultadoEsperado(issue);
-  const recomendacion = generarRecomendacion(issue);
-
-  const impactNorm = normalizeImpact(issue.impact);
-  const urlCell = issue.pageUrl
-    ? { text: issue.pageUrl, hyperlink: issue.pageUrl }
-    : "(sin URL)";
-
-  let capturaLink = "Sin captura disponible";
-  const capturePath = issue.capturePath
-    ? path.join(AUDITORIAS_DIR, issue.capturePath)
-    : null;
-  if (capturePath && fs.existsSync(capturePath)) {
-    capturaLink = { text: "Evidencia", hyperlink: `file://${capturePath}` };
-  }
-
-  const row = destino.addRow({
-    id: issue.wcag || issue.id,
-    criterio: criterio.criterio || criterio.id,
-    nivel: criterio.nivel || "AA",
-    tipo: issue.engine || "WCAG",
-    impact: impactNorm,
-    resumen,
-    selector: issue.selector || "(sin selector)",
-    url: urlCell,
-    actual,
-    esperado,
-    recomendacion,
-    captura: capturaLink,
-    system: "macOS Sonoma 14.7 + Chrome 129 (axe-core 4.9.1 + Pa11y 6.x)",
-    metodologia: "WCAG 2.1 / 2.2 Nivel AA — axe-core + Pa11y + IAAP IA",
-  });
-
-  row.getCell("id").fill = {
-    type: "pattern",
-    pattern: "solid",
-    fgColor: { argb: color },
-  };
-
-  ["url", "recomendacion", "captura"].forEach((campo) => {
-    const cell = row.getCell(campo);
-    if (typeof cell.value === "object" && cell.value.hyperlink) {
-      cell.font = { color: { argb: "FF0563C1" }, underline: true };
-    }
-  });
-
-  const sev = impactNorm;
-  severidades[sev] = (severidades[sev] || 0) + 1;
-  criterios[criterio.id] = (criterios[criterio.id] || 0) + 1;
-  totalWCAG++;
-  if (issue.engine === "pa11y") totalPa11y++;
-}
-
-// ===========================================================
-// 📊 Hoja resumen IAAP PRO
-// ===========================================================
-hojaResumen.columns = [
-  { header: "Categoría", key: "cat", width: 45 },
-  { header: "Valor", key: "val", width: 20 },
-  { header: "Porcentaje", key: "pct", width: 15 },
-];
-
-hojaResumen.getRow(1).font = { bold: true, size: 12, color: { argb: "FF0D47A1" } };
-hojaResumen.addRow(["📊 Resumen IAAP PRO v5.5", "", ""]);
-hojaResumen.addRow(["", "", ""]);
-
-if (summary) {
-  hojaResumen.addRow(["URLs auditadas (total)", summary.totalUrls, ""]);
-  hojaResumen.addRow(["Violaciones combinadas", summary.totalIssues, ""]);
-  hojaResumen.addRow(["Violaciones Sitemap", summary.sitemap.total, ""]);
-  hojaResumen.addRow(["Violaciones Interactiva", summary.interactiva.total, ""]);
-  hojaResumen.addRow(["Fecha", summary.fecha, ""]);
-  hojaResumen.addRow(["", "", ""]);
-}
-
-const totalSev = Object.values(severidades).reduce((a, b) => a + b, 0) || 1;
-hojaResumen.addRow(["📊 Severidades detectadas", "", ""]);
-
-const colorSeveridad = {
-  critical: { color: "FFB71C1C", label: "🔴 Críticas" },
-  serious: { color: "FFF57C00", label: "🟠 Graves" },
-  moderate: { color: "FFFFEB3B", label: "🟡 Moderadas" },
-  minor: { color: "FF2196F3", label: "🔵 Menores" },
-  "sin severidad": { color: "FF9E9E9E", label: "⚪ Sin severidad" },
+// ============================================================
+// 📄 Crear hojas
+// ============================================================
+const hojas = {
+  sitemap: wb.addWorksheet("🌐 Sitemap"),
+  interactiva: wb.addWorksheet("🧠 Interactiva"),
+  manual: wb.addWorksheet("🖐️ Manual"),
+  resumen: wb.addWorksheet("📊 Resumen Global"),
 };
 
-for (const sev of Object.keys(colorSeveridad)) {
-  const count = severidades[sev] || 0;
-  const pct = count / totalSev;
-  const meta = colorSeveridad[sev];
-  const row = hojaResumen.addRow([meta.label, count, pct]);
-  row.getCell(1).fill = {
-    type: "pattern",
-    pattern: "solid",
-    fgColor: { argb: meta.color },
-  };
+Object.values(hojas).forEach((sheet) => {
+  sheet.columns = columnas;
+  sheet.getRow(1).font = { bold: true };
+  sheet.autoFilter = { from: "A1", to: "M1" };
+  sheet.columns.forEach(
+    (c) => (c.alignment = { wrapText: true, vertical: "top" })
+  );
+});
+
+// ============================================================
+// 🧮 Procesar resultados IAAP PRO
+// ============================================================
+for (const issue of data) {
+  const origen = issue.source || "sitemap";
+  const criterio = enrichCriterio(issue);
+  const impactNorm = normalizeImpact(issue.impact);
+  const capturePath = getCapturePath(issue);
+
+  const hojaDestino =
+    hojas[origen] ||
+    (origen.includes("interactiva")
+      ? hojas.interactiva
+      : origen.includes("manual")
+      ? hojas.manual
+      : hojas.sitemap);
+
+  hojaDestino.addRow({
+    origen,
+    engine: issue.engine || "WCAG",
+    criterio: { text: criterio.criterio, hyperlink: criterio.url },
+    nivel: criterio.nivel,
+    principio: criterio.principio,
+    impact: impactNorm,
+    descripcion: issue.description || criterio.resumen,
+    resultadoActual:
+      issue.resultadoActual || issue.description || "(sin descripción)",
+    resultadoEsperado:
+      issue.resultadoEsperado ||
+      "Debe cumplir con el criterio WCAG indicado.",
+    recomendacionW3C:
+      issue.recomendacionW3C ||
+      (criterio.url ? `Ver criterio en ${criterio.url}` : "—"),
+    selector: issue.selector || "(sin selector)",
+    url: { text: issue.pageUrl || "(sin URL)", hyperlink: issue.pageUrl },
+    captura: capturePath
+      ? { text: "Evidencia local", hyperlink: `file://${capturePath}` }
+      : "—",
+  });
 }
 
-hojaResumen.addRow(["", "", ""]);
-hojaResumen.addRow(["📘 Criterios WCAG más frecuentes", "", ""]);
+// ============================================================
+// 🎨 Hipervínculos
+// ============================================================
+Object.values(hojas).forEach((sheet) => {
+  sheet.eachRow((row, num) => {
+    if (num === 1) return;
+    ["criterio", "url", "captura"].forEach((key) => {
+      const cell = row.getCell(key);
+      if (typeof cell.value === "object" && cell.value?.hyperlink) {
+        cell.font = { color: { argb: "FF0563C1" }, underline: true };
+      }
+    });
+  });
+});
 
-const criteriosOrdenados = Object.entries(criterios).sort((a, b) => b[1] - a[1]);
-for (const [crit, count] of criteriosOrdenados.slice(0, 10)) {
-  hojaResumen.addRow([crit, count, count / totalSev]);
-}
+// ============================================================
+// 📊 Hoja resumen global
+// ============================================================
+const totalUrls = new Set(data.map((d) => d.pageUrl)).size;
+const totalIssues = data.length;
+const severidades = ["critical", "serious", "moderate", "minor"];
+const stats = severidades.map((s) => ({
+  Métrica: `Incidencias ${s}`,
+  Valor: data.filter((r) => (r.impact || "").toLowerCase() === s).length,
+}));
 
-hojaResumen.getColumn("pct").numFmt = "0.0%";
+hojas.resumen.columns = [
+  { header: "Métrica", key: "Métrica", width: 40 },
+  { header: "Valor", key: "Valor", width: 30 },
+];
 
-// ===========================================================
-// 💾 Guardar Excel
-// ===========================================================
+hojas.resumen.addRows([
+  { Métrica: "Total de páginas auditadas", Valor: totalUrls },
+  { Métrica: "Total de incidencias detectadas", Valor: totalIssues },
+  ...stats,
+  { Métrica: "Fecha de exportación", Valor: new Date().toLocaleString("es-ES") },
+]);
+
+hojas.resumen.getRow(1).font = { bold: true };
+
+// ============================================================
+// 💾 Guardar Excel IAAP PRO v6.5
+// ============================================================
 await wb.xlsx.writeFile(OUTPUT_PATH);
-console.log(`✅ Informe IAAP PRO v5.5 exportado correctamente: ${OUTPUT_PATH}`);
 
+console.log("\n===========================================");
+console.log("✅ Informe IAAP PRO v6.5 exportado correctamente:");
+console.log(`📁 ${OUTPUT_PATH}`);
+console.log("===========================================");

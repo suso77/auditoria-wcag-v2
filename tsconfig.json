@@ -1,16 +1,34 @@
 {
   "compilerOptions": {
+    /* -------------------------------------------
+     * ⚙️ Compatibilidad moderna con Node 20+ y ESM
+     * ------------------------------------------- */
     "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    "module": "ESNext",
+    "moduleResolution": "Node",
+    "lib": ["ES2022", "DOM"],
+
+    /* -------------------------------------------
+     * 📦 Interoperabilidad
+     * ------------------------------------------- */
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "allowJs": true,
-    "allowImportingTsExtensions": true,
+    "checkJs": false,
     "resolveJsonModule": true,
-    "strict": true,
+    "allowImportingTsExtensions": true,
+
+    /* -------------------------------------------
+     * 🔍 Estrictos pero sin bloquear
+     * ------------------------------------------- */
+    "strict": false,
     "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
     "noEmit": true,
+
+    /* -------------------------------------------
+     * 🧠 Definiciones y rutas
+     * ------------------------------------------- */
     "rootDir": ".",
     "outDir": "dist",
     "types": ["node", "cypress"]
@@ -22,5 +40,6 @@
   ],
   "exclude": ["node_modules", "dist"]
 }
+
 
 

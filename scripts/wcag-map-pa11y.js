@@ -80,20 +80,39 @@ export const WCAG_MAP_PA11Y = {
   "Principle4.Guideline4_1.4_1_3": "4.1.3 Status Messages",
   "Principle4.Guideline4_2.4_2_1": "4.2.1 API Compatibility",
   "Principle4.Guideline4_2.4_2_2": "4.2.2 Accessible Name from Authoring Tool",
+
+
 };
 
-/**
- * 🧠 Normaliza el código WCAG de un issue de Pa11y.
- * Permite mapear un código como:
- *   "WCAG2AA.Principle1.Guideline1_4.1_4_3.G18.Fail"
- * y devolver:
- *   "1.4.3 Contrast (Minimum)"
- *
- * @param {string} code Ejemplo: "WCAG2AA.Principle1.Guideline1_4.1_4_3.G18.Fail"
- * @returns {string} Nombre del criterio WCAG asociado.
- */
-export function getWcagFromPa11y(code = "") {
-  if (!code) return "Desconocido";
-  const key = Object.keys(WCAG_MAP_PA11Y).find((k) => code.includes(k));
-  return WCAG_MAP_PA11Y[key] || "Desconocido";
+// ===========================================================
+// 🧠 Normalizador universal WCAG (Pa11y + axe)
+// ===========================================================
+export function getWcagUniversal(id = "") {
+  if (!id) return null;
+  const clean = id.replace(/^WCAG2(A|AA|AAA)\./, "").replace(/\.G\d+.*$/, "").trim();
+  const match = equivalencias[clean] || equivalencias[id];
+  if (match && wcagMap[match]) return { id, ...wcagMap[match] };
+
+  const regex = /(\d\.\d\.\d+)/;
+  const found = id.match(regex);
+  if (found && wcagMap[found[1]]) return { id, ...wcagMap[found[1]] };
+
+  console.warn(`[wcag-map] ⚠️ Criterio WCAG no identificado para la regla: ${id}`);
+  return {
+    id,
+    criterio: "Criterio WCAG no identificado",
+    principio: "Desconocido",
+    nivel: "N/A",
+    esperado: "Debe cumplir las pautas WCAG 2.1/2.2 aplicables.",
+    resumen: `Regla sin correspondencia directa (${id}).`,
+    nota: "⚠️ Revisar correspondencia o nueva regla axe-core / Pa11y.",
+    url: "https://www.w3.org/WAI/WCAG22/quickref/",
+  };
 }
+
+// ===========================================================
+// 📘 Diccionario de nombres legibles WCAG
+// ===========================================================
+export const wcagNombres = Object.fromEntries(
+  Object.entries(wcagMap).map(([id, val]) => [id, `${val.criterio} (${val.nivel})`])
+);

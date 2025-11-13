@@ -1,15 +1,15 @@
 /**
- * 🔍 validate-urls.mjs (v3.4 PRO IAAP / WCAG 2.2)
- * --------------------------------------------------------------
- * Valida y normaliza el listado de URLs antes de la auditoría WCAG.
+ * 🔍 validate-urls.mjs (v6.0 IAAP PRO / WCAG 2.2)
+ * ---------------------------------------------------------------------------
+ * Valida y normaliza las URLs generadas para auditorías sitemap e interactivas.
  *
  * ✅ Limpia duplicados y URLs no válidas
  * ✅ Convierte rutas relativas a absolutas (usa SITE_URL)
  * ✅ Elimina parámetros de tracking (utm_*, gclid, fbclid)
  * ✅ Filtra recursos no HTML (PDF, imágenes, feeds, etc.)
- * ✅ Evita fallos en CI/CD cuando urls.json está vacío o mal formado
- * ✅ Logs claros y consistentes con merge-results/export-to-xlsx
- * --------------------------------------------------------------
+ * ✅ Valida tanto sitemap como interactiva en un solo proceso
+ * ✅ Evita abortar el pipeline en CI/CD si hay ficheros vacíos
+ * ---------------------------------------------------------------------------
  */
 
 import fs from "fs";
@@ -18,49 +18,23 @@ import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const ROOT_DIR = process.cwd();
-const urlsPath = path.join(__dirname, "urls.json");
 
-// ===========================================================
-// 🌍 URL base (entorno local o CI)
-// ===========================================================
+const ROOT_DIR = process.cwd();
 const SITE_URL = process.env.SITE_URL?.trim() || "https://example.com";
 
-console.log("🔍 Validando estructura de scripts/urls.json...");
-console.log(`🌐 Dominio base: ${SITE_URL}`);
+const FILES = [
+  "scripts/urls-sitemap.json",
+  "scripts/urls-interactiva.json"
+];
 
 // ===========================================================
-// 📄 Leer archivo de entrada
+// 🧩 Función de normalización de URLs
 // ===========================================================
-if (!fs.existsSync(urlsPath)) {
-  console.warn("⚠️ No se encontró scripts/urls.json. Se creará un archivo vacío.");
-  fs.writeFileSync(urlsPath, "[]", "utf8");
-}
-
-let urlsRaw = [];
-try {
-  const data = fs.readFileSync(urlsPath, "utf8") || "[]";
-  urlsRaw = JSON.parse(data);
-  if (!Array.isArray(urlsRaw)) urlsRaw = [];
-} catch (err) {
-  console.error("❌ Error al leer o parsear scripts/urls.json:", err.message);
-  urlsRaw = [];
-}
-
-if (urlsRaw.length === 0) {
-  console.warn("⚠️ scripts/urls.json está vacío. No se encontraron URLs para validar.");
-}
-
-// ===========================================================
-// 🧩 Normalización de URLs
-// ===========================================================
-const uniqueUrls = new Map();
-
 function normalizarUrl(rawUrl) {
   if (!rawUrl) return null;
   let u = rawUrl.trim();
 
-  // Convertir rutas relativas a absolutas
+  // Rutas relativas → absolutas
   if (!/^https?:\/\//i.test(u)) {
     try {
       u = new URL(u, SITE_URL).toString();
@@ -69,23 +43,20 @@ function normalizarUrl(rawUrl) {
     }
   }
 
-  // Eliminar fragmentos (#) y parámetros tracking
+  // Limpiar fragmentos y tracking
   try {
     const parsed = new URL(u);
-    ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "gclid", "fbclid"].forEach((p) =>
-      parsed.searchParams.delete(p)
-    );
-    u = parsed.toString().replace(/\/$/, ""); // quitar slash final
+    [
+      "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+      "gclid", "fbclid", "msclkid"
+    ].forEach((p) => parsed.searchParams.delete(p));
+    u = parsed.toString().replace(/\/$/, "");
   } catch {
     return null;
   }
 
   // Ignorar recursos no HTML
-  if (
-    /\.(pdf|jpg|jpeg|png|gif|svg|doc|docx|xls|xlsx|zip|rar|mp4|webm|ico|rss|xml|json|txt)$/i.test(
-      u
-    )
-  ) {
+  if (/\.(pdf|jpg|jpeg|png|gif|svg|docx?|xlsx?|zip|rar|mp4|webm|ico|rss|xml|json|txt)$/i.test(u)) {
     return null;
   }
 
@@ -93,42 +64,58 @@ function normalizarUrl(rawUrl) {
 }
 
 // ===========================================================
-// 🧹 Validación y limpieza
+// 🔁 Proceso de validación para cada archivo
 // ===========================================================
-urlsRaw.forEach((entry) => {
-  const rawUrl = typeof entry === "string" ? entry : entry?.url;
-  const cleaned = normalizarUrl(rawUrl);
-  if (!cleaned) return;
+for (const filePath of FILES) {
+  console.log("\n==========================================================");
+  console.log(`🔍 Validando archivo: ${filePath}`);
+  console.log(`🌐 Dominio base: ${SITE_URL}`);
 
-  if (!uniqueUrls.has(cleaned)) {
-    uniqueUrls.set(cleaned, {
-      url: cleaned,
-      title: entry?.title?.trim() || "",
-    });
-  }
-});
-
-const cleaned = Array.from(uniqueUrls.values());
-
-// ===========================================================
-// 💾 Guardar resultado limpio
-// ===========================================================
-try {
-  fs.writeFileSync(urlsPath, JSON.stringify(cleaned, null, 2), "utf8");
-
-  const originalCount = urlsRaw.length;
-  const validCount = cleaned.length;
-
-  console.log(`📊 URLs originales: ${originalCount} | Válidas: ${validCount}`);
-  if (validCount === 0) {
-    console.warn("⚠️ No se encontraron URLs válidas. El archivo sigue vacío, pero no se abortará el pipeline.");
-  } else {
-    console.log("✅ URLs válidas guardadas correctamente en scripts/urls.json");
+  const absPath = path.join(ROOT_DIR, filePath);
+  if (!fs.existsSync(absPath)) {
+    console.warn(`⚠️ No existe ${filePath}, se creará vacío.`);
+    fs.writeFileSync(absPath, "[]", "utf8");
   }
 
-  console.log("💾 Archivo preparado para auditoría WCAG IAAP PRO.");
-} catch (err) {
-  console.error("❌ Error guardando scripts/urls.json:", err.message);
-  process.exit(1);
+  let urlsRaw = [];
+  try {
+    const data = fs.readFileSync(absPath, "utf8") || "[]";
+    urlsRaw = JSON.parse(data);
+    if (!Array.isArray(urlsRaw)) urlsRaw = [];
+  } catch (err) {
+    console.error(`❌ Error leyendo ${filePath}:`, err.message);
+    urlsRaw = [];
+  }
+
+  if (urlsRaw.length === 0) {
+    console.warn(`⚠️ ${filePath} está vacío o no contiene URLs válidas.`);
+    continue;
+  }
+
+  // Limpieza y deduplicación
+  const unique = new Map();
+  urlsRaw.forEach((entry) => {
+    const raw = typeof entry === "string" ? entry : entry?.url;
+    const cleaned = normalizarUrl(raw);
+    if (!cleaned) return;
+
+    if (!unique.has(cleaned)) {
+      unique.set(cleaned, {
+        url: cleaned,
+        title: entry?.title?.trim() || ""
+      });
+    }
+  });
+
+  const cleaned = Array.from(unique.values());
+
+  // Guardar resultados limpios
+  try {
+    fs.writeFileSync(absPath, JSON.stringify(cleaned, null, 2), "utf8");
+    console.log(`📊 ${filePath}: ${urlsRaw.length} originales → ${cleaned.length} válidas.`);
+  } catch (err) {
+    console.error(`❌ Error guardando ${filePath}:`, err.message);
+  }
 }
 
+console.log("\n✅ Validación IAAP PRO v6.0 completada.");

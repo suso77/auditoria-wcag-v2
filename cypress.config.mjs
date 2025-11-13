@@ -70,7 +70,7 @@ export default defineConfig({
         clearCaptures() {
           const dir = path.join(process.cwd(), "auditorias", "capturas");
           try {
-            fs.emptyDirSync(dir);
+            fs.emptyDirSync(dir); // Limpia la carpeta de capturas
             console.log("[IAAP] 🧹 Capturas anteriores eliminadas correctamente.");
           } catch (err) {
             console.warn("[IAAP] ⚠️ Error al limpiar capturas:", err.message);
@@ -178,7 +178,3 @@ export default defineConfig({
     },
   },
 });
-
-
-
-

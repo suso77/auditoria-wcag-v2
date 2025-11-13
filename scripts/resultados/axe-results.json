@@ -1,0 +1,42 @@
+[
+  {
+    "id": "color-contrast",
+    "source": "sitemap",
+    "engine": "axe-core",
+    "pageUrl": "",
+    "pageTitle": "(sin título)",
+    "impact": "serious",
+    "wcag": "1.4.3 Contraste (mínimo)",
+    "nivel": "AA",
+    "principio": "Perceptible",
+    "resumen": "El contraste entre texto y fondo es insuficiente.",
+    "urlCriterio": "https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html",
+    "selector": "",
+    "context": "",
+    "helpUrl": "",
+    "nodes": 0,
+    "resultadoActual": "Sin descripción técnica disponible.",
+    "resultadoEsperado": "El contraste entre texto y fondo es insuficiente.",
+    "recomendacionW3C": "Ver recomendación W3C: https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html"
+  },
+  {
+    "id": "image-alt",
+    "source": "interactiva",
+    "engine": "axe-core",
+    "pageUrl": "",
+    "pageTitle": "(sin título)",
+    "impact": "minor",
+    "wcag": "1.1.1 Contenido no textual",
+    "nivel": "A",
+    "principio": "Perceptible",
+    "resumen": "El elemento visual carece de texto alternativo significativo.",
+    "urlCriterio": "https://www.w3.org/WAI/WCAG22/Understanding/non-text-content.html",
+    "selector": "",
+    "context": "",
+    "helpUrl": "",
+    "nodes": 0,
+    "resultadoActual": "Sin descripción técnica disponible.",
+    "resultadoEsperado": "El elemento visual carece de texto alternativo significativo.",
+    "recomendacionW3C": "Ver recomendación W3C: https://www.w3.org/WAI/WCAG22/Understanding/non-text-content.html"
+  }
+]

@@ -1,101 +1,92 @@
 {
-  "name": "auditoria-wcag-v2",
-  "version": "1.6.4",
+  "name": "ilumina-audit-iaap-pro",
+  "version": "6.3.0",
+  "description": "Pipeline automatizado de auditorías de accesibilidad digital IAAP PRO – WCAG 2.1 / 2.2 con axe-core, Pa11y y Cypress.",
   "type": "module",
-  "description": "Auditoría de accesibilidad automatizada con Cypress + axe-core + Pa11y + Puppeteer + ExcelJS + GitHub Actions (IAAP/W3C) — v5.1 PRO",
+  "license": "MIT",
+  "author": "Ilúmina Media",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
-    "check-env": "node scripts/check-env.cjs",
-    "crawl": "node crawler/crawl-puppeteer.mjs",
-    "crawl:auto": "node crawler/crawl-auto.mjs",
-    "crawl:js": "node crawler/crawl.js",
-    "crawl:puppeteer": "node crawler/crawl-puppeteer.mjs",
-    "crawl:full": "MAX_DEPTH=5 CRAWL_DELAY=1200 node crawler/crawl-puppeteer.mjs",
+    "start": "node scripts/merge-auditorias.mjs",
+    "local:ci": "npm run clean && npm run crawl:auto && npm run audit:sitemap && npm run audit:interactiva && npm run merge && npm run summary",
+    "clean": "rimraf auditorias/* public/* || true && mkdir -p auditorias/{capturas,auditoria-sitemap,auditoria-interactiva,reportes} public/auditorias",
+    "crawl:auto": "node scripts/crawl-auto.mjs",
     "validate:urls": "node scripts/validate-urls.mjs",
-    "tag-origen": "node scripts/tag-origen.cjs",
-    "fix": "node scripts/fix-json.cjs",
-    "preaudit": "node -e \"if (!require('fs').existsSync('./scripts/urls.json')) { console.error('❌ No se encontró scripts/urls.json. Ejecuta npm run crawl:auto'); process.exit(1) } else { console.log('✅ URLs detectadas, listo para auditar.') }\"",
-    "audit:dev": "npx cypress open --browser chrome",
-    "audit:debug": "npx cypress run --spec cypress/e2e/accesibilidad-sitemap-hibrido.cy.js --browser chrome --headed",
-    "test:a11y": "npx cypress run --spec cypress/e2e/accesibilidad-sitemap-hibrido.cy.js --browser chrome --headless",
-    "audit:ci:local": "bash scripts/audit-local.sh",
-    "audit:sitemap": "npx cypress run --spec cypress/e2e/accesibilidad-sitemap-hibrido.cy.js --browser chrome --headless",
-    "audit:interactiva": "npx cypress run --spec cypress/e2e/accesibilidad-interactiva-hibrida.cy.js --browser chrome --headless",
-    "merge:auditorias": "node scripts/merge-auditorias.mjs",
-    "audit:needsreview": "node scripts/export-needs-review.mjs",
-    "capture:evidence": "node --max-old-space-size=4096 scripts/capture-evidence.mjs",
-    "export:xlsx": "node --max-old-space-size=4096 scripts/export-to-xlsx.mjs",
-    "export:csv": "node --max-old-space-size=4096 scripts/export-to-csv.mjs",
-    "export": "npm run export:xlsx && npm run export:csv",
-    "generate:report": "node scripts/generate-report.mjs",
-    "report:pdf": "node scripts/generate-report.mjs",
-    "report:html": "node scripts/generate-dashboard-html.mjs $(date +%Y-%m-%d)",
-    "summary": "node scripts/generate-summary.mjs $(cat auditorias/last-merged.txt)",
-    "quality": "node scripts/quality-gate.cjs",
-    "quality:soft": "node scripts/quality-gate.cjs || echo 'Quality Gate no crítico'",
-    "audit:full": "npx cypress run --spec cypress/e2e/accesibilidad-sitemap-hibrido.cy.js && npx cypress run --spec cypress/e2e/accesibilidad-interactiva-hibrida.cy.js && node ./scripts/export-needs-review.mjs && node ./scripts/merge-auditorias.mjs && node ./scripts/export-to-xlsx.mjs && node ./scripts/export-to-csv.mjs && node ./scripts/generate-report.mjs && node ./scripts/generate-dashboard-html.mjs $(date +%Y-%m-%d)",
-    "audit:local": "CRITICAL_MAX=9999 SERIOUS_MAX=9999 npm run audit:full",
-    "audit:ci": "npm run check-env && npm run audit:full",
-    "audit:all": "npm run check-env && npm run crawl:auto && npm run validate:urls && npm run audit:sitemap && npm run audit:interactiva && npm run tag-origen && npm run merge:auditorias && npm run capture:evidence && npm run export:xlsx && npm run summary && npm run quality"
+    "audit:sitemap": "npx cypress run --e2e --browser chrome --headless --config-file cypress.config.mjs --spec cypress/e2e/auditoría-sitemap.cy.js",
+    "audit:interactiva": "npx cypress run --e2e --browser chrome --headless --config-file cypress.config.mjs --spec cypress/e2e/auditoría-interactiva.cy.js",
+    "merge": "node scripts/merge-auditorias.mjs",
+    "summary": "node scripts/generate-summary.mjs auditorias/reportes/merged-results.json",
+    "export:xlsx": "node scripts/export-to-xlsx.mjs",
+    "export:csv": "node scripts/export-to-csv.mjs",
+    "export:pdf": "node scripts/export-to-pdf.mjs",
+    "verify": "node scripts/verify-pipeline.mjs",
+    "lint": "eslint . --ext .js,.mjs",
+    "format": "prettier --write ."
   },
   "dependencies": {
-    "@faker-js/faker": "^9.0.0",
-    "archiver": "^7.0.1",
-    "axios": "^1.7.2",
-    "chalk": "^5.6.2",
-    "chart.js": "^4.5.1",
-    "cheerio": "^1.0.0-rc.12",
-    "date-fns": "^3.6.0",
-    "exceljs": "^4.4.0",
-    "fs-extra": "^11.3.2",
-    "googleapis": "^165.0.0",
-    "marked": "^16.4.1",
-    "open": "^10.2.0",
-    "sharp": "^0.34.4",
-    "slugify": "^1.6.6",
-    "xlsx": "^0.18.5"
+    "axe-core": "^4.9.1",
+    "chalk": "^5.3.0",
+    "path": "^0.12.7",
+    "puppeteer": "^23.5.0"
   },
   "devDependencies": {
-    "@bahmutov/cypress-esbuild-preprocessor": "^2.2.3",
-    "@types/node": "^22.8.0",
-    "axe-core": "^4.11.0",
+    "@bahmutov/cypress-esbuild-preprocessor": "^2.2.7",
     "cypress": "^15.6.0",
     "cypress-axe": "^1.7.0",
     "cypress-real-events": "^1.15.0",
-    "esbuild": "^0.18.20",
-    "html_codesniffer": "^2.5.1",
+    "esbuild": "^0.23.1",
+    "eslint": "^9.39.1",
+    "exceljs": "^4.4.0",
+    "fs-extra": "^11.3.2",
     "json2csv": "^6.0.0-alpha.2",
     "pa11y": "^9.0.1",
-    "puppeteer": "^24.29.1",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.9.3"
+    "prettier": "^3.6.2",
+    "rimraf": "^5.0.10"
   },
-  "engines": {
-    "node": ">=24"
+  "cypress": {
+    "viewportWidth": 1280,
+    "viewportHeight": 800,
+    "defaultCommandTimeout": 15000,
+    "pageLoadTimeout": 120000,
+    "video": false,
+    "screenshotOnRunFailure": true
+  },
+  "eslintConfig": {
+    "env": {
+      "node": true,
+      "es2022": true
+    },
+    "extends": [
+      "eslint:recommended",
+      "prettier"
+    ],
+    "parserOptions": {
+      "ecmaVersion": "latest",
+      "sourceType": "module"
+    },
+    "rules": {
+      "no-unused-vars": "warn",
+      "no-undef": "error",
+      "no-console": "off"
+    }
+  },
+  "prettier": {
+    "singleQuote": true,
+    "trailingComma": "es5",
+    "printWidth": 90,
+    "semi": true
   },
   "keywords": [
     "accesibilidad",
-    "wcag",
-    "cypress",
+    "WCAG",
+    "IAAP",
+    "Cypress",
     "axe-core",
     "pa11y",
-    "puppeteer",
-    "exceljs",
-    "xlsx",
-    "auditoria",
-    "automatizacion",
-    "github-actions",
-    "en301549",
-    "iaap",
-    "w3c"
-  ],
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/suso77/auditoria-wcag-v2"
-  },
-  "bugs": {
-    "url": "https://github.com/suso77/auditoria-wcag-v2/issues"
-  },
-  "homepage": "https://github.com/suso77/auditoria-wcag-v2#readme",
-  "author": "Suso (Ilúmina Media)",
-  "license": "MIT"
+    "auditoría",
+    "Ilúmina Media",
+    "automatización"
+  ]
 }

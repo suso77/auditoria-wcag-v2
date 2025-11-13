@@ -1,20 +1,22 @@
 /**
- * ♿ scripts/capture-evidence.mjs — IAAP PRO v3.6 (Stable)
- * -------------------------------------------------------
- * Genera capturas automáticas con soporte CSS/XPath, overlay adaptativo
- * y fallback visual completo, listas para informes IAAP Excel.
+ * ♿ scripts/capture-evidence.mjs — IAAP PRO v3.8 (WCAG + Export Sync)
+ * -------------------------------------------------------------------
+ * Genera capturas automáticas con overlay adaptativo, compresión PNG,
+ * y metadatos compatibles con export-to-xlsx.mjs (IAAP PRO v5.6.2)
  *
  * ✅ Compatible con Puppeteer v23+
- * ✅ Detección automática de selectores dinámicos
- * ✅ Overlay visual IAAP PRO (color por severidad)
- * ✅ Fallback completo si no se puede capturar el nodo
- * ✅ Optimización PNG + Metadatos JSON
+ * ✅ Integración con wcag-map.mjs
+ * ✅ Compresión PNG (sharp opcional)
+ * ✅ Exporta rutas capturePath listas para Excel
+ * ✅ Overlay visual contextualizado con criterio WCAG
  */
 
 import fs from "fs";
 import path from "path";
 import puppeteer from "puppeteer";
+import sharp from "sharp";
 import { fileURLToPath } from "url";
+import { getWcagInfo } from "./wcag-map.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,6 +25,7 @@ const AUDITORIAS_DIR = path.join(__dirname, "../auditorias");
 const CAPTURAS_DIR = path.join(AUDITORIAS_DIR, "capturas");
 const METADATA_FILE = path.join(AUDITORIAS_DIR, "capturas-metadata.json");
 
+// Patrones a omitir (elementos repetitivos)
 const PATRONES_DUPLICADOS = [
   "header",
   "footer",
@@ -35,57 +38,7 @@ const PATRONES_DUPLICADOS = [
 ];
 
 // ----------------------------------------------------------
-// 📘 Mapa descriptivo IAAP / WCAG / axe-core
-// ----------------------------------------------------------
-const MAPA_REGLAS = {
-  "color-contrast": "Contraste insuficiente entre texto y fondo.",
-  "image-alt": "La imagen no tiene texto alternativo adecuado.",
-  "link-name": "Enlace sin nombre accesible o texto visible.",
-  "button-name": "Botón sin etiqueta o texto accesible.",
-  "label": "Campo de formulario sin etiqueta visible o asociada.",
-  "aria-label": "Elemento con atributo aria-label incorrecto o vacío.",
-  "aria-hidden-focus": "Elemento oculto puede recibir el foco.",
-  "focus-order": "Orden de tabulación no lógico o inconsistente.",
-  "focus-visible": "El foco no es visible al navegar con teclado.",
-  "aria-roles": "Uso incorrecto o ausente de roles ARIA.",
-  "aria-required-attr": "Faltan atributos ARIA obligatorios.",
-  "aria-valid-attr": "Atributos ARIA inválidos o mal escritos.",
-  "aria-valid-attr-value": "Valor de atributo ARIA no válido.",
-  "heading-order": "Jerarquía incorrecta de encabezados.",
-  "page-has-heading-one": "Falta encabezado principal H1.",
-  "duplicate-id": "Existen elementos con el mismo ID en la página.",
-  "skip-link": "Falta enlace para saltar al contenido principal.",
-  "tabindex": "Uso incorrecto del atributo tabindex.",
-  "region": "Faltan regiones o landmarks de navegación.",
-  "list": "Estructura de lista no válida.",
-  "table": "Tabla sin encabezados o relaciones de celdas.",
-  "th-has-data-cells": "Encabezado de tabla sin celdas relacionadas.",
-  "html-has-lang": "Falta atributo lang en el elemento HTML.",
-  "lang-valid": "Valor del atributo lang no válido.",
-  "meta-refresh": "Uso de meta refresh que afecta accesibilidad.",
-  "blink": "Uso de parpadeo o animación excesiva.",
-  "marquee": "Uso de etiquetas de desplazamiento (marquee).",
-  "input-image-alt": "Botón de tipo imagen sin texto alternativo.",
-  "label-content-name-mismatch": "El texto visible y el nombre accesible no coinciden.",
-  "nested-interactive": "Un elemento interactivo contiene otro elemento interactivo.",
-  "aria-input-field-name": "Campo ARIA sin nombre accesible.",
-  "aria-toggle-field-name": "Elemento conmutador sin nombre accesible.",
-  "aria-tooltip-name": "Tooltip sin nombre o texto descriptivo.",
-  "aria-dialog-name": "Diálogo o modal sin nombre accesible.",
-  "aria-meter-name": "Elemento meter sin nombre accesible.",
-  "aria-progressbar-name": "Barra de progreso sin nombre accesible.",
-  "aria-slider-name": "Control deslizante sin nombre accesible.",
-  "aria-combobox-name": "Combobox sin nombre accesible.",
-  "aria-tab-name": "Pestaña sin nombre accesible.",
-  "aria-treeitem-name": "Elemento de árbol sin nombre accesible.",
-  "aria-command-name": "Elemento de comando sin nombre accesible.",
-  "audio-caption": "Contenido de audio sin subtítulos o transcripción.",
-  "video-caption": "Video sin subtítulos o descripción de audio.",
-  "link-in-text-block": "Varios enlaces idénticos en el mismo texto sin contexto diferenciado.",
-};
-
-// ----------------------------------------------------------
-// 🧩 Helper
+// 🧩 Helpers
 // ----------------------------------------------------------
 function slugify(str) {
   return str
@@ -95,11 +48,23 @@ function slugify(str) {
     .toLowerCase();
 }
 
+async function compressPng(inputPath) {
+  try {
+    const tempPath = inputPath.replace(".png", "-compressed.png");
+    await sharp(inputPath)
+      .png({ quality: 80, compressionLevel: 9, adaptiveFiltering: true })
+      .toFile(tempPath);
+    fs.renameSync(tempPath, inputPath);
+  } catch {
+    /* ignorar errores de compresión */
+  }
+}
+
 // ----------------------------------------------------------
-// 🚀 Generador principal IAAP PRO
+// 🚀 Generador principal
 // ----------------------------------------------------------
 async function generateCaptures() {
-  console.log("📸 Generando capturas IAAP v3.6 XPath Compatible...");
+  console.log("📸 Generando capturas IAAP PRO v3.8 con contexto WCAG...");
 
   const mergedFiles = fs
     .readdirSync(AUDITORIAS_DIR)
@@ -124,15 +89,15 @@ async function generateCaptures() {
 
   const duplicadosGuardados = new Set();
   const metadata = [];
-  let totalCapturas = 0;
-  let totalOmitidas = 0;
-  let totalErrores = 0;
+  let totalCapturas = 0,
+    totalOmitidas = 0,
+    totalErrores = 0;
 
-  for (const page of data) {
-    const url = page.url || page.page;
-    if (!url || !Array.isArray(page.violations)) continue;
+  for (const issue of data) {
+    const url = issue.pageUrl || issue.url;
+    if (!url) continue;
 
-    const origen = page.origen || "sitemap";
+    const origen = issue.origen || "sitemap";
     const carpetaOrigen = path.join(CAPTURAS_DIR, origen);
     fs.mkdirSync(carpetaOrigen, { recursive: true });
 
@@ -141,137 +106,107 @@ async function generateCaptures() {
 
     try {
       console.log(`\n🌍 Página: ${url}`);
-      await tab.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+      await tab.goto(url, {
+        waitUntil: ["load", "domcontentloaded"],
+        timeout: 60000,
+      });
       await tab.setViewport({ width: 1440, height: 900 });
 
-      for (const v of page.violations) {
-        const node = v.nodes?.[0];
-        if (!node) continue;
+      const selector = issue.selector || "body";
+      const criterio = issue.wcag || issue.id || "sin-id";
+      const impact = issue.impact || "serious";
+      const wcag = getWcagInfo(criterio);
 
-        let selector = node.target?.[0] || null;
-        const criterio = v.id || "sin-id";
-        const impact = v.impact || "serious";
+      // 🔁 Evitar duplicados
+      const isDuplicado =
+        PATRONES_DUPLICADOS.some((p) => selector.includes(p)) ||
+        Array.from(duplicadosGuardados).some(
+          (d) => selector.includes(d) || d.includes(selector)
+        );
+      if (isDuplicado) {
+        totalOmitidas++;
+        continue;
+      }
+      duplicadosGuardados.add(selector);
 
-        // 🔁 Evitar duplicados
-        const isDuplicado =
-          PATRONES_DUPLICADOS.some((p) => selector?.includes(p)) ||
-          Array.from(duplicadosGuardados).some(
-            (d) => selector?.includes(d) || d.includes(selector)
+      const selectorSlug = slugify(selector || criterio);
+      const filename = `${criterio}--${selectorSlug}--${pageSlug}.png`;
+      const capturePath = path.join(carpetaOrigen, filename);
+
+      // 🎨 Dibujar overlay
+      const impactColor =
+        {
+          critical: "#d60000",
+          serious: "#ff4c00",
+          moderate: "#ffaa00",
+          minor: "#00aaff",
+        }[impact] || "#ffaa00";
+
+      await drawOverlay(tab, selector, issue, wcag, impactColor);
+
+      // 📸 Capturar imagen
+      let element = null;
+      if (selector.startsWith("//")) {
+        const handle = await tab.evaluateHandle((xpath) => {
+          const result = document.evaluate(
+            xpath,
+            document,
+            null,
+            XPathResult.FIRST_ORDERED_NODE_TYPE,
+            null
           );
-        if (isDuplicado) {
-          if (duplicadosGuardados.has(selector)) {
-            totalOmitidas++;
-            continue;
-          }
-          duplicadosGuardados.add(selector);
-        }
-
-        // 🎯 Recuperación de selectores dinámicos
-        if (!selector || selector.startsWith("#yui_") || selector.includes("sqs") || selector.includes("data-")) {
-          const text = node.html?.replace(/<[^>]+>/g, "").trim();
-          if (text?.length > 0) selector = `//*[contains(text(),"${text.substring(0, 25)}")]`;
-          else selector = "figcaption em, em, p, span";
-        }
-
-        const selectorSlug = slugify(selector || criterio);
-        const filename = `${criterio}--${selectorSlug}--${pageSlug}.png`;
-        const capturePath = path.join(carpetaOrigen, filename);
-
-        try {
-          // ✨ Soporte dual CSS / XPath compatible con Puppeteer v23+
-          let element = null;
-          if (selector.startsWith("//")) {
-            try {
-              const handle = await tab.evaluateHandle((xpath) => {
-                const result = document.evaluate(
-                  xpath,
-                  document,
-                  null,
-                  XPathResult.FIRST_ORDERED_NODE_TYPE,
-                  null
-                );
-                return result.singleNodeValue;
-              }, selector);
-              if (handle && (await handle.asElement())) {
-                element = handle.asElement();
-              }
-            } catch {
-              console.warn(`⚠️ XPath inválido o no encontrado: ${selector}`);
-            }
-          } else {
-            element = await tab.$(selector);
-          }
-
-          const impactColor = {
-            critical: "#d60000",
-            serious: "#ff4c00",
-            moderate: "#ffaa00",
-            minor: "#00aaff",
-          }[impact];
-
-          await adaptCaptureToViolation(tab, selector, v, impactColor);
-
-          if (element) {
-            const box = await element.boundingBox();
-            if (box && box.width > 10 && box.height > 10) {
-              await element.screenshot({ path: capturePath });
-              console.log(`✅ Captura recortada: ${filename}`);
-            } else {
-              await tab.screenshot({ path: capturePath, fullPage: true });
-              console.log(`⚠️ Captura completa (bounding box inválido): ${filename}`);
-            }
-          } else {
-            await tab.evaluate((color) => {
-              const overlay = document.createElement("div");
-              overlay.className = "wcag-overlay-fallback";
-              overlay.style.position = "fixed";
-              overlay.style.top = "0";
-              overlay.style.left = "0";
-              overlay.style.width = "100vw";
-              overlay.style.height = "100vh";
-              overlay.style.background = `${color}22`;
-              overlay.style.border = `4px dashed ${color}`;
-              overlay.style.zIndex = "999999";
-              document.body.appendChild(overlay);
-            }, impactColor);
-            await tab.screenshot({ path: capturePath, fullPage: true });
-            console.log(`⚠️ Fallback visual completo: ${filename}`);
-          }
-
-          // 🧹 Optimizar PNG
-          try {
-            const sharp = await import("sharp");
-            await sharp.default(capturePath)
-              .png({ compressionLevel: 9, adaptiveFiltering: true })
-              .toFile(capturePath + ".tmp");
-            fs.renameSync(capturePath + ".tmp", capturePath);
-          } catch {}
-
-          // 🧽 Limpiar overlays
-          await tab.evaluate(() => {
-            document.querySelectorAll(".wcag-overlay, .wcag-overlay-fallback").forEach((o) => o.remove());
-          });
-
-          metadata.push({
-            criterio,
-            selector,
-            impacto: impact,
-            archivo: path.join(origen, filename),
-            url,
-            origen,
-          });
-          totalCapturas++;
-        } catch (err) {
-          totalErrores++;
-          console.error(`❌ Error capturando ${selector}: ${err.message}`);
-        }
+          return result.singleNodeValue;
+        }, selector);
+        element = handle && (await handle.asElement()) ? handle.asElement() : null;
+      } else {
+        element = await tab.$(selector);
       }
 
-      if (!tab.isClosed()) await tab.close();
+      if (element) {
+        const box = await element.boundingBox();
+        if (box && box.width > 10 && box.height > 10) {
+          await element.screenshot({ path: capturePath });
+          console.log(`✅ Captura recortada: ${filename}`);
+        } else {
+          await tab.screenshot({ path: capturePath, fullPage: true });
+          console.log(`⚠️ Captura completa (bounding box inválido): ${filename}`);
+        }
+      } else {
+        await tab.screenshot({ path: capturePath, fullPage: true });
+        console.log(`⚠️ Fallback visual completo: ${filename}`);
+      }
+
+      // 🧹 Limpiar overlays
+      await tab.evaluate(() =>
+        document.querySelectorAll(".wcag-overlay").forEach((o) => o.remove())
+      );
+
+      // 🗜️ Comprimir PNG
+      await compressPng(capturePath);
+
+      // 💾 Añadir a metadatos
+      const relativePath = path.relative(AUDITORIAS_DIR, capturePath);
+      metadata.push({
+        criterio,
+        criterio_wcag: wcag.criterio,
+        principio: wcag.principio,
+        nivel: wcag.nivel,
+        resumen: wcag.resumen,
+        url_wcag: wcag.url,
+        selector,
+        impacto: impact,
+        capturePath: relativePath,
+        url,
+        origen,
+      });
+
+      totalCapturas++;
+      await tab.waitForTimeout(500);
     } catch (err) {
       totalErrores++;
-      console.error(`❌ Error abriendo ${url}: ${err.message}`);
-      if (!tab.isClosed()) await tab.close();
+      console.error(`❌ Error en ${url}: ${err.message}`);
+    } finally {
+      await tab.close();
     }
   }
 
@@ -279,7 +214,7 @@ async function generateCaptures() {
   fs.writeFileSync(METADATA_FILE, JSON.stringify(metadata, null, 2));
 
   console.log("\n===========================================");
-  console.log("📊 RESUMEN DE CAPTURAS WCAG IAAP v3.6");
+  console.log("📊 RESUMEN DE CAPTURAS WCAG IAAP v3.8");
   console.log("-------------------------------------------");
   console.log(`✅ Capturas generadas: ${totalCapturas}`);
   console.log(`⚠️ Duplicados omitidos: ${totalOmitidas}`);
@@ -291,59 +226,45 @@ async function generateCaptures() {
 }
 
 // ----------------------------------------------------------
-// 🎨 Overlay adaptativo IAAP PRO
+// 🎨 Overlay visual con criterio WCAG
 // ----------------------------------------------------------
-async function adaptCaptureToViolation(tab, selector, v, color) {
-  const descripcion = MAPA_REGLAS[v.id] || "Elemento que incumple una pauta WCAG.";
+async function drawOverlay(tab, selector, v, wcag, color) {
+  await tab.evaluate((sel, v, wcag, color) => {
+    const el = sel.startsWith("//") ? null : document.querySelector(sel);
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const overlay = document.createElement("div");
+    overlay.className = "wcag-overlay";
+    overlay.style.position = "fixed";
+    overlay.style.top = `${rect.top - 8}px`;
+    overlay.style.left = `${rect.left - 8}px`;
+    overlay.style.width = `${rect.width + 16}px`;
+    overlay.style.height = `${rect.height + 16}px`;
+    overlay.style.border = `3px solid ${color}`;
+    overlay.style.boxShadow = `0 0 10px ${color}88`;
+    overlay.style.zIndex = "999999";
+    overlay.style.pointerEvents = "none";
 
-  await tab.evaluate(
-    (sel, v, color, descripcion) => {
-      const el = sel.startsWith("//") ? null : document.querySelector(sel);
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      const overlay = document.createElement("div");
-      overlay.className = "wcag-overlay";
-      overlay.style.position = "fixed";
-      overlay.style.top = `${rect.top - 8}px`;
-      overlay.style.left = `${rect.left - 8}px`;
-      overlay.style.width = `${rect.width + 16}px`;
-      overlay.style.height = `${rect.height + 16}px`;
-      overlay.style.border = `3px solid ${color}`;
-      overlay.style.boxShadow = `0 0 10px ${color}88`;
-      overlay.style.zIndex = "999999";
-      overlay.style.pointerEvents = "none";
+    const label = document.createElement("div");
+    label.textContent = `${wcag.criterio || v.id} (${wcag.nivel || "N/A"})`;
+    label.style.position = "absolute";
+    label.style.top = "-22px";
+    label.style.left = "0";
+    label.style.background = color;
+    label.style.color = "#fff";
+    label.style.fontSize = "11px";
+    label.style.padding = "2px 6px";
+    label.style.borderRadius = "4px";
+    label.style.fontFamily = "Arial, sans-serif";
+    label.style.whiteSpace = "nowrap";
+    label.style.maxWidth = "420px";
+    label.style.overflow = "hidden";
+    label.style.textOverflow = "ellipsis";
 
-      const label = document.createElement("div");
-      label.textContent = `${v.id} (${v.impact || "sin severidad"}) — ${descripcion}`;
-      label.style.position = "absolute";
-      label.style.top = "-24px";
-      label.style.left = "0";
-      label.style.background = color;
-      label.style.color = "#fff";
-      label.style.fontSize = "11px";
-      label.style.padding = "2px 6px";
-      label.style.borderRadius = "4px";
-      label.style.fontFamily = "Arial, sans-serif";
-      label.style.maxWidth = "380px";
-      label.style.whiteSpace = "nowrap";
-      label.style.overflow = "hidden";
-      label.style.textOverflow = "ellipsis";
-
-      overlay.appendChild(label);
-      document.body.appendChild(overlay);
-      el.scrollIntoView({ block: "center", inline: "center" });
-
-      if (v.id.includes("color-contrast")) overlay.style.boxShadow = `0 0 25px ${color}`;
-      else if (v.id.includes("focus")) el.focus();
-      else if (v.id.includes("aria") || v.id.includes("role")) overlay.style.borderStyle = "dashed";
-      else if (v.id.includes("label") || v.id.includes("form")) overlay.style.borderWidth = "4px";
-      else if (v.id.includes("heading") || v.id.includes("h")) overlay.style.background = `${color}11`;
-    },
-    selector,
-    v,
-    color,
-    descripcion
-  );
+    overlay.appendChild(label);
+    document.body.appendChild(overlay);
+    el.scrollIntoView({ block: "center", inline: "center" });
+  }, selector, v, wcag, color);
 }
 
 // ----------------------------------------------------------

@@ -1,14 +1,15 @@
 /**
- * ♿ crawl.js (v5.3 IAAP PRO / WCAG 2.2)
+ * ♿ crawl.js (v5.6.3 IAAP PRO / WCAG 2.2)
  * ----------------------------------------------------------
  * Rastreador rápido y ligero basado en Cheerio.
  * Ideal para webs estáticas o con sitemap.xml accesible.
  *
+ * ✅ Normalización automática del idioma (LANG)
  * ✅ Profundidad configurable (MAX_DEPTH)
  * ✅ Evita duplicados, subdominios y recursos no HTML
- * ✅ Guarda resultados únicos en scripts/urls.json
- * ✅ Logs consistentes y tolerancia CI/CD
+ * ✅ Logs unificados IAAP PRO v5.6.3
  * ✅ Compatible con Node 20+, Docker, GitHub Actions
+ * ✅ Limpieza de errores tolerante
  * ----------------------------------------------------------
  */
 
@@ -26,9 +27,15 @@ const __dirname = path.dirname(__filename);
 // 🌐 CONFIGURACIÓN GLOBAL
 // ==========================================================
 const SITE_URL = process.env.SITE_URL?.replace(/\/$/, "") || "https://example.com";
+let LANG = process.env.LANG || "es";
+
+// 🧠 Normalización automática de idioma (ej. "en_US.UTF-8" → "en")
+LANG = LANG.split(/[-_.]/)[0].toLowerCase() || "es";
+
 const MAX_DEPTH = parseInt(process.env.MAX_DEPTH || "3", 10);
+const MAX_URLS = parseInt(process.env.MAX_URLS || "80", 10);
 const TIMEOUT = parseInt(process.env.TIMEOUT || "15000", 10);
-const USER_AGENT = "IAAP-A11yCrawler/5.3 (+https://github.com/iaap-pro)";
+const USER_AGENT = "IAAP-A11yCrawler/5.6.3 (+https://github.com/iaap-pro)";
 
 // 📂 Directorios
 const outputDir = path.join(__dirname, "..", "scripts");
@@ -40,7 +47,7 @@ const results = [];
 const errors = [];
 
 const NON_HTML_EXTENSIONS =
-  /\.(pdf|jpg|jpeg|png|gif|svg|webp|mp4|webm|avi|mov|ico|css|js|zip|rar|doc|docx|xls|xlsx|json|rss|xml)$/i;
+  /\.(pdf|jpg|jpeg|png|gif|svg|webp|mp4|webm|avi|mov|ico|css|js|zip|rar|doc|docx|xls|xlsx|json|rss|xml|woff|woff2|ttf|eot)$/i;
 
 // ==========================================================
 // 🔍 Funciones auxiliares
@@ -49,22 +56,36 @@ function normalizeUrl(url) {
   try {
     const u = new URL(url, SITE_URL);
     u.hash = "";
+    u.search = "";
     return u.href.replace(/\/$/, "");
   } catch {
     return null;
   }
 }
 
-function isSpanishUrl(url) {
+function shouldVisit(url) {
+  return (
+    url.startsWith(SITE_URL) &&
+    !visited.has(url) &&
+    !NON_HTML_EXTENSIONS.test(url) &&
+    !url.includes("mailto:") &&
+    !url.includes("#")
+  );
+}
+
+function isLangUrl(url) {
   try {
     const u = new URL(url);
-    const normalizedPath = u.pathname.trim().replace(/\/$/, "");  // Eliminar espacios y la barra final
-    const spanishPath = `/${process.env.LANG || 'es'}`;
+    const normalizedPath = u.pathname.trim().replace(/\/$/, "");
+    const langPrefix = `/${LANG}`;
 
-    // Compara el hostname y verifica si la ruta empieza con "/es" o es exactamente "/es"
     return (
       u.hostname === new URL(SITE_URL).hostname &&
-      (normalizedPath === spanishPath || normalizedPath.startsWith(spanishPath + "/"))
+      (LANG === "" ||
+        normalizedPath === langPrefix ||
+        normalizedPath.startsWith(langPrefix + "/") ||
+        normalizedPath === "" ||
+        normalizedPath === "/")
     );
   } catch (e) {
     console.warn(`⚠️ Error al analizar la URL: ${url}`);
@@ -82,6 +103,7 @@ async function delay(ms) {
 async function crawl(url, depth = 0) {
   const normalized = normalizeUrl(url);
   if (!normalized || visited.has(normalized) || depth > MAX_DEPTH) return;
+  if (!isLangUrl(normalized)) return;
 
   visited.add(normalized);
   console.log(`🔗 [${depth}] ${normalized}`);
@@ -104,6 +126,7 @@ async function crawl(url, depth = 0) {
       .filter(shouldVisit);
 
     for (const link of links) {
+      if (results.length >= MAX_URLS) break;
       await delay(150);
       await crawl(link, depth + 1);
     }
@@ -127,7 +150,9 @@ function saveResults() {
   const log = [
     `📅 Fecha: ${new Date().toISOString()}`,
     `🌍 Sitio: ${SITE_URL}`,
+    `🗣️ Idioma: ${LANG}`,
     `🔎 Profundidad máxima: ${MAX_DEPTH}`,
+    `📏 Límite global: ${MAX_URLS}`,
     `✅ Páginas rastreadas: ${results.length}`,
     `⚠️ Errores: ${errors.length}`,
     "",
@@ -139,6 +164,9 @@ function saveResults() {
   console.log("===============================================");
   console.log(`✅ ${results.length} páginas guardadas en ${outputPath}`);
   console.log(`🪵 Log de rastreo: ${logPath}`);
+  if (results.length >= MAX_URLS) {
+    console.log(`⚠️ Rastreo detenido al alcanzar ${MAX_URLS} URLs.`);
+  }
   console.log("===============================================");
 }
 
@@ -146,8 +174,9 @@ function saveResults() {
 // 🚀 Ejecución principal
 // ==========================================================
 (async () => {
-  console.log(`🚀 Iniciando rastreo IAAP PRO v5.3`);
+  console.log(`🚀 Iniciando rastreo rápido IAAP PRO v5.6.3`);
   console.log(`🌍 Dominio base: ${SITE_URL}`);
+  console.log(`🗣️ Idioma filtrado: ${LANG}`);
   console.log(`🔎 Profundidad máxima: ${MAX_DEPTH}`);
   console.log("-----------------------------------------------");
 

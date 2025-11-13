@@ -222,6 +222,14 @@ export const wcagMap = {
       "El foco queda oculto bajo otros elementos o fuera del área visible.",
     url: "https://www.w3.org/WAI/WCAG22/Understanding/focus-not-obscured-enhanced.html",
   },
+   "2.4.13": {
+    principio: "Operable",
+    nivel: "AA",
+    criterio: "2.4.13 Apariencia del foco",
+    esperado: "El foco visible cumple requisitos mínimos de contraste y tamaño.",
+    resumen: "El indicador de foco es insuficiente o apenas visible.",
+    url: "https://www.w3.org/WAI/WCAG22/quickref/#focus-appearance?showtechniques=es",
+  },
   "2.5.1": {
     principio: "Operable",
     nivel: "A",
@@ -265,6 +273,14 @@ export const wcagMap = {
       "Todos los objetivos tienen área de al menos 24×24 px sin excepciones.",
     resumen: "Algunos controles no alcanzan el tamaño táctil recomendado.",
     url: "https://www.w3.org/WAI/WCAG22/Understanding/target-size-enhanced.html",
+  },
+   "2.5.9": {
+    principio: "Operable",
+    nivel: "AAA",
+    criterio: "2.5.9 Tamaño del objetivo (sin excepción)",
+    esperado: "Todos los objetivos cumplen 24×24 px sin excepciones.",
+    resumen: "Algunos controles no cumplen el tamaño objetivo mínimo.",
+    url: "https://www.w3.org/WAI/WCAG22/quickref/#target-size-no-exception?showtechniques=es",
   },
 
   // === PRINCIPIO 3: COMPRENSIBLE ===
@@ -330,6 +346,14 @@ export const wcagMap = {
     resumen: "No hay confirmación al enviar información importante.",
     url: "https://www.w3.org/WAI/WCAG22/Understanding/error-prevention-legal-financial-data.html",
   },
+   "3.3.7": {
+    principio: "Comprensible",
+    nivel: "A",
+    criterio: "3.3.7 Autenticación accesible (mínimo)",
+    esperado: "El proceso de autenticación no requiere pruebas cognitivas o tiene alternativas.",
+    resumen: "La autenticación requiere recordar o reconocer sin alternativa accesible.",
+    url: "https://www.w3.org/WAI/WCAG22/quickref/#accessible-authentication-minimum?showtechniques=es",
+  },
   "3.3.8": {
     principio: "Comprensible",
     nivel: "AA",
@@ -370,19 +394,6 @@ export const wcagMap = {
   },
 };
 
-/**
- * Obtiene la información WCAG completa según ID o regla axe
- * @param {string} id - Código o nombre de la regla (ej: "color-contrast", "1.4.3")
- */
-export function getWcagInfo(id) {
-  if (!id) return null;
-
-  const normalized = id
-    .toLowerCase()
-    .replace(/^wcag\d{2}-/, "")
-    .replace(/^best-practice-/, "")
-    .trim();
-  
 // ===========================================================
 // 📘 Diccionario extendido de equivalencias WCAG (axe-core → WCAG 2.2)
 // ===========================================================
@@ -573,15 +584,63 @@ const equivalencias = {
   "visible-label": "2.5.3",
   "accessible-name": "4.1.2",
 };
- 
-   const match = equivalencias[normalized];
-  if (match && wcagMap[match]) return { id, ...wcagMap[match] };
-  if (wcagMap[id]) return { id, ...wcagMap[id] };
+ // === EQUIVALENCIAS PA11y → WCAG ===
+Object.assign(equivalencias, {
+  "wcag2aa.principle1.guideline1_1.1_1_1.h30.2": "1.1.1",
+  "wcag2aa.principle1.guideline1_1.1_1_1.h32.2": "1.1.1",
+  "wcag2aa.principle1.guideline1_3.1_3_1.h39,h73,h42,h63,h71": "1.3.1",
+  "wcag2aa.principle1.guideline1_3.1_3_1.h49": "1.3.1",
+  "wcag2aa.principle1.guideline1_4.1_4_3.g18,b1,b2": "1.4.3",
+  "wcag2aa.principle1.guideline1_4.1_4_4.g142": "1.4.4",
+  "wcag2aa.principle1.guideline1_4.1_4_6.g17": "1.4.6",
+  "wcag2aa.principle1.guideline1_4_1_4_11.g195": "1.4.11",
+  "wcag2aa.principle1.guideline1_4_1_4_12.g196": "1.4.12",
+  "wcag2aa.principle2.guideline2_1.2_1_1.g90": "2.1.1",
+  "wcag2aa.principle2.guideline2_1.2_1_2.g91": "2.1.2",
+  "wcag2aa.principle2.guideline2_4.2_4_2.h25.1": "2.4.2",
+  "wcag2aa.principle2.guideline2_4.2_4_3.h76": "2.4.3",
+  "wcag2aa.principle2.guideline2_4.2_4_4.h77,h78,h79,h80,h81": "2.4.4",
+  "wcag2aa.principle2.guideline2_4.2_4_6.g149": "2.4.6",
+  "wcag2aa.principle2.guideline2_4.2_4_7.g165": "2.4.7",
+  "wcag2aa.principle2.guideline2_5.2_5_1.g101": "2.5.1",
+  "wcag2aa.principle2.guideline2_5.2_5_3.g102": "2.5.3",
+  "wcag2aa.principle3.guideline3_1.3_1_1.h57.2": "3.1.1",
+  "wcag2aa.principle3.guideline3_3.3_3_1.g83,g84,g85": "3.3.1",
+  "wcag2aa.principle3.guideline3_3.3_3_2.h44": "3.3.2",
+  "wcag2aa.principle3.guideline3_3.3_3_3.g85": "3.3.3",
+  "wcag2aa.principle3.guideline3_3.3_3_4.g98,g99,g155,g164,g168": "3.3.4",
+  "wcag2aa.principle4.guideline4_1.4_1_1.h93": "4.1.1",
+  "wcag2aa.principle4.guideline4_1.4_1_2.h91.a.bad": "4.1.2",
+  "wcag2aa.principle4.guideline4_1.4_1_2.h91.button.name": "4.1.2",
+  "wcag2aa.principle4.guideline4_1.4_1_2.h91.formcontrol.name": "4.1.2",
+  "wcag2aa.principle4.guideline4_1.4_1_2.h91.2": "4.1.2",
+  "wcag2aa.principle4.guideline4_1.4_1_2.h91.inputfile.name": "4.1.2",
+  "wcag2aa.principle4.guideline4_1.4_1_2.h91.inputhidden.name": "4.1.2",
+  "wcag2aa.principle4.guideline4_1.4_1_2.h91.inputimage.name": "4.1.2",
+  "wcag2aa.principle4.guideline4_1.4_1_2.h91.inputsubmit.name": "4.1.2",
+  "wcag2aa.principle4.guideline4_1.4_1_2.h91.inputreset.name": "4.1.2",
+  "wcag2aa.principle4.guideline4_1.4_1_2.h91.inputbutton.name": "4.1.2"
+});
 
-  const found = Object.entries(wcagMap).find(([key]) =>
-    normalized.includes(key)
-  );
-  if (found) return { id, ...found[1] };
+export function getWcagInfo(id) {
+  if (!id) return null;
+
+  const normalized = id
+    .toLowerCase()
+    .replace(/^wcag\d{2}-|^axe-|^rule-/, "")
+    .replace(/^best-practice-/, "")
+    .replace(/_/g, "-")
+    .trim();
+
+  const engine = id.includes("wcag2") ? "pa11y" : "axe-core";
+  const match = equivalencias[normalized];
+
+  if (match && wcagMap[match]) return { id, engine, criterioId: match, ...wcagMap[match] };
+  if (wcagMap[id]) return { id, engine, criterioId: id, ...wcagMap[id] };
+
+  for (const key in wcagMap) {
+    if (normalized.includes(key)) return { id, engine, criterioId: key, ...wcagMap[key] };
+  }
 
   const keywords = {
     contraste: "1.4.3",
@@ -592,24 +651,26 @@ const equivalencias = {
     error: "3.3.1",
   };
   for (const [k, v] of Object.entries(keywords)) {
-    if (normalized.includes(k) && wcagMap[v]) return { id, ...wcagMap[v] };
+    if (normalized.includes(k) && wcagMap[v]) return { id, engine, criterioId: v, ...wcagMap[v] };
   }
 
   console.warn(`[wcag-map] ⚠️ Criterio WCAG no identificado para la regla: ${id}`);
   return {
     id,
+    engine,
     criterio: "Criterio WCAG no identificado",
     principio: "Desconocido",
     nivel: "N/A",
     esperado: "Debe cumplir las pautas WCAG 2.1/2.2 aplicables.",
     resumen: `Regla sin correspondencia directa (${id}).`,
-    nota: "⚠️ Revisar correspondencia o nueva regla axe-core.",
-    url: "https://www.w3.org/WAI/WCAG22/quickref/",
+    nota: "⚠️ Revisar correspondencia o nueva regla axe-core / Pa11y.",
+    url: "https://www.w3.org/WAI/WCAG22/quickref/?showtechniques=es",
   };
 }
-// ===========================================================
-// 📘 Diccionario de nombres legibles WCAG
-// ===========================================================
+
+/**
+ * Diccionario de nombres legibles WCAG
+ */
 export const wcagNombres = Object.fromEntries(
   Object.entries(wcagMap).map(([id, val]) => [id, `${val.criterio} (${val.nivel})`])
 );

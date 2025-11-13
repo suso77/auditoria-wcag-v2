@@ -1,161 +1,185 @@
 /**
- * ♿ merge-auditorias.mjs (IAAP PRO Híbrido v5.5)
- * ---------------------------------------------------------
- * ✅ Fusiona resultados de auditorías axe-core + Pa11y (Sitemap + Interactiva)
- * ✅ Acepta archivos con timestamp (results-interactiva-*.json)
- * ✅ Prioriza resultados interactivos sobre sitemap
- * ✅ Normaliza WCAG para Pa11y (usando wcag-map-pa11y.js)
- * ✅ Elimina duplicados entre ambos orígenes
- * ✅ Añade rutas de capturas PNG si existen
- * ✅ Ordena por URL + severidad de impacto
- * ✅ Añade ID único + origenId para trazabilidad
- * ✅ Genera merged-results.json, copia histórica y resumen JSON
- * ✅ Incluye estadísticas IAAP PRO
- * ✅ 100% compatible con CI/CD (no bloquea el pipeline)
+ * ♿ merge-auditorias.mjs — IAAP PRO Híbrido v6.5 (Node 24+)
+ * ------------------------------------------------------------------------
+ * ✅ Fusiona resultados axe-core + Pa11y + Revisiones manuales
+ * ✅ Clasifica por severidad, motor y origen (sitemap / interactiva / manual)
+ * ✅ Añade campos normalizados: engine, source, severity, nivel, principio
+ * ✅ Traduce descripciones técnicas y genera resultado esperado
+ * ✅ Vincula capturas automáticamente y exporta resultados por motor
+ * ✅ Compatible con generate-summary.mjs y verify-pipeline.mjs
  */
 
 import fs from "fs";
-import path from "path";
-import url from "url";
-import { getWcagFromPa11y } from "./wcag-map-pa11y.js"; // 🧠 Normalizador WCAG Pa11y
+import path, { join, dirname } from "path";
+import { fileURLToPath, pathToFileURL } from "url";
+import fsPromises from "fs/promises";
 
-const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
+// ============================================================
+// 🧩 Inicialización
+// ============================================================
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 const ROOT = process.cwd();
-const AUDITORIAS_DIR = path.join(ROOT, "auditorias");
-const REPORTES_DIR = path.join(AUDITORIAS_DIR, "reportes");
-const CAPTURAS_DIR = path.join(AUDITORIAS_DIR, "capturas");
 
-fs.mkdirSync(REPORTES_DIR, { recursive: true });
+const AUDITORIAS_DIR = join(ROOT, "auditorias");
+const REPORTES_DIR = join(AUDITORIAS_DIR, "reportes");
+const CAPTURAS_DIR = join(AUDITORIAS_DIR, "capturas");
+await fsPromises.mkdir(REPORTES_DIR, { recursive: true });
 
-// ------------------------------------------------------------------
-// 🧩 Localizar resultados más recientes (Sitemap + Interactiva)
-// ------------------------------------------------------------------
-const sitemapPath = path.join(AUDITORIAS_DIR, "auditoria-sitemap", "results.json");
-const interactivaDir = path.join(AUDITORIAS_DIR, "auditoria-interactiva");
-let interactivaPath = path.join(interactivaDir, "results.json");
-
-// Si no hay results.json directo, buscar el más reciente con timestamp
-if (!fs.existsSync(interactivaPath)) {
-  const files = fs.existsSync(interactivaDir)
-    ? fs.readdirSync(interactivaDir).filter(
-        (f) => f.startsWith("results-interactiva-") && f.endsWith(".json")
-      )
-    : [];
-  if (files.length > 0) {
-    interactivaPath = path.join(interactivaDir, files.sort().reverse()[0]);
-    console.log(`🧩 Usando resultado interactivo más reciente: ${path.basename(interactivaPath)}`);
-  } else {
-    console.warn("⚠️ No se encontraron archivos de auditoría interactiva.");
-  }
+// ============================================================
+// 🧠 Cargar mapa WCAG universal
+// ============================================================
+let getWcagInfo;
+try {
+  const wcagModuleUrl = pathToFileURL(join(__dirname, "wcag-map.mjs")).href;
+  const wcagModule = await import(wcagModuleUrl);
+  getWcagInfo = wcagModule.getWcagInfo;
+  console.log("✅ Mapa WCAG importado correctamente");
+} catch (err) {
+  console.error("❌ Error importando wcag-map.mjs:", err.message);
+  process.exit(1);
 }
 
-// ------------------------------------------------------------------
-// 📦 Recopilar archivos JSON válidos
-// ------------------------------------------------------------------
-const jsonFiles = [];
-if (fs.existsSync(sitemapPath)) jsonFiles.push(sitemapPath);
-if (fs.existsSync(interactivaPath)) jsonFiles.push(interactivaPath);
+// ============================================================
+// 🌐 Traducción de descripciones
+// ============================================================
+function traducirDescripcion(text = "") {
+  return text
+    .replace(/Img element is marked so that it is ignored by Assistive Technology/gi, "El elemento de imagen está marcado para ser ignorado por los lectores de pantalla")
+    .replace(/Iframe element requires a non-empty title attribute/gi, "El elemento iframe requiere un atributo title no vacío que describa el contenido")
+    .replace(/must have discernible text/gi, "debe tener texto visible o etiqueta accesible")
+    .replace(/contrast ratio/gi, "relación de contraste insuficiente entre texto y fondo")
+    .replace(/missing alt attribute/gi, "falta el atributo alt en la imagen")
+    .replace(/Empty heading/gi, "El encabezado está vacío o sin contenido")
+    .replace(/decorative/gi, "decorativo o sin información relevante")
+    .replace(/This element does not have a role/gi, "El elemento no tiene un rol ARIA definido")
+    .trim();
+}
 
-if (jsonFiles.length === 0) {
-  console.warn("⚠️ No se encontraron archivos JSON de auditoría para combinar.");
+// ============================================================
+// 📁 Localización de archivos de auditoría
+// ============================================================
+function findJsonFiles(dir) {
+  const result = [];
+  if (!fs.existsSync(dir)) return result;
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, e.name);
+    if (e.isDirectory()) result.push(...findJsonFiles(full));
+    else if (e.isFile() && e.name.endsWith(".json")) result.push(full);
+  }
+  return result;
+}
+
+const allJsonFiles = findJsonFiles(AUDITORIAS_DIR).filter(
+  (f) =>
+    !f.includes("merged") &&
+    !f.includes("summary") &&
+    !f.endsWith("urls.json") &&
+    !f.includes("export") &&
+    !f.includes("results-merged")
+);
+
+const sitemapFiles = allJsonFiles.filter((f) => /sitemap/i.test(f));
+const interactivaFiles = allJsonFiles.filter((f) => /interactiva/i.test(f));
+const manualFiles = allJsonFiles.filter((f) => /needs_review/i.test(f));
+
+console.log(`🧩 Detectados: ${sitemapFiles.length} sitemap | ${interactivaFiles.length} interactivas | ${manualFiles.length} manuales`);
+
+if (sitemapFiles.length + interactivaFiles.length + manualFiles.length === 0) {
+  console.warn("⚠️ No se encontraron archivos de auditoría.");
   process.exit(0);
 }
 
-// ------------------------------------------------------------------
-// 🧩 Cargar y normalizar resultados
-// ------------------------------------------------------------------
+// ============================================================
+// 🔄 Procesamiento y normalización
+// ============================================================
 const merged = [];
 
-for (const file of jsonFiles) {
+function processFile(file, origen) {
   try {
-    const raw = fs.readFileSync(file, "utf8");
-    if (!raw.trim()) continue;
-    const data = JSON.parse(raw);
-    if (!Array.isArray(data) || data.length === 0) continue;
+    const data = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (!Array.isArray(data)) return;
 
-    const origen = /interactiva/i.test(file)
-      ? "interactiva"
-      : /sitemap/i.test(file)
-      ? "sitemap"
-      : "combinado";
+    for (const item of data) {
+      const src = origen;
+      const wcag = getWcagInfo(item.id || item.ruleId || item.code || item.wcag);
+      const impacto = (item.impact || item.type || "moderate").toLowerCase();
 
-    const origenId = path.basename(file).replace(/results-|\.json/g, "");
+      // 🧠 Detección precisa del motor
+      const motor =
+        item.engine?.toLowerCase() ||
+        (file.toLowerCase().includes("pa11y") ? "pa11y" :
+        file.toLowerCase().includes("axe") ? "axe-core" :
+        src === "interactiva" ? "pa11y" : "axe-core");
 
-    for (const issue of data) {
-      const engine =
-        issue.engine?.toLowerCase() ||
-        (issue.code?.includes("Principle") ? "pa11y" : "axe-core");
-
-      const wcagRef =
-        issue.wcag && issue.wcag !== ""
-          ? issue.wcag
-          : engine === "pa11y"
-          ? getWcagFromPa11y(issue.code || "")
-          : "Desconocido";
+      // 🧩 Traducción y normalización
+      const descripcion = traducirDescripcion(item.description || item.message || "");
+      const resultadoEsperado = wcag?.resumen || "Debe cumplir las pautas WCAG 2.1/2.2 aplicables.";
 
       merged.push({
-        id: `${origen}-${Buffer.from(
-          (issue.pageUrl || issue.url || "") + (issue.selector || "body")
-        )
-          .toString("base64")
-          .substring(0, 12)}`,
-        origen,
-        origenId,
-        engine,
-        pageUrl: issue.pageUrl || issue.url || "",
-        pageTitle: issue.pageTitle || issue.title || "(sin título)",
-        impact: issue.impact || issue.type || "n/a",
-        description: issue.description || issue.message || "",
-        helpUrl: issue.helpUrl || issue.help || "",
-        selector: issue.selector || "",
-        context: issue.context || "",
-        wcag: wcagRef,
-        nodes: issue.nodes || 0,
+        id: item.ruleId || item.id || `${src}-${Buffer.from((item.pageUrl || "") + (item.selector || "")).toString("base64").substring(0, 10)}`,
+        pageUrl: item.pageUrl || item.url || "",
+        pageTitle: item.pageTitle || item.title || "(sin título)",
+        source: src,
+        engine: motor,
+        impact: impacto,
+        severity: impacto.replace("n/a", "moderate"),
+        wcag: wcag?.criterio || "Desconocido",
+        nivel: wcag?.nivel || "AA",
+        principio: wcag?.principio || "",
+        resumen: wcag?.resumen || descripcion || "",
+        resultadoActual: descripcion || "Sin descripción disponible",
+        resultadoEsperado,
+        recomendacionW3C: wcag?.url ? `Ver recomendación W3C: ${wcag.url}` : "Revisión manual requerida",
+        selector: item.selector || "",
+        context: item.context || "",
+        helpUrl: item.helpUrl || item.help || "",
       });
     }
   } catch (err) {
-    console.warn(`⚠️ Error leyendo ${file}: ${err.message}`);
+    console.warn(`⚠️ Error procesando ${file}: ${err.message}`);
   }
 }
 
-if (merged.length === 0) {
-  console.warn("⚠️ No se detectaron issues combinables.");
-  process.exit(0);
-}
+sitemapFiles.forEach((f) => processFile(f, "sitemap"));
+interactivaFiles.forEach((f) => processFile(f, "interactiva"));
+manualFiles.forEach((f) => processFile(f, "manual"));
 
-// ------------------------------------------------------------------
-// 🧽 Deduplicación IAAP PRO (prioriza interactiva)
-// ------------------------------------------------------------------
-const deduped = merged
-  .sort((a, b) => (a.origen === "interactiva" && b.origen !== "interactiva" ? -1 : 1))
-  .filter(
-    (item, index, self) =>
-      index ===
-      self.findIndex(
-        (t) =>
-          t.pageUrl === item.pageUrl &&
-          t.selector === item.selector &&
-          t.wcag === item.wcag &&
-          t.description === item.description &&
-          t.engine === item.engine
-      )
-  );
+// ============================================================
+// 🧽 Deduplicación
+// ============================================================
+const deduped = merged.filter(
+  (item, index, self) =>
+    index ===
+    self.findIndex(
+      (t) =>
+        t.pageUrl === item.pageUrl &&
+        t.selector === item.selector &&
+        t.wcag === item.wcag &&
+        t.resultadoActual === item.resultadoActual &&
+        t.source === item.source
+    )
+);
 
-// ------------------------------------------------------------------
-// 🖼️ Asociar capturas PNG si existen
-// ------------------------------------------------------------------
+// ============================================================
+// 🖼️ Vinculación automática de capturas
+// ============================================================
 function findPngs(dir) {
   const result = [];
   if (!fs.existsSync(dir)) return result;
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, e.name);
+    const full = join(dir, e.name);
     if (e.isDirectory()) result.push(...findPngs(full));
     else if (e.isFile() && e.name.endsWith(".png")) result.push(full);
   }
   return result;
 }
 
-const pngs = findPngs(CAPTURAS_DIR);
+const pngs = [
+  ...findPngs(join(AUDITORIAS_DIR, "auditoria-sitemap")),
+  ...findPngs(join(AUDITORIAS_DIR, "auditoria-interactiva")),
+  ...findPngs(CAPTURAS_DIR),
+];
 
 deduped.forEach((issue) => {
   const hint = issue.pageUrl.replace(/[^\w-]/g, "_").slice(0, 60);
@@ -163,115 +187,41 @@ deduped.forEach((issue) => {
   if (match) issue.capturePath = path.relative(AUDITORIAS_DIR, match);
 });
 
-// ------------------------------------------------------------------
-// 🧮 Ordenar resultados por URL + severidad
-// ------------------------------------------------------------------
-const impactWeight = {
-  critical: 4,
-  serious: 3,
-  moderate: 2,
-  minor: 1,
-  error: 3,
-  warning: 2,
-  notice: 1,
-  "n/a": 0,
-  n: 0,
-};
+// ============================================================
+// 💾 Guardar resultados combinados
+// ============================================================
+const mergedStandard = join(REPORTES_DIR, "merged-results.json");
+await fsPromises.writeFile(mergedStandard, JSON.stringify(deduped, null, 2));
+console.log(`✅ IAAP PRO v6.5 — ${deduped.length} issues combinados.`);
 
-deduped.sort((a, b) => {
-  if (a.pageUrl !== b.pageUrl) return a.pageUrl.localeCompare(b.pageUrl);
-  const aW = impactWeight[a.impact?.toLowerCase()] || 0;
-  const bW = impactWeight[b.impact?.toLowerCase()] || 0;
-  return bW - aW;
-});
-
-// ------------------------------------------------------------------
-// 💾 Guardar resultados IAAP combinados
-// ------------------------------------------------------------------
-if (deduped.length === 0) {
-  console.warn("⚠️ No se detectaron resultados combinables. No se guardará merged.");
-  process.exit(0);
-}
-
-const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-const mergedHistoric = path.join(AUDITORIAS_DIR, `results-merged-${timestamp}.json`);
-const mergedStandard = path.join(REPORTES_DIR, "merged-results.json");
-
-fs.writeFileSync(mergedHistoric, JSON.stringify(deduped, null, 2), "utf8");
-fs.writeFileSync(mergedStandard, JSON.stringify(deduped, null, 2), "utf8");
-fs.writeFileSync(path.join(AUDITORIAS_DIR, "last-merged.txt"), mergedHistoric, "utf8");
-
-console.log(`\n✅ IAAP PRO Híbrido: ${deduped.length} issues combinados.`);
-console.log(`📁 Archivo principal: ${mergedStandard}`);
-console.log(`🕒 Histórico guardado en: ${path.basename(mergedHistoric)}\n`);
-
-// ------------------------------------------------------------------
-// 📊 Estadísticas IAAP PRO
-// ------------------------------------------------------------------
-const stats = {
-  sitemap: { urls: new Set(), total: 0, critical: 0, serious: 0, moderate: 0, minor: 0 },
-  interactiva: { urls: new Set(), total: 0, critical: 0, serious: 0, moderate: 0, minor: 0 },
-};
-
+// ============================================================
+// 📊 Resumen global
+// ============================================================
+const stats = {};
 for (const r of deduped) {
-  const s = stats[r.origen];
-  s.urls.add(r.pageUrl);
-  const imp = (r.impact || "n/a").toLowerCase();
-  if (s[imp] !== undefined) s[imp]++;
-  s.total++;
+  const key = `${r.source}_${r.engine}`;
+  if (!stats[key]) stats[key] = { total: 0, critical: 0, serious: 0, moderate: 0, minor: 0 };
+  stats[key].total++;
+  if (stats[key][r.severity] !== undefined) stats[key][r.severity]++;
 }
 
-// ------------------------------------------------------------------
-// 📈 Resumen global IAAP PRO
-// ------------------------------------------------------------------
-console.log("===============================================");
-console.log("♿ RESUMEN GLOBAL DE AUDITORÍA WCAG – IAAP PRO");
-console.log("-----------------------------------------------");
+console.log("\n♿ RESUMEN GLOBAL DE AUDITORÍA – IAAP PRO v6.5");
+console.log("------------------------------------------------");
+Object.entries(stats).forEach(([k, v]) => {
+  console.log(`🔹 ${k}: ${v.total} issues (${v.critical} critical, ${v.serious} serious, ${v.moderate} moderate, ${v.minor} minor)`);
+});
+console.log("------------------------------------------------\n");
 
-for (const [origen, s] of Object.entries(stats)) {
-  if (s.total === 0) continue;
-  console.log(`🔹 ${origen.toUpperCase()}:`);
-  console.log(`   • URLs con violaciones: ${s.urls.size}`);
-  console.log(`   • Violaciones totales: ${s.total}`);
-  console.log(`     🔴 critical: ${s.critical}`);
-  console.log(`     🟠 serious: ${s.serious}`);
-  console.log(`     🟡 moderate: ${s.moderate}`);
-  console.log(`     🟢 minor: ${s.minor}`);
-  console.log("-----------------------------------------------");
-}
+// ============================================================
+// 🔄 Exportar por motor
+// ============================================================
+await fsPromises.mkdir(join(REPORTES_DIR, "por-motor"), { recursive: true });
+const axeResults = deduped.filter((r) => r.engine === "axe-core");
+const pa11yResults = deduped.filter((r) => r.engine === "pa11y");
 
-const totalUrls = new Set([...stats.sitemap.urls, ...stats.interactiva.urls]).size;
-const totalIssues = stats.sitemap.total + stats.interactiva.total;
-console.log(`🌍 Cobertura total: ${totalUrls} URLs auditadas`);
-console.log(`♿ Violaciones totales combinadas: ${totalIssues}`);
-console.log("✅ Fusión IAAP PRO completada correctamente.");
-console.log("===============================================\n");
+await fsPromises.writeFile(join(REPORTES_DIR, "por-motor/axe-results.json"), JSON.stringify(axeResults, null, 2));
+await fsPromises.writeFile(join(REPORTES_DIR, "por-motor/pa11y-results.json"), JSON.stringify(pa11yResults, null, 2));
 
-// ------------------------------------------------------------------
-// 💾 Guardar resumen global IAAP PRO (JSON)
-// ------------------------------------------------------------------
-const resumenData = {
-  fecha: new Date().toISOString(),
-  totalUrls,
-  totalIssues,
-  sitemap: {
-    urls: stats.sitemap.urls.size,
-    total: stats.sitemap.total,
-    critical: stats.sitemap.critical,
-    serious: stats.sitemap.serious,
-    moderate: stats.sitemap.moderate,
-    minor: stats.sitemap.minor,
-  },
-  interactiva: {
-    urls: stats.interactiva.urls.size,
-    total: stats.interactiva.total,
-    critical: stats.interactiva.critical,
-    serious: stats.interactiva.serious,
-    moderate: stats.interactiva.moderate,
-    minor: stats.interactiva.minor,
-  },
-};
-
-const resumenPath = path.join(REPORTES_DIR, "merged-summary.json");
-fs.writeFileSync(resumenPath, JSON.stringify(resumenData, null, 2), "utf8");
-console.log(`📊 Resumen IAAP PRO guardado en: ${resumenPath}`);
+console.log(`🔄 Exportaciones IAAP PRO generadas correctamente:
+   • axe-results.json → ${axeResults.length} issues
+   • pa11y-results.json → ${pa11yResults.length} issues`);
