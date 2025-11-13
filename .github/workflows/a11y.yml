@@ -78,14 +78,14 @@ jobs:
           echo "✅ Chrome disponible en: $(which google-chrome)"
 
       # ======================================================
-      # 📦 Instalar dependencias IAAP PRO (robusto)
+      # 📦 Instalar dependencias IAAP PRO
       # ======================================================
       - name: 📦 Instalar dependencias IAAP PRO
         run: |
           echo "📦 Instalando dependencias IAAP PRO..."
           npm ci --include=dev || npm install --include=dev || true
           npm install puppeteer --silent || true
-          npm install --save-dev cypress cypress-axe cypress-real-events @bahmutov/cypress-esbuild-preprocessor esbuild pa11y fs-extra exceljs json2csv --silent || true
+          npm install --save-dev cypress cypress-axe cypress-real-events @bahmutov/cypress-esbuild-preprocessor esbuild pa11y fs-extra exceljs json2csv chalk --silent || true
           npx cypress verify || echo "⚠️ Cypress verificado con advertencias (no crítico)."
           mkdir -p scripts auditorias/{capturas,auditoria-sitemap,auditoria-interactiva,reportes} public/auditorias
           [ ! -f scripts/urls.json ] && echo '[]' > scripts/urls.json
@@ -128,20 +128,21 @@ jobs:
           echo "✅ scripts/urls.json contiene URLs válidas."
 
       # ======================================================
-      # 🔍 Verificación previa: Sitemap sin Pa11y
+      # 🔍 Verificación de scripts Cypress
       # ======================================================
       - name: 🔍 Verificar que Sitemap no ejecuta Pa11y
         run: |
           echo "🔍 Revisando accesibilidad-sitemap-hibrido.cy.js..."
-          if grep -q "pa11yAudit" cypress/e2e/accesibilidad-sitemap-hibrido.cy.js; then
+          if grep -Eiq "pa11y" cypress/e2e/accesibilidad-sitemap-hibrido.cy.js; then
             echo "❌ Error: El archivo Sitemap contiene referencias a Pa11y."
             exit 1
           fi
           echo "✅ OK: Sitemap usa solo axe-core."
 
       # ======================================================
-      # ♿ Auditorías WCAG (Sitemap + Interactiva)
+      # ♿ Auditorías WCAG IAAP PRO
       # ======================================================
+
       - name: 🧾 Verificar existencia de specs
         run: |
           for file in cypress/e2e/accesibilidad-sitemap-hibrido.cy.js cypress/e2e/accesibilidad-interactiva-hibrida.cy.js; do
@@ -152,47 +153,41 @@ jobs:
             echo "✅ Archivo detectado: $file"
           done
 
-      - name: ♿ Auditoría WCAG – Sitemap Híbrido
+      - name: ♿ Auditoría WCAG – Sitemap (solo axe-core)
         uses: cypress-io/github-action@v6
-        continue-on-error: true
         with:
           command: >
-            npx cypress run --e2e --browser chrome --headless
-            --config-file cypress.config.mjs
+            npx cypress run --browser chrome --headless
             --spec cypress/e2e/accesibilidad-sitemap-hibrido.cy.js
         env:
           CYPRESS_baseUrl: ${{ env.SITE_URL }}
+          AUDIT_ENGINE: axe-core
+          AUDIT_SOURCE: sitemap
 
-      - name: ♿ Auditoría WCAG – Interactiva Híbrida
+      - name: ♿ Auditoría WCAG – Interactiva (Pa11y + fallback axe-core)
         uses: cypress-io/github-action@v6
         continue-on-error: true
         with:
           command: >
-            npx cypress run --e2e --browser chrome --headless
-            --config-file cypress.config.mjs
+            npx cypress run --browser chrome --headless
             --spec cypress/e2e/accesibilidad-interactiva-hibrida.cy.js
         env:
           CYPRESS_baseUrl: ${{ env.SITE_URL }}
+          AUDIT_ENGINE: pa11y
+          AUDIT_FALLBACK: axe-core
+          AUDIT_SOURCE: interactiva
 
       # ======================================================
-      # ♿ Revisiones manuales y merge
+      # ♿ Merge + Verificación de Metadatos IAAP PRO
       # ======================================================
-      - name: ♿ Exportar revisiones manuales
-        if: always()
-        run: node scripts/export-needs-review.mjs || echo "⚠️ Sin revisiones manuales."
-
       - name: ♿ Fusionar resultados (merge-auditorias v6.5)
-        if: always()
-        run: node scripts/merge-auditorias.mjs || echo "⚠️ Merge no crítico."
+        run: node scripts/merge-auditorias.mjs
 
-      # ======================================================
-      # 🧪 Test extendido de correspondencias WCAG
-      # ======================================================
-      - name: 🧪 Test de correspondencias WCAG (axe-core + Pa11y)
-        if: always()
+      - name: 🧩 Verificar integridad de metadatos (verify-metadata v6.5)
         run: |
-          echo "🧪 Validando correspondencias WCAG con wcag-map.test.mjs..."
-          node scripts/wcag-map.test.mjs || echo "⚠️ Test de mapa con advertencias (no crítico)."
+          echo "🔍 Validando metadatos IAAP PRO..."
+          node scripts/verify-metadata.mjs
+        continue-on-error: false
 
       # ======================================================
       # 📊 Exportar informes IAAP PRO
@@ -200,16 +195,14 @@ jobs:
       - name: 📊 Exportar informes IAAP PRO
         if: always()
         run: |
-          mkdir -p auditorias/reportes
           if [ -f auditorias/reportes/merged-results.json ]; then
-            node scripts/generate-summary.mjs || true
-            node scripts/export-to-xlsx.mjs || true
+            node scripts/generate-summary.mjs
           else
             echo "⚠️ No se encontró merged-results.json, se omite exportación."
           fi
 
       # ======================================================
-      # 🔍 Verificación del pipeline
+      # 🔍 Verificación final del pipeline
       # ======================================================
       - name: 🔍 Verificar pipeline IAAP PRO
         if: always()
@@ -231,6 +224,7 @@ jobs:
           path: |
             auditorias/IAAP-PRO-v6.5-*.zip
             auditorias/reportes/*.xlsx
+            auditorias/reportes/*.json
             auditorias/Resumen-WCAG.md
           retention-days: 30
 
