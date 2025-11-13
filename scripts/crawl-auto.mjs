@@ -1,10 +1,10 @@
 /**
- * 🌍 IAAP PRO Crawler v6.7 – Compatibilidad con GitHub Actions
+ * 🌍 IAAP PRO Crawler v6.8 — Detección y ajuste automático de idioma
  * ---------------------------------------------------------------------------
- * ✅ Lee variables de entorno LANG_FILTER y MAX_URLS
- * ✅ Filtra por idioma (por ejemplo "/es/")
- * ✅ Límite de URLs configurable (por defecto 80)
- * ✅ Compatible con Node 24+, Puppeteer y CI/CD
+ * ✅ Filtra por idioma (por ejemplo "/es/") y lo fuerza desde entorno si se define
+ * ✅ Si la home no contiene el idioma, prueba automáticamente con /es/
+ * ✅ Límite máximo configurable (por defecto 80)
+ * ✅ Compatible con Node 24+, Puppeteer y GitHub Actions
  */
 
 import fs from "fs";
@@ -15,7 +15,7 @@ const MAX_URLS = parseInt(process.env.MAX_URLS || "80", 10);
 const MAX_DEPTH = parseInt(process.env.MAX_DEPTH || "3", 10);
 const LANG_FILTER = process.env.LANG_FILTER || null;
 
-let languageFilter = LANG_FILTER || "/es/"; // valor por defecto si no se pasa
+let languageFilter = LANG_FILTER || "/es/"; // Valor por defecto
 const visited = new Set();
 const results = [];
 
@@ -74,7 +74,7 @@ async function crawl(url, depth = 0, baseDomain) {
   });
 
   const page = await browser.newPage();
-  await page.setUserAgent("IAAP-PRO-Crawler/6.7");
+  await page.setUserAgent("IAAP-PRO-Crawler/6.8");
   await page.setDefaultNavigationTimeout(45000);
 
   try {
@@ -134,16 +134,36 @@ function saveResults() {
 /**
  * 🚀 Ejecución principal
  */
-console.log("🚀 Iniciando IAAP PRO Crawler v6.7");
+console.log("🚀 Iniciando IAAP PRO Crawler v6.8");
 console.log(`🌍 Sitio base: ${START_URL}`);
 console.log(`📏 Profundidad máxima: ${MAX_DEPTH}`);
 console.log(`🔢 Límite máximo: ${MAX_URLS}`);
-if (LANG_FILTER) console.log(`🌐 Filtro de idioma forzado: ${LANG_FILTER}\n`);
+
+let crawlStartUrl = START_URL;
+const forcedLang = process.env.LANG_FILTER || "/es/";
+
+// 🔧 Si la URL base no contiene el idioma, intentar iniciar en /es/
+if (!START_URL.includes(forcedLang)) {
+  const candidate = `${START_URL.replace(/\/$/, "")}${forcedLang}`;
+  try {
+    const res = await fetch(candidate, { method: "HEAD" });
+    if (res.ok) {
+      crawlStartUrl = candidate;
+      console.log(`🌐 Ajuste automático: idioma detectado en ${crawlStartUrl}`);
+    } else {
+      console.log(`⚠️ ${candidate} no responde. Se rastreará desde ${START_URL}`);
+    }
+  } catch {
+    console.log(`⚠️ Error verificando ${candidate}. Se rastreará desde ${START_URL}`);
+  }
+}
+
+console.log(`🌐 Filtro de idioma activo: ${forcedLang}\n`);
 
 try {
   const baseDomain = new URL(START_URL).hostname;
   await detectLanguagePath(baseDomain);
-  await crawl(START_URL, 0, baseDomain);
+  await crawl(crawlStartUrl, 0, baseDomain);
   saveResults();
   console.log("✅ Rastreo IAAP PRO finalizado correctamente.");
 } catch (err) {
