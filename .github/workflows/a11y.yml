@@ -83,15 +83,12 @@ jobs:
       - name: 📦 Instalar dependencias IAAP PRO
         run: |
           echo "📦 Instalando dependencias IAAP PRO..."
-          
           npm ci --include=dev || npm install --include=dev || true
           npm install puppeteer --silent || true
           npm install --save-dev cypress cypress-axe cypress-real-events @bahmutov/cypress-esbuild-preprocessor esbuild pa11y fs-extra exceljs json2csv --silent || true
           npx cypress verify || echo "⚠️ Cypress verificado con advertencias (no crítico)."
-
           mkdir -p scripts auditorias/{capturas,auditoria-sitemap,auditoria-interactiva,reportes} public/auditorias
           [ ! -f scripts/urls.json ] && echo '[]' > scripts/urls.json
-
           echo "✅ Entorno IAAP PRO preparado correctamente."
 
       # ======================================================
@@ -129,6 +126,18 @@ jobs:
             exit 1
           fi
           echo "✅ scripts/urls.json contiene URLs válidas."
+
+      # ======================================================
+      # 🔍 Verificación previa: Sitemap sin Pa11y
+      # ======================================================
+      - name: 🔍 Verificar que Sitemap no ejecuta Pa11y
+        run: |
+          echo "🔍 Revisando accesibilidad-sitemap-hibrido.cy.js..."
+          if grep -q "pa11yAudit" cypress/e2e/accesibilidad-sitemap-hibrido.cy.js; then
+            echo "❌ Error: El archivo Sitemap contiene referencias a Pa11y."
+            exit 1
+          fi
+          echo "✅ OK: Sitemap usa solo axe-core."
 
       # ======================================================
       # ♿ Auditorías WCAG (Sitemap + Interactiva)
@@ -241,4 +250,3 @@ jobs:
             - Fecha: ${{ github.event.head_commit.timestamp }}
             - Run ID: ${{ github.run_id }}
             - Build Date: ${{ env.BUILD_DATE }}
-
