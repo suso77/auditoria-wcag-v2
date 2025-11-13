@@ -1,18 +1,18 @@
 /// <reference types="cypress" />
 
 /**
- * ♿ Auditoría de Accesibilidad – Interactiva IAAP PRO v6.5
+ * ♿ Auditoría de Accesibilidad – Interactiva IAAP PRO v6.8
  * ---------------------------------------------------------------------
- * 🔹 Evalúa comportamientos dinámicos, foco, menús, formularios y overlays
- * 🔹 Ejecuta SOLO Pa11y (con fallback a axe-core si Pa11y falla)
- * 🔹 Añade origen "interactiva" para merge IAAP PRO
- * 🔹 Genera capturas de evidencia tras interacciones simuladas
- * 🔹 Compatible con Node 24+, Cypress 15+, GitHub Actions
+ * ✅ Evalúa comportamientos dinámicos, foco, menús, formularios y overlays
+ * ✅ Usa Pa11y como motor principal y fallback automático a axe-core
+ * ✅ Evita errores por ausencia de elementos (menús dinámicos o inexistentes)
+ * ✅ Genera evidencias, deduplicación, y reportes finales (JSON + Markdown)
+ * ✅ Compatible con Node 24+, Cypress 15+, y GitHub Actions
  */
 
 import { CONFIG } from "../../config/audit-config.mjs";
 
-describe("🧠 Auditoría de Accesibilidad – Interactiva (IAAP PRO v6.5)", () => {
+describe("🧠 Auditoría de Accesibilidad – Interactiva (IAAP PRO v6.8)", () => {
   const auditoriaDir = "auditorias/auditoria-interactiva";
   const urlsFile = CONFIG.interactiva.urlsFile || "scripts/urls-interactiva.json";
 
@@ -40,29 +40,42 @@ describe("🧠 Auditoría de Accesibilidad – Interactiva (IAAP PRO v6.5)", () 
         cy.document().its("readyState").should("eq", "complete");
         cy.wait(4000);
 
-        // 🔹 Simular interacciones reales
-        cy.get("button, [role='button']").first().then(($btn) => {
-          if ($btn.length) {
-            cy.wrap($btn).click({ force: true });
+        // --- Interacción 1: Botones genéricos ---
+        cy.get("body").then(($body) => {
+          const hasButton = $body.find("button, [role='button']").length > 0;
+          if (hasButton) {
+            cy.get("button, [role='button']").first().click({ force: true });
             cy.task("log", "🖱️ Click ejecutado en botón principal.");
+          } else {
+            cy.task("log", "⚠️ No se encontraron botones generales.");
           }
         });
 
-        cy.get("input, textarea, select").first().then(($field) => {
-          if ($field.length) {
-            cy.wrap($field).focus().type("Prueba de accesibilidad", { delay: 50 });
+        // --- Interacción 2: Campos de formulario ---
+        cy.get("body").then(($body) => {
+          const hasField = $body.find("input, textarea, select").length > 0;
+          if (hasField) {
+            cy.get("input, textarea, select").first().focus().type("Prueba accesibilidad", { delay: 40 });
             cy.task("log", "⌨️ Campo de formulario probado.");
+          } else {
+            cy.task("log", "⚠️ No se encontraron campos de formulario.");
           }
         });
 
-        cy.get("nav button, nav [role='button']").first().then(($menu) => {
-          if ($menu.length) {
-            cy.wrap($menu).click({ force: true });
+        // --- Interacción 3: Menú o navegación ---
+        cy.get("body").then(($body) => {
+          const hasMenu = $body.find("nav button, nav [role='button'], [aria-label*='menu'], [aria-haspopup]").length > 0;
+          if (hasMenu) {
+            cy.get("nav button, nav [role='button'], [aria-label*='menu'], [aria-haspopup']")
+              .first()
+              .click({ force: true });
             cy.task("log", "📂 Menú principal abierto.");
+          } else {
+            cy.task("log", "⚠️ No se encontró menú o botón de navegación.");
           }
         });
 
-        cy.wait(1000);
+        cy.wait(1500);
 
         // --- Auditoría Pa11y (motor principal) ---
         cy.task("pa11yAudit", url).then(async (pa11yResults = []) => {
@@ -82,7 +95,7 @@ describe("🧠 Auditoría de Accesibilidad – Interactiva (IAAP PRO v6.5)", () 
               source: "interactiva",
             }));
           } else {
-            // --- Fallback a axe-core si Pa11y no devuelve resultados ---
+            // --- Fallback a axe-core ---
             cy.task("log", "⚠️ Pa11y no devolvió resultados. Activando fallback axe-core...");
             try {
               const win = await cy.window();
@@ -116,17 +129,17 @@ describe("🧠 Auditoría de Accesibilidad – Interactiva (IAAP PRO v6.5)", () 
             }
           }
 
+          // --- Guardar resultados ---
           resultadosCompletos.push(...issues);
 
-          // --- Guardar resultados individuales ---
           const slug = url
             .replace(/^https?:\/\//, "")
             .replace(/[^\w\-]+/g, "_")
             .slice(0, 90);
-          const individualPath = `${auditoriaDir}/${slug}.json`;
-          cy.writeFile(individualPath, JSON.stringify(issues, null, 2), { log: false });
 
-          // --- Captura de evidencia del estado interactivo ---
+          cy.writeFile(`${auditoriaDir}/${slug}.json`, JSON.stringify(issues, null, 2), { log: false });
+
+          // --- Captura visual ---
           const screenshotName = `${index + 1}-${slug}-interactivo`;
           cy.screenshot(`${auditoriaDir}/${screenshotName}`, { capture: "viewport" });
 
@@ -138,7 +151,6 @@ describe("🧠 Auditoría de Accesibilidad – Interactiva (IAAP PRO v6.5)", () 
             total: issues.length,
           });
 
-          // Guardado parcial
           cy.task("writeResults", {
             dir: auditoriaDir,
             data: resumenGlobal,
@@ -150,24 +162,21 @@ describe("🧠 Auditoría de Accesibilidad – Interactiva (IAAP PRO v6.5)", () 
   });
 
   after(() => {
-    cy.task("log", "\n🧾 Finalizando auditoría IAAP PRO Interactiva v6.5...");
+    cy.task("log", "\n🧾 Finalizando auditoría IAAP PRO Interactiva v6.8...");
     const resumenPath = `${auditoriaDir}/resumen-final.json`;
     const markdownPath = `${auditoriaDir}/resumen-final.md`;
     const resultsJson = `${auditoriaDir}/results.json`;
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 
-    // --- Guardar resumen JSON ---
     cy.writeFile(resumenPath, JSON.stringify(resumenGlobal, null, 2), { log: false });
 
-    // --- Resumen Markdown ---
     const markdownResumen = [
-      "# 📊 Resumen final de auditoría IAAP PRO Interactiva v6.5",
+      "# 📊 Resumen final de auditoría IAAP PRO Interactiva v6.8",
       "",
       "| Nº | URL | Motor usado | Total |",
       "|----|-----|-------------|--------|",
       ...resumenGlobal.map(
-        (r) =>
-          `| ${r.index} | [${r.url}](${r.url}) | ${r.motor} | **${r.total}** |`
+        (r) => `| ${r.index} | [${r.url}](${r.url}) | ${r.motor} | **${r.total}** |`
       ),
       "",
       `**Total de páginas auditadas:** ${resumenGlobal.length}`,
@@ -176,7 +185,6 @@ describe("🧠 Auditoría de Accesibilidad – Interactiva (IAAP PRO v6.5)", () 
 
     cy.writeFile(markdownPath, markdownResumen, { log: false });
 
-    // --- Deduplicación final ---
     const unique = Object.values(
       resultadosCompletos.reduce((acc, r) => {
         const key = `${r.engine}-${r.id}-${r.pageUrl}-${r.selector}`;
@@ -195,7 +203,6 @@ describe("🧠 Auditoría de Accesibilidad – Interactiva (IAAP PRO v6.5)", () 
     cy.task("log", `✅ Resultados exportados → ${resultsJson}`);
     cy.task("log", `📊 Total final: ${unique.length} issues deduplicados`);
 
-    // --- Verificación final ---
     cy.readFile(resultsJson, { log: false }).then((data) => {
       if (!Array.isArray(data) || data.length === 0) {
         cy.task("log", "⚠️ results.json vacío o no válido");
@@ -205,3 +212,4 @@ describe("🧠 Auditoría de Accesibilidad – Interactiva (IAAP PRO v6.5)", () 
     });
   });
 });
+

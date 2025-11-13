@@ -1,4 +1,4 @@
-name: ♿ Auditoría de Accesibilidad – Ilúmina Audit IAAP PRO v6.5
+name: ♿ Auditoría de Accesibilidad – Ilúmina Audit IAAP PRO v7.0
 run-name: "♿ Auditoría WCAG (${{ github.event.inputs.site_url || 'default' }})"
 
 on:
@@ -85,11 +85,25 @@ jobs:
           echo "📦 Instalando dependencias IAAP PRO..."
           npm ci --include=dev || npm install --include=dev || true
           npm install puppeteer --silent || true
-          npm install --save-dev cypress cypress-axe cypress-real-events @bahmutov/cypress-esbuild-preprocessor esbuild pa11y fs-extra exceljs json2csv chalk --silent || true
+          npm install --save-dev cypress cypress-axe cypress-real-events @bahmutov/cypress-esbuild-preprocessor esbuild pa11y fs-extra exceljs json2csv chalk xlsx --silent || true
           npx cypress verify || echo "⚠️ Cypress verificado con advertencias (no crítico)."
           mkdir -p scripts auditorias/{capturas,auditoria-sitemap,auditoria-interactiva,reportes} public/auditorias
           [ ! -f scripts/urls.json ] && echo '[]' > scripts/urls.json
           echo "✅ Entorno IAAP PRO preparado correctamente."
+
+      # ======================================================
+      # ✅ Verificar dependencias IAAP PRO
+      # ======================================================
+      - name: 🔎 Verificar dependencias IAAP PRO
+        run: |
+          echo "🔍 Listado de dependencias IAAP PRO:"
+          npm ls --depth=0 || true
+          echo "🔍 Verificando módulos críticos..."
+          node -e "require.resolve('xlsx'); console.log('✅ XLSX detectado correctamente')"
+          node -e "require.resolve('cypress'); console.log('✅ Cypress detectado correctamente')"
+          node -e "require.resolve('pa11y'); console.log('✅ Pa11y detectado correctamente')"
+          node -e "require.resolve('puppeteer'); console.log('✅ Puppeteer detectado correctamente')"
+          echo "✅ Dependencias IAAP PRO verificadas con éxito."
 
       # ======================================================
       # 🧹 Limpieza previa
@@ -101,26 +115,19 @@ jobs:
           echo "🧹 Limpieza completada."
 
       # ======================================================
-      # 🌍 Rastreo automático IAAP PRO (forzado idioma /es/)
+      # 🌍 Rastreo automático IAAP PRO
       # ======================================================
       - name: 🌍 Rastreo automático IAAP PRO (solo idioma /es/)
         timeout-minutes: 30
         run: |
           echo "::group::🌍 Rastreo IAAP PRO"
-          echo "🌐 Forzando idioma /es/ y límite máximo de 80 URLs"
           export LANG_FILTER="/es/"
           export MAX_URLS=80
           echo "🔧 SITE_URL=$SITE_URL"
           echo "🔧 LANG_FILTER=$LANG_FILTER"
-          echo "🔧 MAX_URLS=$MAX_URLS"
           npm run crawl:auto || echo "⚠️ Rastreo automático fallido, usando fallback..."
           npm run validate:urls || echo "⚠️ Validación no crítica"
           echo "::endgroup::"
-        env:
-          SITE_URL: ${{ env.SITE_URL }}
-          MAX_URLS: 80
-          LANG: es
-          LANG_FILTER: "/es/"
 
       # ======================================================
       # 🧾 Verificar URLs generadas
@@ -148,7 +155,6 @@ jobs:
       # ======================================================
       - name: 🔍 Verificar que Sitemap no ejecuta Pa11y
         run: |
-          echo "🔍 Revisando accesibilidad-sitemap-hibrido.cy.js..."
           if grep -Eiq "pa11y" cypress/e2e/accesibilidad-sitemap-hibrido.cy.js; then
             echo "❌ Error: El archivo Sitemap contiene referencias a Pa11y."
             exit 1
@@ -158,7 +164,6 @@ jobs:
       # ======================================================
       # ♿ Auditorías WCAG IAAP PRO
       # ======================================================
-
       - name: 🧾 Verificar existencia de specs
         run: |
           for file in cypress/e2e/accesibilidad-sitemap-hibrido.cy.js cypress/e2e/accesibilidad-interactiva-hibrida.cy.js; do
@@ -194,19 +199,18 @@ jobs:
           AUDIT_SOURCE: interactiva
 
       # ======================================================
-      # ♿ Merge + Verificación de Metadatos IAAP PRO
+      # ♿ Merge + Metadatos
       # ======================================================
-      - name: ♿ Fusionar resultados (merge-auditorias v6.5)
+      - name: ♿ Fusionar resultados (merge-auditorias v7.0)
         run: node scripts/merge-auditorias.mjs
 
-      - name: 🧩 Verificar integridad de metadatos (verify-metadata v6.5)
+      - name: 🧩 Verificar integridad de metadatos (verify-metadata v7.0)
         run: |
           echo "🔍 Validando metadatos IAAP PRO..."
           node scripts/verify-metadata.mjs
-        continue-on-error: false
 
       # ======================================================
-      # 📊 Exportar informes IAAP PRO
+      # 📊 Exportar informes IAAP PRO (Markdown + XLSX + HTML)
       # ======================================================
       - name: 📊 Exportar informes IAAP PRO
         if: always()
@@ -218,7 +222,7 @@ jobs:
           fi
 
       # ======================================================
-      # 🔍 Verificación final del pipeline
+      # 🔍 Verificación final
       # ======================================================
       - name: 🔍 Verificar pipeline IAAP PRO
         if: always()
@@ -230,24 +234,24 @@ jobs:
       - name: 📦 Comprimir resultados IAAP PRO
         if: always()
         run: |
-          ZIP_NAME="IAAP-PRO-v6.5-${{ env.BUILD_DATE }}.zip"
+          ZIP_NAME="IAAP-PRO-v7.0-${{ env.BUILD_DATE }}.zip"
           zip -r "auditorias/${ZIP_NAME}" auditorias/* || true
 
       - name: 📤 Subir artefactos IAAP PRO
         uses: actions/upload-artifact@v4
         with:
-          name: "IAAP-PRO-v6.5-${{ github.run_number }}"
+          name: "IAAP-PRO-v7.0-${{ github.run_number }}"
           path: |
-            auditorias/IAAP-PRO-v6.5-*.zip
+            auditorias/IAAP-PRO-v7.0-*.zip
+            auditorias/Resumen-WCAG.*
             auditorias/reportes/*.xlsx
             auditorias/reportes/*.json
-            auditorias/Resumen-WCAG.md
           retention-days: 30
 
       # ======================================================
-      # 🚀 Publicar Dashboard en GitHub Pages
+      # 🚀 Publicar Dashboard IAAP PRO
       # ======================================================
-      - name: 🚀 Publicar Dashboard IAAP PRO v6.5
+      - name: 🚀 Publicar Dashboard IAAP PRO v7.0
         if: always() && hashFiles('auditorias/reportes/merged-results.json') != ''
         uses: peaceiris/actions-gh-pages@v3
         with:
@@ -256,7 +260,7 @@ jobs:
           publish_branch: gh-pages
           keep_files: true
           full_commit_message: |
-            🚀 Publicación automática IAAP PRO v6.5
+            🚀 Publicación automática IAAP PRO v7.0
             - Fecha: ${{ github.event.head_commit.timestamp }}
             - Run ID: ${{ github.run_id }}
             - Build Date: ${{ env.BUILD_DATE }}

@@ -1,12 +1,12 @@
 /**
- * ♿ merge-auditorias.mjs — IAAP PRO Híbrido v6.5 (Node 24+)
+ * ♿ merge-auditorias.mjs — IAAP PRO Híbrido v6.8 (Node 24+)
  * ------------------------------------------------------------------------
- * ✅ Fusiona resultados axe-core + Pa11y + Revisiones manuales
+ * ✅ Fusiona resultados axe-core + Pa11y + revisiones manuales
  * ✅ Clasifica por severidad, motor y origen (sitemap / interactiva / manual)
- * ✅ Añade campos normalizados: engine, source, severity, nivel, principio
- * ✅ Traduce descripciones técnicas y genera resultado esperado
+ * ✅ Normaliza campos WCAG, engine, nivel y principio
+ * ✅ Traduce descripciones y genera resultados esperados
  * ✅ Vincula capturas automáticamente y exporta resultados por motor
- * ✅ Compatible con generate-summary.mjs y verify-pipeline.mjs
+ * ✅ Totalmente compatible con generate-summary.mjs v6.8
  */
 
 import fs from "fs";
@@ -41,12 +41,12 @@ try {
 }
 
 // ============================================================
-// 🌐 Traducción de descripciones
+// 🌐 Traducción de descripciones técnicas
 // ============================================================
 function traducirDescripcion(text = "") {
   return text
     .replace(/Img element is marked so that it is ignored by Assistive Technology/gi, "El elemento de imagen está marcado para ser ignorado por los lectores de pantalla")
-    .replace(/Iframe element requires a non-empty title attribute/gi, "El elemento iframe requiere un atributo title no vacío que describa el contenido")
+    .replace(/Iframe element requires a non-empty title attribute/gi, "El elemento iframe requiere un atributo title no vacío que describa su contenido")
     .replace(/must have discernible text/gi, "debe tener texto visible o etiqueta accesible")
     .replace(/contrast ratio/gi, "relación de contraste insuficiente entre texto y fondo")
     .replace(/missing alt attribute/gi, "falta el atributo alt en la imagen")
@@ -57,7 +57,7 @@ function traducirDescripcion(text = "") {
 }
 
 // ============================================================
-// 📁 Localización de archivos de auditoría
+// 📁 Buscar archivos de auditoría
 // ============================================================
 function findJsonFiles(dir) {
   const result = [];
@@ -81,7 +81,7 @@ const allJsonFiles = findJsonFiles(AUDITORIAS_DIR).filter(
 
 const sitemapFiles = allJsonFiles.filter((f) => /sitemap/i.test(f));
 const interactivaFiles = allJsonFiles.filter((f) => /interactiva/i.test(f));
-const manualFiles = allJsonFiles.filter((f) => /needs_review/i.test(f));
+const manualFiles = allJsonFiles.filter((f) => /needs_review|manual/i.test(f));
 
 console.log(`🧩 Detectados: ${sitemapFiles.length} sitemap | ${interactivaFiles.length} interactivas | ${manualFiles.length} manuales`);
 
@@ -102,22 +102,33 @@ function processFile(file, origen) {
 
     for (const item of data) {
       const src = origen;
-      const wcag = getWcagInfo(item.id || item.ruleId || item.code || item.wcag);
-      const impacto = (item.impact || item.type || "moderate").toLowerCase();
 
-      // 🧠 Detección precisa del motor
+      // 🧠 Normalización de identificadores WCAG
+      const wcag = getWcagInfo(item.id || item.ruleId || item.code || item.wcag);
+
+      // 🧩 Severidad y motor
+      const impacto =
+        (item.impact || item.type || item.severity || "moderate").toLowerCase();
       const motor =
         item.engine?.toLowerCase() ||
         (file.toLowerCase().includes("pa11y") ? "pa11y" :
         file.toLowerCase().includes("axe") ? "axe-core" :
         src === "interactiva" ? "pa11y" : "axe-core");
 
-      // 🧩 Traducción y normalización
+      // 🧠 Traducción y campos IAAP PRO
       const descripcion = traducirDescripcion(item.description || item.message || "");
-      const resultadoEsperado = wcag?.resumen || "Debe cumplir las pautas WCAG 2.1/2.2 aplicables.";
+      const resultadoEsperado =
+        wcag?.resumen || "Debe cumplir las pautas WCAG 2.1/2.2 aplicables.";
 
       merged.push({
-        id: item.ruleId || item.id || `${src}-${Buffer.from((item.pageUrl || "") + (item.selector || "")).toString("base64").substring(0, 10)}`,
+        id:
+          item.ruleId ||
+          item.id ||
+          `${src}-${Buffer.from(
+            (item.pageUrl || "") + (item.selector || "")
+          )
+            .toString("base64")
+            .substring(0, 10)}`,
         pageUrl: item.pageUrl || item.url || "",
         pageTitle: item.pageTitle || item.title || "(sin título)",
         source: src,
@@ -130,7 +141,9 @@ function processFile(file, origen) {
         resumen: wcag?.resumen || descripcion || "",
         resultadoActual: descripcion || "Sin descripción disponible",
         resultadoEsperado,
-        recomendacionW3C: wcag?.url ? `Ver recomendación W3C: ${wcag.url}` : "Revisión manual requerida",
+        recomendacionW3C: wcag?.url
+          ? `Ver recomendación W3C: ${wcag.url}`
+          : "Revisión manual requerida",
         selector: item.selector || "",
         context: item.context || "",
         helpUrl: item.helpUrl || item.help || "",
@@ -192,7 +205,7 @@ deduped.forEach((issue) => {
 // ============================================================
 const mergedStandard = join(REPORTES_DIR, "merged-results.json");
 await fsPromises.writeFile(mergedStandard, JSON.stringify(deduped, null, 2));
-console.log(`✅ IAAP PRO v6.5 — ${deduped.length} issues combinados.`);
+console.log(`✅ IAAP PRO v6.8 — ${deduped.length} issues combinados.`);
 
 // ============================================================
 // 📊 Resumen global
@@ -200,15 +213,18 @@ console.log(`✅ IAAP PRO v6.5 — ${deduped.length} issues combinados.`);
 const stats = {};
 for (const r of deduped) {
   const key = `${r.source}_${r.engine}`;
-  if (!stats[key]) stats[key] = { total: 0, critical: 0, serious: 0, moderate: 0, minor: 0 };
+  if (!stats[key])
+    stats[key] = { total: 0, critical: 0, serious: 0, moderate: 0, minor: 0 };
   stats[key].total++;
   if (stats[key][r.severity] !== undefined) stats[key][r.severity]++;
 }
 
-console.log("\n♿ RESUMEN GLOBAL DE AUDITORÍA – IAAP PRO v6.5");
+console.log("\n♿ RESUMEN GLOBAL DE AUDITORÍA – IAAP PRO v6.8");
 console.log("------------------------------------------------");
 Object.entries(stats).forEach(([k, v]) => {
-  console.log(`🔹 ${k}: ${v.total} issues (${v.critical} critical, ${v.serious} serious, ${v.moderate} moderate, ${v.minor} minor)`);
+  console.log(
+    `🔹 ${k}: ${v.total} issues (${v.critical} critical, ${v.serious} serious, ${v.moderate} moderate, ${v.minor} minor)`
+  );
 });
 console.log("------------------------------------------------\n");
 
@@ -219,9 +235,18 @@ await fsPromises.mkdir(join(REPORTES_DIR, "por-motor"), { recursive: true });
 const axeResults = deduped.filter((r) => r.engine === "axe-core");
 const pa11yResults = deduped.filter((r) => r.engine === "pa11y");
 
-await fsPromises.writeFile(join(REPORTES_DIR, "por-motor/axe-results.json"), JSON.stringify(axeResults, null, 2));
-await fsPromises.writeFile(join(REPORTES_DIR, "por-motor/pa11y-results.json"), JSON.stringify(pa11yResults, null, 2));
+await fsPromises.writeFile(
+  join(REPORTES_DIR, "por-motor/axe-results.json"),
+  JSON.stringify(axeResults, null, 2)
+);
+await fsPromises.writeFile(
+  join(REPORTES_DIR, "por-motor/pa11y-results.json"),
+  JSON.stringify(pa11yResults, null, 2)
+);
 
 console.log(`🔄 Exportaciones IAAP PRO generadas correctamente:
    • axe-results.json → ${axeResults.length} issues
    • pa11y-results.json → ${pa11yResults.length} issues`);
+
+console.log("\n✅ Fusión completada correctamente – IAAP PRO v6.8\n");
+

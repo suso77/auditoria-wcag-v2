@@ -1,27 +1,30 @@
 /**
- * ♿ verify-metadata.mjs — IAAP PRO v6.5 (versión extendida profesional)
+ * ♿ verify-metadata.mjs — IAAP PRO v6.8 (versión profesional + CSV)
  * ---------------------------------------------------------------------
  * Verifica integridad del archivo merged-results.json
- * y genera metadata-report.json con métricas listas para dashboards.
+ * y genera metadata-report.json + metadata-report.csv.
  *
  * ✅ Comprueba campos requeridos y valores vacíos
- * ✅ Detecta duplicados por ID y por URL+WCAG
- * ✅ Genera estadísticas por motor, severidad, fuente, nivel, principio
- * ✅ Calcula ratios de cumplimiento y cobertura IAAP PRO
- * ✅ Devuelve exit codes compatibles con pipeline CI/CD
+ * ✅ Detecta y fusiona duplicados por ID o URL+WCAG
+ * ✅ Mantiene todas las instancias de violaciones detectadas
+ * ✅ Genera estadísticas para dashboards IAAP PRO
+ * ✅ Exporta CSV listo para Looker Studio / Sheets
+ * ✅ Admite modo estricto (STRICT_VALIDATION=true) para auditorías finales
  * ---------------------------------------------------------------------
  */
 
 import fs from "fs";
 import path from "path";
 import chalk from "chalk";
+import { parse as json2csv } from "json2csv";
 
 const ROOT = process.cwd();
 const REPORTES_DIR = path.join(ROOT, "auditorias", "reportes");
 const MERGED_FILE = path.join(REPORTES_DIR, "merged-results.json");
-const OUTPUT_FILE = path.join(REPORTES_DIR, "metadata-report.json");
+const OUTPUT_JSON = path.join(REPORTES_DIR, "metadata-report.json");
+const OUTPUT_CSV = path.join(REPORTES_DIR, "metadata-report.csv");
 
-console.log(chalk.bold.cyan("\n♿ Verificación de metadatos IAAP PRO v6.5 — extendida"));
+console.log(chalk.bold.cyan("\n♿ Verificación de metadatos IAAP PRO v6.8 — profesional"));
 console.log(chalk.gray("------------------------------------------------------------"));
 
 // ============================================================
@@ -49,7 +52,7 @@ if (!Array.isArray(data) || data.length === 0) {
 }
 
 // ============================================================
-// 🧩 Campos obligatorios
+// 🧩 Validación y deduplicación inteligente
 // ============================================================
 const requiredFields = [
   "id",
@@ -63,13 +66,10 @@ const requiredFields = [
   "resultadoEsperado",
 ];
 
-// ============================================================
-// 🔍 Validación de issues
-// ============================================================
 const issuesMissing = [];
 const issuesEmpty = [];
 const duplicatesExact = new Set();
-const duplicatesUrlWcag = new Map();
+const grouped = {};
 const seenIds = new Set();
 
 for (const issue of data) {
@@ -83,37 +83,46 @@ for (const issue of data) {
   if (empties.length > 0)
     issuesEmpty.push({ id: issue.id || "(sin id)", pageUrl: issue.pageUrl, empties });
 
-  // duplicados exactos
+  // --- Agrupar por id + url para deduplicación ---
+  const key = `${issue.id || "sin_id"}::${issue.pageUrl}`;
+  if (!grouped[key]) grouped[key] = { ...issue, instances: [] };
+  grouped[key].instances.push({
+    selector: issue.selector,
+    context: issue.context || "",
+    engine: issue.engine,
+  });
+
   if (seenIds.has(issue.id)) duplicatesExact.add(issue.id);
   else seenIds.add(issue.id);
-
-  // duplicados por URL + WCAG
-  const key = `${issue.pageUrl}::${issue.wcag}`;
-  duplicatesUrlWcag.set(key, (duplicatesUrlWcag.get(key) || 0) + 1);
 }
 
-const dupesUrlWcag = [...duplicatesUrlWcag.entries()].filter(([_, c]) => c > 1);
+// ============================================================
+// 🧹 Fusionar duplicados manteniendo trazabilidad
+// ============================================================
+const deduped = Object.values(grouped);
+const duplicatesCount = [...duplicatesExact].length;
+const totalBefore = data.length;
+const totalAfter = deduped.length;
+
+console.log(chalk.gray(`🔁 Deduplicados fusionados: ${totalBefore - totalAfter}`));
 
 // ============================================================
-// 🧮 Estadísticas globales IAAP PRO
+// 🧮 Estadísticas IAAP PRO
 // ============================================================
-const total = data.length;
-
-// --- Totales por motor ---
 const countBy = (field) =>
-  data.reduce((acc, i) => {
+  deduped.reduce((acc, i) => {
     const key = i[field] || "sin_dato";
     acc[key] = (acc[key] || 0) + 1;
     return acc;
   }, {});
 
+const total = deduped.length;
 const byEngine = countBy("engine");
 const bySource = countBy("source");
 const byImpact = countBy("impact");
 const byNivel = countBy("nivel");
 const byPrincipio = countBy("principio");
 
-// --- Ratios porcentuales ---
 const pct = (x) => ((x / total) * 100).toFixed(1) + "%";
 
 const resumen = {
@@ -141,7 +150,7 @@ const penalizacion = Object.entries(byImpact).reduce(
   0
 );
 
-const totalUrls = new Set(data.map((d) => d.pageUrl)).size;
+const totalUrls = new Set(deduped.map((d) => d.pageUrl)).size;
 const conformidad = Math.max(0, 100 - penalizacion / Math.max(totalUrls, 1)).toFixed(1);
 
 const nivelAccesibilidad =
@@ -159,31 +168,23 @@ resumen.nivel_accesibilidad = nivelAccesibilidad;
 // ============================================================
 // 🧾 Registro visual
 // ============================================================
-const missingCount = issuesMissing.length;
-const emptyCount = issuesEmpty.length;
-const duplicateExactCount = duplicatesExact.size;
-const duplicateUrlWcagCount = dupesUrlWcag.length;
-
-if (missingCount > 0)
-  console.log(chalk.red(`❌ ${missingCount} issues con campos ausentes.`));
-if (emptyCount > 0)
-  console.log(chalk.yellow(`⚠️ ${emptyCount} issues con valores vacíos.`));
-if (duplicateExactCount > 0)
-  console.log(chalk.red(`❌ ${duplicateExactCount} duplicados exactos de ID.`));
-if (duplicateUrlWcagCount > 0)
-  console.log(chalk.yellow(`⚠️ ${duplicateUrlWcagCount} posibles duplicados por URL+WCAG.`));
+if (issuesMissing.length > 0)
+  console.log(chalk.red(`❌ ${issuesMissing.length} issues con campos ausentes.`));
+if (issuesEmpty.length > 0)
+  console.log(chalk.yellow(`⚠️ ${issuesEmpty.length} issues con valores vacíos.`));
+if (duplicatesCount > 0)
+  console.log(chalk.yellow(`⚠️ ${duplicatesCount} IDs duplicados fusionados.`));
 
 if (
-  missingCount === 0 &&
-  emptyCount === 0 &&
-  duplicateExactCount === 0 &&
-  duplicateUrlWcagCount === 0
+  issuesMissing.length === 0 &&
+  issuesEmpty.length === 0 &&
+  duplicatesCount === 0
 ) {
   console.log(chalk.green("✅ Todos los issues cumplen los requisitos de metadatos."));
 }
 
 // ============================================================
-// 📊 Estructura extendida para dashboards IAAP PRO
+// 📊 Estructura extendida para dashboards
 // ============================================================
 const dashboard = {
   resumen,
@@ -195,26 +196,25 @@ const dashboard = {
     por_principio: byPrincipio,
   },
   validaciones: {
-    campos_faltantes: missingCount,
-    valores_vacios: emptyCount,
-    duplicados_exactos: duplicateExactCount,
-    duplicados_url_wcag: duplicateUrlWcagCount,
+    campos_faltantes: issuesMissing.length,
+    valores_vacios: issuesEmpty.length,
+    duplicados_fusionados: duplicatesCount,
   },
   estado_global:
-    missingCount || emptyCount || duplicateExactCount
+    issuesMissing.length || issuesEmpty.length
       ? "ERROR"
-      : duplicateUrlWcagCount
+      : duplicatesCount
       ? "WARNING"
       : "OK",
   timestamp: new Date().toISOString(),
 };
 
 // ============================================================
-// 💾 Guardar metadata-report.json extendido
+// 💾 Guardar metadata-report.json
 // ============================================================
 fs.mkdirSync(REPORTES_DIR, { recursive: true });
 fs.writeFileSync(
-  OUTPUT_FILE,
+  OUTPUT_JSON,
   JSON.stringify(
     {
       resumen: dashboard.resumen,
@@ -223,13 +223,9 @@ fs.writeFileSync(
         errores: {
           campos_faltantes: issuesMissing,
           valores_vacios: issuesEmpty,
-          duplicados_exactos: [...duplicatesExact],
         },
         advertencias: {
-          duplicados_url_wcag: dupesUrlWcag.map(([key, count]) => ({
-            key,
-            count,
-          })),
+          duplicados_fusionados: [...duplicatesExact],
         },
       },
       estado: dashboard.estado_global,
@@ -240,15 +236,45 @@ fs.writeFileSync(
   ),
   "utf8"
 );
+console.log(chalk.cyan(`💾 Informe extendido guardado en: ${OUTPUT_JSON}`));
 
-console.log(chalk.cyan(`💾 Informe extendido guardado en: ${OUTPUT_FILE}`));
+// ============================================================
+// 📤 Exportar versión CSV para Looker Studio / Sheets
+// ============================================================
+try {
+  const csvData = deduped.map((i) => ({
+    id: i.id,
+    url: i.pageUrl,
+    motor: i.engine,
+    tipo_auditoria: i.source,
+    wcag: i.wcag,
+    nivel: i.nivel,
+    principio: i.principio,
+    severidad: i.impact,
+    descripcion: i.resultadoActual,
+    resultado_esperado: i.resultadoEsperado,
+    recomendacion: i.recomendacionW3C,
+    selectores: (i.instances || []).map((s) => s.selector).join(" | "),
+  }));
+
+  const csv = json2csv(csvData);
+  fs.writeFileSync(OUTPUT_CSV, csv, "utf8");
+  console.log(chalk.green(`📊 CSV exportado correctamente: ${OUTPUT_CSV}`));
+} catch (err) {
+  console.warn(chalk.yellow(`⚠️ No se pudo generar CSV: ${err.message}`));
+}
 
 // ============================================================
 // 🚦 Evaluación final y salida
 // ============================================================
+const strict = process.env.STRICT_VALIDATION === "true";
 let exitCode = 0;
-if (missingCount || emptyCount || duplicateExactCount) exitCode = 2;
-else if (duplicateUrlWcagCount) exitCode = 1;
+
+if (issuesMissing.length || issuesEmpty.length || (strict && duplicatesCount > 0)) {
+  exitCode = 2;
+} else if (duplicatesCount > 0) {
+  exitCode = 1;
+}
 
 if (exitCode === 0)
   console.log(chalk.green("✅ Verificación de metadatos completada correctamente."));

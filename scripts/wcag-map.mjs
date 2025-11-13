@@ -440,6 +440,7 @@ const equivalencias = {
   "aria-input-field-name": "4.1.2",
   "aria-toggle-field-name": "4.1.2",
   "aria-multiselectable": "4.1.2",
+  "aria-hidden-focus-visible": "1.3.1",
 
   // === TEXTOS Y ETIQUETAS ===
   "label": "3.3.2",
@@ -450,7 +451,10 @@ const equivalencias = {
   "label-in-name": "2.5.3",
   "role-link-name": "2.4.4",
   "role-button-name": "4.1.2",
+  "button-name": "4.1.2",
   "autocomplete-valid": "1.3.5",
+  "visible-label": "2.5.3",
+  "accessible-name": "4.1.2",
 
   // === CONTENIDO NO TEXTUAL ===
   "image-alt": "1.1.1",
@@ -461,6 +465,7 @@ const equivalencias = {
   "svg-img-alt": "1.1.1",
   "role-img-alt": "1.1.1",
   "non-text-content": "1.1.1",
+  "text-alternatives": "1.1.1",
 
   // === COLOR Y CONTRASTE ===
   "color-contrast": "1.4.3",
@@ -478,6 +483,7 @@ const equivalencias = {
   "landmark-one-main": "1.3.1",
   "landmark-unique": "1.3.1",
   "landmark-main-is-top-level": "1.3.1",
+  "landmark-banner-is-top-level": "1.3.1",
   "landmark-no-duplicate-banner": "1.3.1",
   "landmark-no-duplicate-contentinfo": "1.3.1",
   "region": "1.3.1",
@@ -492,6 +498,8 @@ const equivalencias = {
   "focus-order": "2.4.3",
   "focus-order-semantics": "2.4.3",
   "focus-visible": "2.4.7",
+  "focus-not-obscured": "2.4.12",
+  "focus-appearance": "2.4.13",
   "tabindex": "2.4.3",
   "bypass": "2.4.1",
   "skip-link": "2.4.1",
@@ -503,6 +511,8 @@ const equivalencias = {
   "scrollable-region-focusable": "2.1.1",
   "meta-refresh": "2.2.1",
   "meta-refresh-no-exception": "2.2.1",
+  "meta-viewport": "1.4.10", // ⚙️ añadido para evitar warnings
+  "duplicate-title": "2.4.2",
   "blink": "2.2.2",
   "marquee": "2.2.2",
   "scrolling-content": "2.2.2",
@@ -513,7 +523,7 @@ const equivalencias = {
   "target-size": "2.5.5",
   "target-size-minimum": "2.5.5",
   "dragging-movements": "2.5.7",
-  "target-size-enhanced": "2.5.8", // nuevo en WCAG 2.2
+  "target-size-enhanced": "2.5.8",
   "dragging-movements-cancel": "2.5.7",
 
   // === IDIOMA Y TEXTO ===
@@ -552,6 +562,7 @@ const equivalencias = {
   "valid-role": "4.1.2",
   "nested-interactive": "4.1.2",
   "interactive-supports-focus": "4.1.2",
+  "duplicate-title": "2.4.2",
 
   // === FRAMES Y DOCUMENTOS ===
   "frame-title": "2.4.2",
@@ -581,35 +592,76 @@ const equivalencias = {
   "redundant-entry": "3.3.8",
   "focus-appearance": "2.4.13",
   "focus-not-obscured": "2.4.12",
-  "visible-label": "2.5.3",
-  "accessible-name": "4.1.2",
 };
+
  // === EQUIVALENCIAS PA11y → WCAG ===
 Object.assign(equivalencias, {
+  // === Principio 1: Perceptible ===
   "wcag2aa.principle1.guideline1_1.1_1_1.h30.2": "1.1.1",
   "wcag2aa.principle1.guideline1_1.1_1_1.h32.2": "1.1.1",
+  "wcag22aa.principle1.guideline1_1.1_1_1.h30.2": "1.1.1",
+  "wcag22aa.principle1.guideline1_1.1_1_1.h32.2": "1.1.1",
+
   "wcag2aa.principle1.guideline1_3.1_3_1.h39,h73,h42,h63,h71": "1.3.1",
   "wcag2aa.principle1.guideline1_3.1_3_1.h49": "1.3.1",
+  "wcag22aa.principle1.guideline1_3.1_3_1.h39,h73,h42,h63,h71": "1.3.1",
+  "wcag22aa.principle1.guideline1_3.1_3_1.h49": "1.3.1",
+
   "wcag2aa.principle1.guideline1_4.1_4_3.g18,b1,b2": "1.4.3",
+  "wcag22aa.principle1.guideline1_4.1_4_3.g18,b1,b2": "1.4.3",
   "wcag2aa.principle1.guideline1_4.1_4_4.g142": "1.4.4",
+  "wcag22aa.principle1.guideline1_4.1_4_4.g142": "1.4.4",
   "wcag2aa.principle1.guideline1_4.1_4_6.g17": "1.4.6",
+  "wcag22aa.principle1.guideline1_4.1_4_6.g17": "1.4.6",
   "wcag2aa.principle1.guideline1_4_1_4_11.g195": "1.4.11",
+  "wcag22aa.principle1.guideline1_4_1_4_11.g195": "1.4.11",
   "wcag2aa.principle1.guideline1_4_1_4_12.g196": "1.4.12",
+  "wcag22aa.principle1.guideline1_4_1_4_12.g196": "1.4.12",
+
+  // === Principio 2: Operable ===
   "wcag2aa.principle2.guideline2_1.2_1_1.g90": "2.1.1",
+  "wcag22aa.principle2.guideline2_1.2_1_1.g90": "2.1.1",
   "wcag2aa.principle2.guideline2_1.2_1_2.g91": "2.1.2",
+  "wcag22aa.principle2.guideline2_1.2_1_2.g91": "2.1.2",
+
   "wcag2aa.principle2.guideline2_4.2_4_2.h25.1": "2.4.2",
+  "wcag22aa.principle2.guideline2_4.2_4_2.h25.1": "2.4.2",
   "wcag2aa.principle2.guideline2_4.2_4_3.h76": "2.4.3",
+  "wcag22aa.principle2.guideline2_4.2_4_3.h76": "2.4.3",
   "wcag2aa.principle2.guideline2_4.2_4_4.h77,h78,h79,h80,h81": "2.4.4",
+  "wcag22aa.principle2.guideline2_4.2_4_4.h77,h78,h79,h80,h81": "2.4.4",
   "wcag2aa.principle2.guideline2_4.2_4_6.g149": "2.4.6",
+  "wcag22aa.principle2.guideline2_4.2_4_6.g149": "2.4.6",
   "wcag2aa.principle2.guideline2_4.2_4_7.g165": "2.4.7",
+  "wcag22aa.principle2.guideline2_4.2_4_7.g165": "2.4.7",
+
   "wcag2aa.principle2.guideline2_5.2_5_1.g101": "2.5.1",
+  "wcag22aa.principle2.guideline2_5.2_5_1.g101": "2.5.1",
   "wcag2aa.principle2.guideline2_5.2_5_3.g102": "2.5.3",
+  "wcag22aa.principle2.guideline2_5.2_5_3.g102": "2.5.3",
+  "wcag22aa.principle2.guideline2_5.2_5_5.g208": "2.5.5",
+  "wcag22aa.principle2.guideline2_5.2_5_7.g220": "2.5.7",
+  "wcag22aa.principle2.guideline2_5.2_5_8.g221": "2.5.8",
+
+  // === Principio 3: Comprensible ===
   "wcag2aa.principle3.guideline3_1.3_1_1.h57.2": "3.1.1",
+  "wcag22aa.principle3.guideline3_1.3_1_1.h57.2": "3.1.1",
+  "wcag2aa.principle3.guideline3_2.3_2_2.g107": "3.2.2",
+  "wcag22aa.principle3.guideline3_2.3_2_2.g107": "3.2.2",
   "wcag2aa.principle3.guideline3_3.3_3_1.g83,g84,g85": "3.3.1",
+  "wcag22aa.principle3.guideline3_3.3_3_1.g83,g84,g85": "3.3.1",
   "wcag2aa.principle3.guideline3_3.3_3_2.h44": "3.3.2",
+  "wcag22aa.principle3.guideline3_3.3_3_2.h44": "3.3.2",
   "wcag2aa.principle3.guideline3_3.3_3_3.g85": "3.3.3",
+  "wcag22aa.principle3.guideline3_3.3_3_3.g85": "3.3.3",
   "wcag2aa.principle3.guideline3_3.3_3_4.g98,g99,g155,g164,g168": "3.3.4",
+  "wcag22aa.principle3.guideline3_3.3_3_4.g98,g99,g155,g164,g168": "3.3.4",
+  "wcag22aa.principle3.guideline3_3.3_3_7.g222": "3.3.7",
+  "wcag22aa.principle3.guideline3_3.3_3_8.g223": "3.3.8",
+
+  // === Principio 4: Robusto ===
   "wcag2aa.principle4.guideline4_1.4_1_1.h93": "4.1.1",
+  "wcag22aa.principle4.guideline4_1.4_1_1.h93": "4.1.1",
   "wcag2aa.principle4.guideline4_1.4_1_2.h91.a.bad": "4.1.2",
   "wcag2aa.principle4.guideline4_1.4_1_2.h91.button.name": "4.1.2",
   "wcag2aa.principle4.guideline4_1.4_1_2.h91.formcontrol.name": "4.1.2",
@@ -619,7 +671,10 @@ Object.assign(equivalencias, {
   "wcag2aa.principle4.guideline4_1.4_1_2.h91.inputimage.name": "4.1.2",
   "wcag2aa.principle4.guideline4_1.4_1_2.h91.inputsubmit.name": "4.1.2",
   "wcag2aa.principle4.guideline4_1.4_1_2.h91.inputreset.name": "4.1.2",
-  "wcag2aa.principle4.guideline4_1.4_1_2.h91.inputbutton.name": "4.1.2"
+  "wcag2aa.principle4.guideline4_1.4_1_2.h91.inputbutton.name": "4.1.2",
+  "wcag22aa.principle4.guideline4_1.4_1_2.h91.button.name": "4.1.2",
+  "wcag22aa.principle4.guideline4_1.4_1_2.h91.formcontrol.name": "4.1.2",
+  "wcag22aa.principle4.guideline4_1.4_1_3.g207": "4.1.3"
 });
 
 export function getWcagInfo(id) {
