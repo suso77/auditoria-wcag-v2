@@ -115,17 +115,21 @@ jobs:
           echo "🧹 Limpieza completada."
 
       # ======================================================
-      # 🌍 Rastreo automático IAAP PRO
+      # 🌍 Rastreo inteligente IAAP PRO (Smart Crawler)
       # ======================================================
-      - name: 🌍 Rastreo automático IAAP PRO (solo idioma /es/)
-        timeout-minutes: 30
+      - name: 🌍 Rastreo IAAP PRO (Smart Crawler v7.0)
+        timeout-minutes: 25
         run: |
-          echo "::group::🌍 Rastreo IAAP PRO"
+          echo "::group::🌍 Rastreo IAAP PRO Smart v7.0"
           export LANG_FILTER="/es/"
           export MAX_URLS=80
+          export MAX_DEPTH=5
           echo "🔧 SITE_URL=$SITE_URL"
           echo "🔧 LANG_FILTER=$LANG_FILTER"
-          npm run crawl:auto || echo "⚠️ Rastreo automático fallido, usando fallback..."
+          echo "🔧 MAX_URLS=$MAX_URLS"
+          echo "🔧 MAX_DEPTH=$MAX_DEPTH"
+          
+          npm run crawl:smart || echo "⚠️ Rastreo Smart fallido, intentando fallback estándar..."
           npm run validate:urls || echo "⚠️ Validación no crítica"
           echo "::endgroup::"
 
@@ -202,7 +206,10 @@ jobs:
       # ♿ Merge + Metadatos
       # ======================================================
       - name: ♿ Fusionar resultados (merge-auditorias v7.0)
-        run: node scripts/merge-auditorias.mjs
+        run: |
+          echo "♿ Fusionando auditorías IAAP PRO..."
+          node scripts/merge-auditorias.mjs
+          echo "✅ Resultados fusionados correctamente."
 
       - name: 🧩 Verificar integridad de metadatos (verify-metadata v7.0)
         run: |
@@ -216,7 +223,9 @@ jobs:
         if: always()
         run: |
           if [ -f auditorias/reportes/merged-results.json ]; then
+            echo "📊 Generando informes IAAP PRO..."
             node scripts/generate-summary.mjs
+            echo "✅ Informes generados correctamente."
           else
             echo "⚠️ No se encontró merged-results.json, se omite exportación."
           fi
@@ -226,7 +235,7 @@ jobs:
       # ======================================================
       - name: 🔍 Verificar pipeline IAAP PRO
         if: always()
-        run: node scripts/verify-pipeline.mjs || echo "⚠️ Advertencias menores."
+        run: node scripts/verify-pipeline.mjs || echo "⚠️ Advertencias menores detectadas."
 
       # ======================================================
       # 📦 ZIP y artefactos
@@ -236,6 +245,7 @@ jobs:
         run: |
           ZIP_NAME="IAAP-PRO-v7.0-${{ env.BUILD_DATE }}.zip"
           zip -r "auditorias/${ZIP_NAME}" auditorias/* || true
+          echo "📦 Archivo comprimido: $ZIP_NAME"
 
       - name: 📤 Subir artefactos IAAP PRO
         uses: actions/upload-artifact@v4
