@@ -14,6 +14,7 @@
     "clean": "rimraf auditorias/* public/* || true && mkdir -p auditorias/{capturas,auditoria-sitemap,auditoria-interactiva,reportes} public/auditorias",
     "crawl:auto": "node scripts/crawl-auto.mjs",
     "validate:urls": "node scripts/validate-urls.mjs",
+    "crawl:smart": "node scripts/crawl-auto-smart.mjs",
     "audit:sitemap": "npx cypress run --e2e --browser chrome --headless --config-file cypress.config.mjs --spec cypress/e2e/accesibilidad-sitemap-hibrido.cy.js",
     "audit:interactiva": "npx cypress run --e2e --browser chrome --headless --config-file cypress.config.mjs --spec cypress/e2e/accesibilidad-interactiva-hibrida.cy.js",
     "merge": "node scripts/merge-auditorias.mjs",
