@@ -2,6 +2,8 @@ import fs from "fs";
 import path from "path";
 import puppeteer from "puppeteer";
 
+const RAW_LANG_FILTER = (process.env.LANG_FILTER || "").trim();
+const LANG_MATCHERS = buildLangMatchers(RAW_LANG_FILTER);
 const INPUT = path.resolve("./scripts/sitemap-final.json");
 const OUTPUT = path.resolve("./scripts/interactive-analysis.json");
 const CHROME_PROFILE_DIR = path.resolve(".chrome-interactive-profile");
@@ -15,10 +17,80 @@ if (!fs.existsSync(INPUT)) {
   process.exit(1);
 }
 
-const urls = JSON.parse(fs.readFileSync(INPUT, "utf8"));
+const rawInput = JSON.parse(fs.readFileSync(INPUT, "utf8"));
+const urls = normalizeUrls(rawInput);
+const filteredUrls = filterByLanguage(urls);
 
 console.log("🚀 IAAP INTERACTIVE CRAWLER – v1.0");
-console.log(`📥 URLs cargadas para análisis: ${urls.length}`);
+console.log(`📥 URLs cargadas: ${urls.length}`);
+if (RAW_LANG_FILTER) {
+  console.log(`🔎 Filtro de idioma: ${RAW_LANG_FILTER}`);
+  console.log(`📥 URLs tras filtro: ${filteredUrls.length}`);
+}
+
+function buildLangMatchers(raw) {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((token) => token.trim())
+    .filter(Boolean)
+    .map((token) => {
+      const lower = token.toLowerCase();
+
+      if (lower.startsWith("http")) {
+        return (urlObj) => urlObj.href.toLowerCase().startsWith(lower);
+      }
+
+      if (lower.includes("=")) {
+        const [param, value] = lower.split("=");
+        if (!param || !value) return null;
+        return (urlObj) =>
+          urlObj.searchParams.get(param)?.toLowerCase() === value;
+      }
+
+      const normalized = lower.replace(/^\/+|\/+$/g, "");
+      if (!normalized) return null;
+      return (urlObj) => {
+        const segments = urlObj.pathname.toLowerCase().split("/").filter(Boolean);
+        return segments.includes(normalized);
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeUrls(input) {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((entry) => (typeof entry === "string" ? entry : entry?.url))
+    .filter(Boolean);
+}
+
+function toURL(target) {
+  try {
+    return new URL(target);
+  } catch {
+    return null;
+  }
+}
+
+function matchesLang(url) {
+  if (LANG_MATCHERS.length === 0) return true;
+  const parsed = toURL(url);
+  if (!parsed) return false;
+  return LANG_MATCHERS.some((matcher) => matcher(parsed));
+}
+
+function filterByLanguage(list) {
+  if (LANG_MATCHERS.length === 0) return list;
+  const filtered = list.filter(matchesLang);
+  if (filtered.length === 0) {
+    console.warn(
+      `⚠️ No se encontraron URLs con el filtro "${RAW_LANG_FILTER}". Se procesarán todas las URLs disponibles.`
+    );
+    return list;
+  }
+  return filtered;
+}
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -103,7 +175,7 @@ async function detectInteractivity(page) {
   const interactive = [];
   const sitemapOnly = [];
 
-  for (const url of urls) {
+  for (const url of filteredUrls) {
     console.log(`🔍 Analizando interactividad: ${url}`);
 
     try {
@@ -127,7 +199,7 @@ async function detectInteractivity(page) {
 
   const result = {
     generatedAt: new Date().toISOString(),
-    urls: urls.length,
+    urls: filteredUrls.length,
     interactiveCount: interactive.length,
     sitemapCount: sitemapOnly.length,
     interactive,
