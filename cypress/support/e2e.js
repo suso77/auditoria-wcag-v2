@@ -6,9 +6,11 @@
 // ✅ Compatible con Cypress headless y Docker
 // ---------------------------------------------------------------
 
+import "./commands";
+import "./overwrite-checkA11y";
+
 try {
   require("cypress-real-events/support");
-  require("cypress-axe");
 } catch (err) {
   console.warn("⚠️ Dependencias opcionales no cargadas:", err.message);
 }
@@ -23,8 +25,6 @@ Cypress.on("uncaught:exception", (err) => {
 // La inyección de axe-core se realiza manualmente dentro de cada test
 // (por ejemplo, tras cy.visit()), ya que hacerlo globalmente puede fallar
 // en entornos headless o antes de que el DOM esté listo.
-
-
 
 
 
