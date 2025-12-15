@@ -18,7 +18,7 @@ on:
 env:
   NODE_VERSION: "20"
   SITE_URL: ${{ vars.SITE_URL || 'https://www.suntransfers.com' }}
-  LANG_FILTER: ${{ vars.LANG_FILTER || '' }}
+  LANG_FILTER: ${{ vars.LANG_FILTER || '/es/' }}
   TZ: Europe/Madrid
   LANG: es_ES.UTF-8
 
