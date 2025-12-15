@@ -1,4 +1,4 @@
-ame: ♿ Auditoría de Accesibilidad – IAAP PRO
+name: ♿ Auditoría de Accesibilidad – IAAP PRO
 
 on:
   workflow_dispatch:
@@ -17,8 +17,8 @@ on:
 
 env:
   NODE_VERSION: "20"
-  SITE_URL: ${{ github.event.inputs.site_url || vars.SITE_URL || 'https://www.suntransfers.com' }}
-  LANG_FILTER: ${{ github.event.inputs.lang_filter || vars.LANG_FILTER || '' }}
+  SITE_URL: ${{ vars.SITE_URL || 'https://www.suntransfers.com' }}
+  LANG_FILTER: ${{ vars.LANG_FILTER || '' }}
   TZ: Europe/Madrid
   LANG: es_ES.UTF-8
 
@@ -36,6 +36,12 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
+
+      - name: 🔧 Aplicar parámetros de workflow_dispatch
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "SITE_URL=${{ github.event.inputs.site_url }}" >> $GITHUB_ENV
+          echo "LANG_FILTER=${{ github.event.inputs.lang_filter }}" >> $GITHUB_ENV
 
       - name: 🔍 Verificar disponibilidad de ${{ env.SITE_URL }}
         run: |
@@ -131,10 +137,11 @@ jobs:
 
       - name: 📦 Comprimir resultados
         if: always()
+        id: compress_audit
         run: |
           ZIP="auditorias/IAAP-${{ github.run_number }}.zip"
           zip -r "$ZIP" auditorias || true
-          echo "ZIP_PATH=$ZIP" >> $GITHUB_ENV
+          echo "zip_path=$ZIP" >> $GITHUB_OUTPUT
 
       - name: 📤 Subir artefactos
         if: always()
@@ -142,7 +149,7 @@ jobs:
         with:
           name: "iaap-auditoria-${{ github.run_number }}"
           path: |
-            ${{ env.ZIP_PATH }}
+            ${{ steps.compress_audit.outputs.zip_path }}
             auditorias/**/*.json
             auditorias/**/*.png
           retention-days: 21
