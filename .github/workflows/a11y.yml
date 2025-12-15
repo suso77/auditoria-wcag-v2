@@ -17,8 +17,8 @@ on:
 
 env:
   NODE_VERSION: "20"
-  SITE_URL: ${{ vars.SITE_URL || 'https://www.suntransfers.com' }}
-  LANG_FILTER: ${{ vars.LANG_FILTER || '/es/' }}
+  SITE_URL: ${{ github.event.inputs.site_url || vars.SITE_URL || 'https://www.suntransfers.com' }}
+  LANG_FILTER: ${{ github.event.inputs.lang_filter || vars.LANG_FILTER || '/es/' }}
   TZ: Europe/Madrid
   LANG: es_ES.UTF-8
 
@@ -36,12 +36,6 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-
-      - name: 🔧 Aplicar parámetros de workflow_dispatch
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          echo "SITE_URL=${{ github.event.inputs.site_url }}" >> $GITHUB_ENV
-          echo "LANG_FILTER=${{ github.event.inputs.lang_filter }}" >> $GITHUB_ENV
 
       - name: 🔍 Verificar disponibilidad de ${{ env.SITE_URL }}
         run: |
