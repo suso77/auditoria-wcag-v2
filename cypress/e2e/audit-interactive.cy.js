@@ -10,7 +10,11 @@ import curatedInteractive from "../../scripts/urls-interactiva.json" with { type
  * - Guardado completo de AXE + estados
  */
 
-const SITE_URL = (process.env.SITE_URL || "").trim();
+const RAW_SITE_URL =
+  (typeof Cypress !== "undefined" && Cypress.config("baseUrl")) ||
+  (typeof process !== "undefined" && process.env?.SITE_URL) ||
+  "";
+const SITE_URL = (RAW_SITE_URL || "").trim();
 const TARGET_DOMAIN = getTargetDomain(SITE_URL);
 const SITE_ORIGIN = getSiteOrigin(SITE_URL);
 const INTERACTIVE_EVIDENCE_FILE = "auditorias/auditoria-interactiva/states.json";
