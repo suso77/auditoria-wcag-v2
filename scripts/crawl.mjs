@@ -13,7 +13,8 @@ import path from "path";
 import puppeteer from "puppeteer";
 
 const START_URL = process.env.SITE_URL || "https://example.com";
-const LANG_FILTER = (process.env.LANG_FILTER || "").trim();
+const RAW_LANG_FILTER = (process.env.LANG_FILTER || "").trim();
+const LANG_FILTER = RAW_LANG_FILTER.toLowerCase();
 const MAX_URLS = 200;
 const MAX_DEPTH = 3;
 const CHROME_PROFILE_DIR = path.join(process.cwd(), ".chrome-crawler-profile");
@@ -41,7 +42,7 @@ const queued = new Set([initialURL]);
 const visited = new Set();
 
 const matchesLangFilter = (url) =>
-  !LANG_FILTER || url.toLowerCase().includes(LANG_FILTER.toLowerCase());
+  !LANG_FILTER || url.toLowerCase().includes(LANG_FILTER);
 
 async function extractHTMLLinks(page, base) {
   return await page.$$eval("a[href]", (as) =>
@@ -98,7 +99,7 @@ async function extractFetchUrls(page, base) {
 async function crawl() {
   console.log("🚀 CRAWLER UNIVERSAL v3.0");
   console.log("🌐 Sitio:", initialURL);
-  if (LANG_FILTER) console.log("🔎 Filtro de idioma:", LANG_FILTER);
+  if (RAW_LANG_FILTER) console.log("🔎 Filtro de idioma:", RAW_LANG_FILTER);
 
   const browser = await puppeteer.launch({
     headless: true,
@@ -117,46 +118,88 @@ async function crawl() {
 
   const origin = new URL(START_URL).origin;
 
-  while (urlQueue.length > 0 && visited.size < MAX_URLS) {
-    const { url, depth } = urlQueue.shift();
-    queued.delete(url);
-    if (visited.has(url) || depth > MAX_DEPTH) continue;
+  const fallbackQueue = [];
+  const fallbackSeen = new Set();
+  let enforcingFilter = Boolean(LANG_FILTER);
+  let filterMatchDetected = false;
+  let retriedWithoutFilter = false;
 
-    visited.add(url);
-    console.log(`🌍 [${depth}] ${url}`);
+  while (true) {
+    while (urlQueue.length > 0 && visited.size < MAX_URLS) {
+      const { url, depth } = urlQueue.shift();
+      queued.delete(url);
+      if (visited.has(url) || depth > MAX_DEPTH) continue;
 
-    const page = await browser.newPage();
-    await page.setDefaultNavigationTimeout(45000);
+      visited.add(url);
+      console.log(`🌍 [${depth}] ${url}`);
 
-    const xhrUrls = [];
-    page.on("request", (req) => {
+      const page = await browser.newPage();
+      await page.setDefaultNavigationTimeout(45000);
+
+      const xhrUrls = [];
+      page.on("request", (req) => {
+        try {
+          const u = new URL(req.url());
+          if (u.origin === origin) xhrUrls.push(req.url());
+        } catch {}
+      });
+
       try {
-        const u = new URL(req.url());
-        if (u.origin === origin) xhrUrls.push(req.url());
-      } catch {}
-    });
+        await page.goto(url, { waitUntil: "networkidle2" });
 
-    try {
-      await page.goto(url, { waitUntil: "networkidle2" });
+        const htmlLinks = await extractHTMLLinks(page, origin);
+        const scriptLinks = await extractScriptUrls(page, origin);
 
-      const htmlLinks = await extractHTMLLinks(page, origin);
-      const scriptLinks = await extractScriptUrls(page, origin);
+        const all = [...htmlLinks, ...scriptLinks, ...xhrUrls];
 
-      const all = [...htmlLinks, ...scriptLinks, ...xhrUrls];
+        for (const found of all) {
+          const clean = normalize(found);
+          if (!clean) continue;
+          if (visited.has(clean) || queued.has(clean)) continue;
 
-      for (const found of all) {
-        const clean = normalize(found);
-        if (!clean) continue;
-        if (visited.has(clean) || queued.has(clean)) continue;
+          if (enforcingFilter && !matchesLangFilter(clean)) {
+            if (!fallbackSeen.has(clean)) {
+              fallbackQueue.push({ url: clean, depth: depth + 1 });
+              fallbackSeen.add(clean);
+            }
+            continue;
+          }
 
-        urlQueue.push({ url: clean, depth: depth + 1 });
-        queued.add(clean);
+          if (matchesLangFilter(clean)) {
+            filterMatchDetected = true;
+          }
+
+          urlQueue.push({ url: clean, depth: depth + 1 });
+          queued.add(clean);
+        }
+      } catch (err) {
+        console.log(`❌ Error: ${err.message}`);
+      } finally {
+        await page.close();
       }
-    } catch (err) {
-      console.log(`❌ Error: ${err.message}`);
-    } finally {
-      await page.close();
     }
+
+    if (
+      enforcingFilter &&
+      !filterMatchDetected &&
+      fallbackQueue.length > 0 &&
+      !retriedWithoutFilter
+    ) {
+      console.warn(
+        `⚠️ No se detectaron URLs con el filtro "${RAW_LANG_FILTER}". Repitiendo sin filtro.`
+      );
+      for (const item of fallbackQueue) {
+        if (!queued.has(item.url)) {
+          urlQueue.push(item);
+          queued.add(item.url);
+        }
+      }
+      fallbackQueue.length = 0;
+      enforcingFilter = false;
+      retriedWithoutFilter = true;
+      continue;
+    }
+    break;
   }
 
   await browser.close();
