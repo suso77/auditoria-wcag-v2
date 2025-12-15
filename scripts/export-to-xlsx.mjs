@@ -66,11 +66,15 @@ function walkCaptureFiles(dir) {
 
 function sanitizeForCapture(value) {
   if (!value) return "";
-  const clean = value
+  return value
     .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
     .replace(/https?:\/\//g, "")
-    .replace(/[^a-z0-9]/g, "");
-  return clean.replace(/^https?/, "").slice(0, 100);
+    .replace(/[^a-z0-9]+/g, "")
+    .replace(/^(https|http)/, "")
+    .replace(/^www/, "")
+    .slice(0, 120);
 }
 
 function normalizeImpact(impact) {
