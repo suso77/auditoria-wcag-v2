@@ -1,6 +1,6 @@
-console.log("🟩 IAAP: Overwrite checkA11y activado");
-
+import "cypress-axe";
 import { urlToFilename } from "./utils";
+console.log("🟩 IAAP: Overwrite checkA11y activado");
 
 Cypress.Commands.overwrite(
   "checkA11y",
