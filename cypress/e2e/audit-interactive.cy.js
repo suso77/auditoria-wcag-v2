@@ -10,18 +10,30 @@ import curatedInteractive from "../../scripts/urls-interactiva.json" with { type
  * - Guardado completo de AXE + estados
  */
 
+const SITE_URL = (process.env.SITE_URL || "").trim();
+const TARGET_DOMAIN = getTargetDomain(SITE_URL);
+const SITE_ORIGIN = getSiteOrigin(SITE_URL);
 const INTERACTIVE_EVIDENCE_FILE = "auditorias/auditoria-interactiva/states.json";
 const rawTargets = [
   ...normalizeList(interactiveSource?.interactive),
   ...normalizeList(curatedInteractive),
 ];
-const interactiveTargets = dedupeTargets(rawTargets);
+const dedupedTargets = dedupeTargets(rawTargets);
+const filteredTargets = filterByDomain(dedupedTargets);
+const interactiveTargets = fallbackToSite(filteredTargets);
 
 function normalizeList(source) {
   if (!source) return [];
-  if (Array.isArray(source)) return source;
-  if (Array.isArray(source.urls)) return source.urls;
-  return [];
+  const list = Array.isArray(source) ? source : Array.isArray(source.urls) ? source.urls : [];
+  return list
+    .map((item) => {
+      if (typeof item === "string") return { url: ensureAbsolute(item) };
+      if (!item) return null;
+      if (item.url) return { ...item, url: ensureAbsolute(item.url) };
+      if (item.path) return { ...item, url: ensureAbsolute(item.path) };
+      return null;
+    })
+    .filter((entry) => entry?.url);
 }
 
 function dedupeTargets(list) {
@@ -34,6 +46,60 @@ function dedupeTargets(list) {
       seen.add(url);
       return true;
     });
+}
+
+function getTargetDomain(url) {
+  if (!url) return null;
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+}
+
+function getSiteOrigin(url) {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return null;
+  }
+}
+
+function filterByDomain(list) {
+  if (!TARGET_DOMAIN) return list;
+  const filtered = list.filter(({ url }) => {
+    try {
+      return new URL(url).hostname.replace(/^www\./, "") === TARGET_DOMAIN;
+    } catch {
+      return false;
+    }
+  });
+  if (filtered.length === 0) {
+    console.warn(
+      `[IAAP] ⚠️ No se encontraron URLs interactivas para el dominio ${TARGET_DOMAIN}.`
+    );
+  }
+  return filtered;
+}
+
+function fallbackToSite(list) {
+  if (list.length > 0) return list;
+  if (!SITE_URL) return [];
+  console.warn("[IAAP] ⚠️ No se detectaron URLs interactivas. Se usará SITE_URL como fallback.");
+  return [{ url: ensureAbsolute(SITE_URL), reasons: ["fallback-site-url"] }];
+}
+
+function ensureAbsolute(target) {
+  if (!target) return null;
+  try {
+    return new URL(target).toString();
+  } catch {
+    if (!SITE_ORIGIN) return null;
+    const normalized = target.startsWith("/") ? target : `/${target}`;
+    return `${SITE_ORIGIN.replace(/\/$/, "")}${normalized}`;
+  }
 }
 
 function getSelector(el) {
@@ -191,7 +257,13 @@ function verifyPost(post) {
 describe("IAAP PRO – Auditoría Interactiva (Estable)", () => {
 
   before(() => {
-    cy.task("log", `[IAAP] 🔄 URLs interactivas cargadas: ${interactiveTargets.length}`);
+    if (TARGET_DOMAIN) {
+      cy.task("log", `[IAAP] 🌐 Dominio objetivo: ${TARGET_DOMAIN}`);
+    }
+    cy.task(
+      "log",
+      `[IAAP] 🔄 URLs interactivas cargadas: ${interactiveTargets.length} (de ${dedupedTargets.length} únicas)`
+    );
     cy.task("initEvidenceFile", INTERACTIVE_EVIDENCE_FILE);
   });
 

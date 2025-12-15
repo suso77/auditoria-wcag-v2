@@ -520,7 +520,7 @@ const equivalencias = {
   "no-autoplay-audio": "1.4.2",
   "pointer-gestures": "2.5.1",
   "pointer-cancellation": "2.5.2",
-  "target-size": "2.5.5",
+  "target-size": "2.5.8",
   "target-size-minimum": "2.5.5",
   "dragging-movements": "2.5.7",
   "target-size-enhanced": "2.5.8",
@@ -562,7 +562,7 @@ const equivalencias = {
   "valid-role": "4.1.2",
   "nested-interactive": "4.1.2",
   "interactive-supports-focus": "4.1.2",
-  "duplicate-title": "2.4.2",
+  // "duplicate-title" ya definido arriba
 
   // === FRAMES Y DOCUMENTOS ===
   "frame-title": "2.4.2",
@@ -586,12 +586,7 @@ const equivalencias = {
   "pause-stop-hide": "2.2.2",
 
   // === NUEVAS REGLAS WCAG 2.2 ===
-  "dragging-movements": "2.5.7",
-  "target-size": "2.5.8",
   "accessible-authentication": "3.3.7",
-  "redundant-entry": "3.3.8",
-  "focus-appearance": "2.4.13",
-  "focus-not-obscured": "2.4.12",
 };
 
  // === EQUIVALENCIAS PA11y → WCAG ===
