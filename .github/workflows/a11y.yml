@@ -61,7 +61,7 @@ jobs:
       - name: 🗂️ Preparar directorios IAAP
         run: |
           rm -rf auditorias public || true
-          mkdir -p auditorias/{capturas,auditoria-sitemap,auditoria-interactiva,reportes} public/auditorias
+          mkdir -p auditorias/{capturas,auditoria-sitemap,auditoria-interactiva,reportes,sitemap} public/auditorias
 
       - name: 🌍 Crawler general IAAP
         env:
