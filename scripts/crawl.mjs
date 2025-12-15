@@ -14,37 +14,34 @@ import puppeteer from "puppeteer";
 
 const START_URL = process.env.SITE_URL || "https://example.com";
 const RAW_LANG_FILTER = (process.env.LANG_FILTER || "").trim();
-const LANG_FILTER_PATTERNS = RAW_LANG_FILTER
+const LANG_FILTER_MATCHERS = RAW_LANG_FILTER
   ? RAW_LANG_FILTER.split(",")
       .map((token) => token.trim())
       .filter(Boolean)
-      .flatMap((token) => {
-        const variants = new Set();
+      .map((token) => {
         const lower = token.toLowerCase();
-        variants.add(lower);
 
-        const noTrailing = lower.replace(/\/+$/, "");
-        variants.add(noTrailing);
-
-        const noLeading = noTrailing.replace(/^\/+/, "");
-        variants.add(noLeading);
-
-        if (noTrailing && !noTrailing.endsWith("/")) {
-          variants.add(`${noTrailing}/`);
+        if (lower.startsWith("http")) {
+          return (urlObj) => urlObj.href.toLowerCase().startsWith(lower);
         }
 
-        if (noLeading && !noLeading.startsWith("/")) {
-          variants.add(`/${noLeading}`);
-          variants.add(`/${noLeading}/`);
+        if (lower.includes("=")) {
+          const [param, value] = lower.split("=");
+          if (!param || !value) return null;
+          return (urlObj) =>
+            urlObj.searchParams.get(param) &&
+            urlObj.searchParams.get(param).toLowerCase() === value;
         }
 
-        if (noLeading) {
-          const bareNoSlash = noLeading.replace(/\/+/g, "");
-          variants.add(bareNoSlash);
-        }
+        const normalized = lower.replace(/^\/+|\/+$/g, "");
+        if (!normalized) return null;
 
-        return Array.from(variants).filter(Boolean);
+        return (urlObj) => {
+          const segments = urlObj.pathname.toLowerCase().split("/").filter(Boolean);
+          return segments.includes(normalized);
+        };
       })
+      .filter(Boolean)
   : [];
 const MAX_URLS = 200;
 const MAX_DEPTH = 3;
@@ -72,10 +69,19 @@ const urlQueue = [{ url: initialURL, depth: 0 }];
 const queued = new Set([initialURL]);
 const visited = new Set();
 
+const toUrl = (target) => {
+  try {
+    return new URL(target);
+  } catch {
+    return null;
+  }
+};
+
 const matchesLangFilter = (url) => {
-  if (LANG_FILTER_PATTERNS.length === 0) return true;
-  const target = url.toLowerCase();
-  return LANG_FILTER_PATTERNS.some((pattern) => pattern && target.includes(pattern));
+  if (LANG_FILTER_MATCHERS.length === 0) return true;
+  const urlObj = toUrl(url);
+  if (!urlObj) return false;
+  return LANG_FILTER_MATCHERS.some((matcher) => matcher(urlObj));
 };
 
 async function extractHTMLLinks(page, base) {
@@ -154,7 +160,7 @@ async function crawl() {
 
   const fallbackQueue = [];
   const fallbackSeen = new Set();
-  let enforcingFilter = LANG_FILTER_PATTERNS.length > 0;
+  let enforcingFilter = LANG_FILTER_MATCHERS.length > 0;
   let filterMatchDetected = false;
   let retriedWithoutFilter = false;
 
@@ -240,7 +246,7 @@ async function crawl() {
 
   const visitedList = Array.from(visited);
   const filtered = visitedList.filter(matchesLangFilter);
-  if (LANG_FILTER_PATTERNS.length > 0 && filtered.length === 0) {
+  if (LANG_FILTER_MATCHERS.length > 0 && filtered.length === 0) {
     console.warn(
       `⚠️ No se encontraron URLs con el filtro "${RAW_LANG_FILTER}". Se usarán todas las URLs rastreadas.`
     );
