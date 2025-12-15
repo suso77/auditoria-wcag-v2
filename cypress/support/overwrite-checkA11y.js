@@ -34,8 +34,6 @@ Cypress.Commands.overwrite(
       if (callback) callback(violations);
     };
 
-    return origFn(context || null, axeOptions, safeCallback);
+    return origFn(context || null, axeOptions, safeCallback, true);
   }
 );
-
-
