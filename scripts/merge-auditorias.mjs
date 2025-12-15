@@ -1,252 +1,286 @@
+#!/usr/bin/env node
 /**
- * ♿ merge-auditorias.mjs — IAAP PRO Híbrido v6.8 (Node 24+)
- * ------------------------------------------------------------------------
- * ✅ Fusiona resultados axe-core + Pa11y + revisiones manuales
- * ✅ Clasifica por severidad, motor y origen (sitemap / interactiva / manual)
- * ✅ Normaliza campos WCAG, engine, nivel y principio
- * ✅ Traduce descripciones y genera resultados esperados
- * ✅ Vincula capturas automáticamente y exporta resultados por motor
- * ✅ Totalmente compatible con generate-summary.mjs v6.8
+ * ♿ merge-auditorias.mjs — IAAP PRO v7.0
+ * -------------------------------------------------------------
+ * Combina todas las fuentes de auditoría (sitemap + interactiva)
+ * y genera un merged-results.json listo para exportar a CSV/XLSX/PDF.
+ *
+ * ✅ Prioriza evidencias enriquecidas (violations.json) cuando existen
+ * ✅ Fallback automático a los resultados clásicos (auditorias/sitemap/*.json)
+ * ✅ Normaliza WCAG, severidades, selectores y rutas de captura
+ * ✅ Compatible con generate-summary.mjs, export-to-xlsx/csv/pdf
  */
 
 import fs from "fs";
-import path, { join, dirname } from "path";
-import { fileURLToPath, pathToFileURL } from "url";
-import fsPromises from "fs/promises";
+import path from "path";
+import crypto from "crypto";
+import { getWcagInfo } from "./wcag-map.mjs";
 
-// ============================================================
-// 🧩 Inicialización
-// ============================================================
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const ROOT = process.cwd();
+const ROOT_DIR = process.cwd();
+const AUDITORIAS_DIR = path.join(ROOT_DIR, "auditorias");
+const REPORTES_DIR = path.join(AUDITORIAS_DIR, "reportes");
+const CAPTURAS_DIR = path.join(AUDITORIAS_DIR, "capturas");
+const OUTPUT_FILE = path.join(REPORTES_DIR, "merged-results.json");
 
-const AUDITORIAS_DIR = join(ROOT, "auditorias");
-const REPORTES_DIR = join(AUDITORIAS_DIR, "reportes");
-const CAPTURAS_DIR = join(AUDITORIAS_DIR, "capturas");
-await fsPromises.mkdir(REPORTES_DIR, { recursive: true });
+fs.mkdirSync(AUDITORIAS_DIR, { recursive: true });
+fs.mkdirSync(REPORTES_DIR, { recursive: true });
 
-// ============================================================
-// 🧠 Cargar mapa WCAG universal
-// ============================================================
-let getWcagInfo;
-try {
-  const wcagModuleUrl = pathToFileURL(join(__dirname, "wcag-map.mjs")).href;
-  const wcagModule = await import(wcagModuleUrl);
-  getWcagInfo = wcagModule.getWcagInfo;
-  console.log("✅ Mapa WCAG importado correctamente");
-} catch (err) {
-  console.error("❌ Error importando wcag-map.mjs:", err.message);
-  process.exit(1);
+const stats = {
+  sources: {},
+  issues: 0,
+};
+
+function logInfo(message) {
+  console.log(`[merge] ${message}`);
 }
 
-// ============================================================
-// 🌐 Traducción de descripciones técnicas
-// ============================================================
-function traducirDescripcion(text = "") {
-  return text
-    .replace(/Img element is marked so that it is ignored by Assistive Technology/gi, "El elemento de imagen está marcado para ser ignorado por los lectores de pantalla")
-    .replace(/Iframe element requires a non-empty title attribute/gi, "El elemento iframe requiere un atributo title no vacío que describa su contenido")
-    .replace(/must have discernible text/gi, "debe tener texto visible o etiqueta accesible")
-    .replace(/contrast ratio/gi, "relación de contraste insuficiente entre texto y fondo")
-    .replace(/missing alt attribute/gi, "falta el atributo alt en la imagen")
-    .replace(/Empty heading/gi, "El encabezado está vacío o sin contenido")
-    .replace(/decorative/gi, "decorativo o sin información relevante")
-    .replace(/This element does not have a role/gi, "El elemento no tiene un rol ARIA definido")
-    .trim();
-}
-
-// ============================================================
-// 📁 Buscar archivos de auditoría
-// ============================================================
-function findJsonFiles(dir) {
-  const result = [];
-  if (!fs.existsSync(dir)) return result;
-  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, e.name);
-    if (e.isDirectory()) result.push(...findJsonFiles(full));
-    else if (e.isFile() && e.name.endsWith(".json")) result.push(full);
+function safeReadJson(filePath, fallback = null) {
+  if (!fs.existsSync(filePath)) return fallback;
+  try {
+    const content = fs.readFileSync(filePath, "utf8");
+    return JSON.parse(content);
+  } catch (err) {
+    console.error(`❌ Error leyendo ${filePath}: ${err.message}`);
+    return fallback;
   }
-  return result;
 }
 
-const allJsonFiles = findJsonFiles(AUDITORIAS_DIR).filter(
-  (f) =>
-    !f.includes("merged") &&
-    !f.includes("summary") &&
-    !f.endsWith("urls.json") &&
-    !f.includes("export") &&
-    !f.includes("results-merged")
-);
+function normalizeSelector(selector) {
+  if (!selector) return null;
+  if (Array.isArray(selector)) return selector[0] || null;
+  return String(selector);
+}
 
-const sitemapFiles = allJsonFiles.filter((f) => /sitemap/i.test(f));
-const interactivaFiles = allJsonFiles.filter((f) => /interactiva/i.test(f));
-const manualFiles = allJsonFiles.filter((f) => /needs_review|manual/i.test(f));
+function getFirstTarget(violation) {
+  const node = violation?.nodes?.[0];
+  if (!node) return null;
+  return normalizeSelector(node.target?.[0] || node.target);
+}
 
-console.log(`🧩 Detectados: ${sitemapFiles.length} sitemap | ${interactivaFiles.length} interactivas | ${manualFiles.length} manuales`);
+function toCapturePath(evidence) {
+  const rel = evidence?.screenshot;
+  if (!rel) return null;
+  const normalized = rel.replace(/\\/g, "/");
+  return path.posix.join("capturas", normalized);
+}
 
-if (sitemapFiles.length + interactivaFiles.length + manualFiles.length === 0) {
-  console.warn("⚠️ No se encontraron archivos de auditoría.");
+function makeIssueId(seed) {
+  return crypto.createHash("md5").update(seed).digest("hex");
+}
+
+function normalizeViolation(meta, record, violation, violationIndex) {
+  const url = record.url || record.pageUrl;
+  if (!url) return null;
+
+  const selector =
+    violation.annotation?.selector ||
+    getFirstTarget(violation) ||
+    normalizeSelector(violation.target?.[0]) ||
+    "(sin selector)";
+
+  const wcagInfo = violation.wcag || getWcagInfo(violation.id);
+  const capturePath = toCapturePath(violation.evidence);
+  const boundingBox =
+    violation.annotation?.boundingBox || violation.evidence?.clip || null;
+
+  const idSeed = [
+    meta.source,
+    meta.engine,
+    url,
+    violation.id || "rule",
+    selector,
+    record.stateId || "",
+    violationIndex,
+  ].join("|");
+
+  return {
+    id: makeIssueId(idSeed),
+    source: meta.source,
+    origen: meta.source,
+    engine: meta.engine,
+    mode: record.mode || meta.source,
+    url,
+    pageUrl: url,
+    stateId: record.stateId || null,
+    timestamp: record.timestamp || new Date().toISOString(),
+    selector,
+    snippet: violation.annotation?.snippet || violation.snippet || "",
+    html: violation.annotation?.html || violation.html || violation.nodes?.[0]?.html || "",
+    description: violation.description || wcagInfo?.resumen || "",
+    resultadoActual:
+      violation.failureSummary || violation.description || wcagInfo?.resumen || "",
+    resultadoEsperado:
+      wcagInfo?.esperado ||
+      (wcagInfo?.criterio ? `Cumplir ${wcagInfo.criterio}` : "Cumplir criterio WCAG aplicable."),
+    recomendacionW3C: wcagInfo?.url || violation.helpUrl || "",
+    wcag: wcagInfo?.criterioId || wcagInfo?.id || violation.id,
+    nivel: wcagInfo?.nivel || "",
+    principio: wcagInfo?.principio || "",
+    impact: violation.impact || "sin severidad",
+    severity: violation.impact || "sin severidad",
+    help: violation.help || "",
+    helpUrl: violation.helpUrl || wcagInfo?.url || "",
+    context: violation.help || violation.description || "",
+    capturePath: capturePath && fs.existsSync(path.join(AUDITORIAS_DIR, capturePath)) ? capturePath : null,
+    evidence: violation.evidence || null,
+    highlightColor:
+      violation.evidence?.highlightColor ||
+      violation.annotation?.highlightColor ||
+      null,
+    boundingBox,
+  };
+}
+
+function collectFromArray(records, meta) {
+  const issues = [];
+  if (!Array.isArray(records)) return issues;
+
+  records.forEach((record) => {
+    const violations = Array.isArray(record?.violations) ? record.violations : [];
+    violations.forEach((violation, vIndex) => {
+      const issue = normalizeViolation(meta, record, violation, vIndex);
+      if (issue) issues.push(issue);
+    });
+  });
+
+  return issues;
+}
+
+function collectFromDirectory(dirPath, meta) {
+  const issues = [];
+  if (!fs.existsSync(dirPath)) return issues;
+
+  fs.readdirSync(dirPath)
+    .filter((file) => file.endsWith(".json"))
+    .sort()
+    .forEach((file) => {
+      const fullPath = path.join(dirPath, file);
+      const record = safeReadJson(fullPath);
+      if (!record) return;
+
+      const normalized = Array.isArray(record) ? record : [record];
+      normalized.forEach((entry) => {
+        const violations = Array.isArray(entry?.violations) ? entry.violations : [];
+        violations.forEach((violation, vIndex) => {
+          const issue = normalizeViolation(meta, entry, violation, vIndex);
+          if (issue) issues.push(issue);
+        });
+      });
+    });
+
+  return issues;
+}
+
+function trackStats(sourceName, count) {
+  stats.sources[sourceName] = (stats.sources[sourceName] || 0) + count;
+  stats.issues += count;
+}
+
+function loadDataset() {
+  const allIssues = [];
+
+  // --- Sitemap: prefer evidencias enriquecidas ---
+  const sitemapEvidencePath = path.join(
+    AUDITORIAS_DIR,
+    "auditoria-sitemap",
+    "violations.json"
+  );
+  const sitemapEvidence = collectFromArray(
+    safeReadJson(sitemapEvidencePath, []),
+    { source: "sitemap", engine: "axe-core" }
+  );
+
+  if (sitemapEvidence.length > 0) {
+    allIssues.push(...sitemapEvidence);
+    trackStats("sitemap", sitemapEvidence.length);
+    logInfo(`Usando evidencias enriquecidas de ${sitemapEvidencePath} (${sitemapEvidence.length})`);
+  } else {
+    const sitemapDir = path.join(AUDITORIAS_DIR, "sitemap");
+    const basicSitemap = collectFromDirectory(sitemapDir, {
+      source: "sitemap",
+      engine: "axe-core",
+    });
+    allIssues.push(...basicSitemap);
+    trackStats("sitemap", basicSitemap.length);
+    logInfo(
+      basicSitemap.length
+        ? `Usando resultados base de ${sitemapDir} (${basicSitemap.length})`
+        : "⚠️ No se encontraron resultados en auditorias/sitemap"
+    );
+  }
+
+  // --- Interactiva: prefer violations.json y fallback a states.json ---
+  const interactiveEvidencePath = path.join(
+    AUDITORIAS_DIR,
+    "auditoria-interactiva",
+    "violations.json"
+  );
+  const interactiveEvidence = collectFromArray(
+    safeReadJson(interactiveEvidencePath, []),
+    { source: "interactiva", engine: "axe-core" }
+  );
+
+  if (interactiveEvidence.length > 0) {
+    allIssues.push(...interactiveEvidence);
+    trackStats("interactiva", interactiveEvidence.length);
+    logInfo(
+      `Usando evidencias interactivas enriquecidas (${interactiveEvidence.length})`
+    );
+  } else {
+    const statesPath = path.join(
+      AUDITORIAS_DIR,
+      "auditoria-interactiva",
+      "states.json"
+    );
+    const interactiveStates = collectFromArray(
+      safeReadJson(statesPath, []),
+      { source: "interactiva", engine: "axe-core" }
+    );
+    allIssues.push(...interactiveStates);
+    trackStats("interactiva", interactiveStates.length);
+    logInfo(
+      interactiveStates.length
+        ? `Usando estados interactivos (${interactiveStates.length})`
+        : "⚠️ No se encontraron estados en auditorias/auditoria-interactiva"
+    );
+  }
+
+  // --- Manual u otros orígenes opcionales ---
+  const manualPath = path.join(
+    AUDITORIAS_DIR,
+    "auditoria-manual",
+    "violations.json"
+  );
+  const manualIssues = collectFromArray(
+    safeReadJson(manualPath, []),
+    { source: "manual", engine: "manual" }
+  );
+  if (manualIssues.length > 0) {
+    allIssues.push(...manualIssues);
+    trackStats("manual", manualIssues.length);
+    logInfo(`Añadidas incidencias manuales (${manualIssues.length})`);
+  }
+
+  return allIssues;
+}
+
+const mergedIssues = loadDataset();
+
+if (!mergedIssues.length) {
+  console.warn("⚠️ No se encontraron violaciones para combinar. merged-results.json no se actualizó.");
   process.exit(0);
 }
 
-// ============================================================
-// 🔄 Procesamiento y normalización
-// ============================================================
-const merged = [];
+fs.writeFileSync(OUTPUT_FILE, JSON.stringify(mergedIssues, null, 2));
 
-function processFile(file, origen) {
-  try {
-    const data = JSON.parse(fs.readFileSync(file, "utf8"));
-    if (!Array.isArray(data)) return;
-
-    for (const item of data) {
-      const src = origen;
-
-      // 🧠 Normalización de identificadores WCAG
-      const wcag = getWcagInfo(item.id || item.ruleId || item.code || item.wcag);
-
-      // 🧩 Severidad y motor
-      const impacto =
-        (item.impact || item.type || item.severity || "moderate").toLowerCase();
-      const motor =
-        item.engine?.toLowerCase() ||
-        (file.toLowerCase().includes("pa11y") ? "pa11y" :
-        file.toLowerCase().includes("axe") ? "axe-core" :
-        src === "interactiva" ? "pa11y" : "axe-core");
-
-      // 🧠 Traducción y campos IAAP PRO
-      const descripcion = traducirDescripcion(item.description || item.message || "");
-      const resultadoEsperado =
-        wcag?.resumen || "Debe cumplir las pautas WCAG 2.1/2.2 aplicables.";
-
-      merged.push({
-        id:
-          item.ruleId ||
-          item.id ||
-          `${src}-${Buffer.from(
-            (item.pageUrl || "") + (item.selector || "")
-          )
-            .toString("base64")
-            .substring(0, 10)}`,
-        pageUrl: item.pageUrl || item.url || "",
-        pageTitle: item.pageTitle || item.title || "(sin título)",
-        source: src,
-        engine: motor,
-        impact: impacto,
-        severity: impacto.replace("n/a", "moderate"),
-        wcag: wcag?.criterio || "Desconocido",
-        nivel: wcag?.nivel || "AA",
-        principio: wcag?.principio || "",
-        resumen: wcag?.resumen || descripcion || "",
-        resultadoActual: descripcion || "Sin descripción disponible",
-        resultadoEsperado,
-        recomendacionW3C: wcag?.url
-          ? `Ver recomendación W3C: ${wcag.url}`
-          : "Revisión manual requerida",
-        selector: item.selector || "",
-        context: item.context || "",
-        helpUrl: item.helpUrl || item.help || "",
-      });
-    }
-  } catch (err) {
-    console.warn(`⚠️ Error procesando ${file}: ${err.message}`);
-  }
-}
-
-sitemapFiles.forEach((f) => processFile(f, "sitemap"));
-interactivaFiles.forEach((f) => processFile(f, "interactiva"));
-manualFiles.forEach((f) => processFile(f, "manual"));
-
-// ============================================================
-// 🧽 Deduplicación
-// ============================================================
-const deduped = merged.filter(
-  (item, index, self) =>
-    index ===
-    self.findIndex(
-      (t) =>
-        t.pageUrl === item.pageUrl &&
-        t.selector === item.selector &&
-        t.wcag === item.wcag &&
-        t.resultadoActual === item.resultadoActual &&
-        t.source === item.source
-    )
-);
-
-// ============================================================
-// 🖼️ Vinculación automática de capturas
-// ============================================================
-function findPngs(dir) {
-  const result = [];
-  if (!fs.existsSync(dir)) return result;
-  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, e.name);
-    if (e.isDirectory()) result.push(...findPngs(full));
-    else if (e.isFile() && e.name.endsWith(".png")) result.push(full);
-  }
-  return result;
-}
-
-const pngs = [
-  ...findPngs(join(AUDITORIAS_DIR, "auditoria-sitemap")),
-  ...findPngs(join(AUDITORIAS_DIR, "auditoria-interactiva")),
-  ...findPngs(CAPTURAS_DIR),
-];
-
-deduped.forEach((issue) => {
-  const hint = issue.pageUrl.replace(/[^\w-]/g, "_").slice(0, 60);
-  const match = pngs.find((p) => p.includes(hint));
-  if (match) issue.capturePath = path.relative(AUDITORIAS_DIR, match);
+console.log("\n===========================================");
+console.log("✅ merged-results.json generado correctamente");
+console.log(`📄 Total de incidencias: ${stats.issues}`);
+Object.entries(stats.sources).forEach(([source, count]) => {
+  console.log(`   - ${source}: ${count}`);
 });
-
-// ============================================================
-// 💾 Guardar resultados combinados
-// ============================================================
-const mergedStandard = join(REPORTES_DIR, "merged-results.json");
-await fsPromises.writeFile(mergedStandard, JSON.stringify(deduped, null, 2));
-console.log(`✅ IAAP PRO v6.8 — ${deduped.length} issues combinados.`);
-
-// ============================================================
-// 📊 Resumen global
-// ============================================================
-const stats = {};
-for (const r of deduped) {
-  const key = `${r.source}_${r.engine}`;
-  if (!stats[key])
-    stats[key] = { total: 0, critical: 0, serious: 0, moderate: 0, minor: 0 };
-  stats[key].total++;
-  if (stats[key][r.severity] !== undefined) stats[key][r.severity]++;
+console.log(`📁 Archivo: ${OUTPUT_FILE}`);
+if (fs.existsSync(CAPTURAS_DIR)) {
+  console.log(`📸 Carpeta de capturas: ${CAPTURAS_DIR}`);
 }
-
-console.log("\n♿ RESUMEN GLOBAL DE AUDITORÍA – IAAP PRO v6.8");
-console.log("------------------------------------------------");
-Object.entries(stats).forEach(([k, v]) => {
-  console.log(
-    `🔹 ${k}: ${v.total} issues (${v.critical} critical, ${v.serious} serious, ${v.moderate} moderate, ${v.minor} minor)`
-  );
-});
-console.log("------------------------------------------------\n");
-
-// ============================================================
-// 🔄 Exportar por motor
-// ============================================================
-await fsPromises.mkdir(join(REPORTES_DIR, "por-motor"), { recursive: true });
-const axeResults = deduped.filter((r) => r.engine === "axe-core");
-const pa11yResults = deduped.filter((r) => r.engine === "pa11y");
-
-await fsPromises.writeFile(
-  join(REPORTES_DIR, "por-motor/axe-results.json"),
-  JSON.stringify(axeResults, null, 2)
-);
-await fsPromises.writeFile(
-  join(REPORTES_DIR, "por-motor/pa11y-results.json"),
-  JSON.stringify(pa11yResults, null, 2)
-);
-
-console.log(`🔄 Exportaciones IAAP PRO generadas correctamente:
-   • axe-results.json → ${axeResults.length} issues
-   • pa11y-results.json → ${pa11yResults.length} issues`);
-
-console.log("\n✅ Fusión completada correctamente – IAAP PRO v6.8\n");
-
+console.log("===========================================\n");

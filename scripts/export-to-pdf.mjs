@@ -6,19 +6,28 @@
 import fs from "fs";
 import path from "path";
 import puppeteer from "puppeteer";
-import { marked } from "marked";
+import { createMarkdownRenderer } from "./utils/markdown.mjs";
 
 const ROOT_DIR = process.cwd();
-const summaryFile = path.join(ROOT_DIR, "auditorias/reportes/merged-summary.md");
+const SUMMARY_CANDIDATES = [
+  path.join(ROOT_DIR, "auditorias/reportes/merged-summary.md"),
+  path.join(ROOT_DIR, "auditorias/Resumen-WCAG.md"),
+];
+const summaryFile = SUMMARY_CANDIDATES.find((candidate) => fs.existsSync(candidate));
 const outputFile = path.join(ROOT_DIR, "auditorias/reportes/Informe-WCAG-IAAP.pdf");
+const CHROME_PROFILE_DIR = path.join(ROOT_DIR, "auditorias", ".chrome-pdf-profile");
 
-if (!fs.existsSync(summaryFile)) {
-  console.error(`❌ No se encontró el resumen Markdown: ${summaryFile}`);
+fs.mkdirSync(CHROME_PROFILE_DIR, { recursive: true });
+
+if (!summaryFile) {
+  console.error("❌ No se encontró ningún resumen Markdown (merged-summary.md o Resumen-WCAG.md).");
+  console.error("   Ejecuta primero: npm run summary");
   process.exit(1);
 }
 
+const renderMarkdown = await createMarkdownRenderer("export-to-pdf");
 const md = fs.readFileSync(summaryFile, "utf8");
-const html = marked.parse(md);
+const html = renderMarkdown(md);
 
 const template = `
 <!DOCTYPE html>
@@ -62,7 +71,17 @@ const template = `
 (async () => {
   const browser = await puppeteer.launch({
     headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    userDataDir: CHROME_PROFILE_DIR,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-breakpad",
+      "--disable-crash-reporter",
+      "--disable-crashpad",
+      "--disable-features=Crashpad",
+      "--disable-extensions",
+    ],
   });
   const page = await browser.newPage();
   await page.setContent(template, { waitUntil: "networkidle0" });

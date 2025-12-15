@@ -156,9 +156,18 @@ ${topWcag.map(([crit, n]) => `| ${crit} | ${n} |`).join("\n") || "| – | – |"
 `;
 
 const outputDir = path.join("auditorias");
+const reportDir = path.join(outputDir, "reportes");
 fs.mkdirSync(outputDir, { recursive: true });
-fs.writeFileSync(path.join(outputDir, "Resumen-WCAG.md"), markdown, "utf8");
-console.log(`✅ Markdown generado: auditorias/Resumen-WCAG.md`);
+fs.mkdirSync(reportDir, { recursive: true });
+
+const resumenPath = path.join(outputDir, "Resumen-WCAG.md");
+const mergedSummaryPath = path.join(reportDir, "merged-summary.md");
+
+fs.writeFileSync(resumenPath, markdown, "utf8");
+fs.writeFileSync(mergedSummaryPath, markdown, "utf8");
+
+console.log(`✅ Markdown generado: ${resumenPath}`);
+console.log(`✅ Copia para exportaciones: ${mergedSummaryPath}`);
 
 // ===========================================================
 // 📊 Excel IAAP PRO

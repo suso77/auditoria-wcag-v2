@@ -15,7 +15,7 @@
 import fs from "fs";
 import path from "path";
 import puppeteer from "puppeteer";
-import { marked } from "marked";
+import { createMarkdownRenderer } from "./utils/markdown.mjs";
 
 // ===========================================================
 // 📂 Configuración base (IAAP v4.16-H3)
@@ -23,9 +23,11 @@ import { marked } from "marked";
 const ROOT_DIR = process.cwd();
 const AUDITORIAS_DIR = path.join(ROOT_DIR, "auditorias");
 const REPORTES_DIR = path.join(AUDITORIAS_DIR, "reportes");
+const CHROME_PROFILE_DIR = path.join(AUDITORIAS_DIR, ".chrome-report-profile");
 
 if (!fs.existsSync(AUDITORIAS_DIR)) fs.mkdirSync(AUDITORIAS_DIR, { recursive: true });
 if (!fs.existsSync(REPORTES_DIR)) fs.mkdirSync(REPORTES_DIR, { recursive: true });
+fs.mkdirSync(CHROME_PROFILE_DIR, { recursive: true });
 
 // ===========================================================
 // 🔍 Localizar archivos de resumen y resultados
@@ -117,7 +119,8 @@ for (const entry of mergedData) {
 // ===========================================================
 // 🧩 Convertir Markdown a HTML IAAP PRO
 // ===========================================================
-const htmlContent = marked(markdown, { headerIds: true, mangle: false });
+const renderMarkdown = await createMarkdownRenderer("generate-report");
+const htmlContent = renderMarkdown(markdown);
 
 // Crear índice
 const toc =
@@ -266,7 +269,17 @@ const outputPath = path.join(AUDITORIAS_DIR, "Informe-WCAG-IAAP.pdf");
     console.log("📄 Generando PDF IAAP PRO...");
     const browser = await puppeteer.launch({
       headless: "new",
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      userDataDir: CHROME_PROFILE_DIR,
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-breakpad",
+        "--disable-crash-reporter",
+        "--disable-crashpad",
+        "--disable-features=Crashpad",
+        "--disable-extensions",
+      ],
       defaultViewport: { width: 1280, height: 900, deviceScaleFactor: 2 },
     });
 
