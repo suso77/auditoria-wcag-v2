@@ -13,7 +13,7 @@ import path from "path";
 import puppeteer from "puppeteer";
 
 const START_URL = process.env.SITE_URL || "https://example.com";
-const LANG_FILTER = process.env.LANG_FILTER || "";
+const LANG_FILTER = (process.env.LANG_FILTER || "").trim();
 const MAX_URLS = 200;
 const MAX_DEPTH = 3;
 const CHROME_PROFILE_DIR = path.join(process.cwd(), ".chrome-crawler-profile");
@@ -98,9 +98,7 @@ async function extractFetchUrls(page, base) {
 async function crawl() {
   console.log("🚀 CRAWLER UNIVERSAL v3.0");
   console.log("🌐 Sitio:", initialURL);
-  if (LANG_FILTER) {
-    console.log("🔎 Filtro de idioma:", LANG_FILTER);
-  }
+  if (LANG_FILTER) console.log("🔎 Filtro de idioma:", LANG_FILTER);
 
   const browser = await puppeteer.launch({
     headless: true,
@@ -149,7 +147,6 @@ async function crawl() {
       for (const found of all) {
         const clean = normalize(found);
         if (!clean) continue;
-        if (!matchesLangFilter(clean)) continue;
         if (visited.has(clean) || queued.has(clean)) continue;
 
         urlQueue.push({ url: clean, depth: depth + 1 });
@@ -164,8 +161,16 @@ async function crawl() {
 
   await browser.close();
 
-  const filtered = Array.from(visited).filter(matchesLangFilter);
-  const list = filtered.map((url) => ({ url }));
+  const visitedList = Array.from(visited);
+  const filtered = visitedList.filter(matchesLangFilter);
+  if (LANG_FILTER && filtered.length === 0) {
+    console.warn(
+      `⚠️ No se encontraron URLs con el filtro "${LANG_FILTER}". Se usarán todas las URLs rastreadas.`
+    );
+  }
+
+  const finalList = filtered.length > 0 ? filtered : visitedList;
+  const list = finalList.map((url) => ({ url }));
   fs.writeFileSync("scripts/urls.json", JSON.stringify(list, null, 2));
 
   console.log(`\n📄 Total URLs encontradas: ${list.length}`);
