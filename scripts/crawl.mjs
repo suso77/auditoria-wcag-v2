@@ -13,23 +13,35 @@ import path from "path";
 import puppeteer from "puppeteer";
 
 const START_URL = process.env.SITE_URL || "https://example.com";
+const LANG_FILTER = process.env.LANG_FILTER || "";
 const MAX_URLS = 200;
 const MAX_DEPTH = 3;
 const CHROME_PROFILE_DIR = path.join(process.cwd(), ".chrome-crawler-profile");
 
 fs.mkdirSync(CHROME_PROFILE_DIR, { recursive: true });
 
-const urlQueue = [{ url: START_URL, depth: 0 }];
-const visited = new Set();
-
 function normalize(u) {
   try {
     const x = new URL(u);
+    x.hash = "";
     return x.origin + x.pathname + x.search;
   } catch {
     return null;
   }
 }
+
+const initialURL = normalize(START_URL);
+if (!initialURL) {
+  console.error("❌ START_URL inválida:", START_URL);
+  process.exit(1);
+}
+
+const urlQueue = [{ url: initialURL, depth: 0 }];
+const queued = new Set([initialURL]);
+const visited = new Set();
+
+const matchesLangFilter = (url) =>
+  !LANG_FILTER || url.toLowerCase().includes(LANG_FILTER.toLowerCase());
 
 async function extractHTMLLinks(page, base) {
   return await page.$$eval("a[href]", (as) =>
@@ -85,7 +97,10 @@ async function extractFetchUrls(page, base) {
 
 async function crawl() {
   console.log("🚀 CRAWLER UNIVERSAL v3.0");
-  console.log("🌐 Sitio:", START_URL);
+  console.log("🌐 Sitio:", initialURL);
+  if (LANG_FILTER) {
+    console.log("🔎 Filtro de idioma:", LANG_FILTER);
+  }
 
   const browser = await puppeteer.launch({
     headless: true,
@@ -106,6 +121,7 @@ async function crawl() {
 
   while (urlQueue.length > 0 && visited.size < MAX_URLS) {
     const { url, depth } = urlQueue.shift();
+    queued.delete(url);
     if (visited.has(url) || depth > MAX_DEPTH) continue;
 
     visited.add(url);
@@ -133,9 +149,11 @@ async function crawl() {
       for (const found of all) {
         const clean = normalize(found);
         if (!clean) continue;
-        if (visited.has(clean)) continue;
+        if (!matchesLangFilter(clean)) continue;
+        if (visited.has(clean) || queued.has(clean)) continue;
 
         urlQueue.push({ url: clean, depth: depth + 1 });
+        queued.add(clean);
       }
     } catch (err) {
       console.log(`❌ Error: ${err.message}`);
@@ -146,7 +164,8 @@ async function crawl() {
 
   await browser.close();
 
-  const list = Array.from(visited).map((url) => ({ url }));
+  const filtered = Array.from(visited).filter(matchesLangFilter);
+  const list = filtered.map((url) => ({ url }));
   fs.writeFileSync("scripts/urls.json", JSON.stringify(list, null, 2));
 
   console.log(`\n📄 Total URLs encontradas: ${list.length}`);

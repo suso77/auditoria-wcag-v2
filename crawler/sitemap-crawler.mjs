@@ -4,6 +4,7 @@ import path from "path";
 import { XMLParser } from "fast-xml-parser";
 
 const BASE_URL = process.env.SITE_URL;
+const LANG_FILTER = process.env.LANG_FILTER || "";
 if (!BASE_URL) {
   console.error("❌ Debes ejecutar con: SITE_URL=\"https://dominio.com\" node crawler/sitemap-crawler.mjs");
   process.exit(1);
@@ -11,6 +12,9 @@ if (!BASE_URL) {
 
 console.log("🚀 SITEMAP CRAWLER v1.1 (Node fetch FIX)");
 console.log(`🌐 Sitio: ${BASE_URL}`);
+if (LANG_FILTER) {
+  console.log(`🔎 Filtro de idioma: ${LANG_FILTER}`);
+}
 
 const fetch = global.fetch; // 👈 FIX PARA NODE 18+
 
@@ -18,6 +22,9 @@ const parser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "",
 });
+
+const matchesLangFilter = (url) =>
+  !LANG_FILTER || url.toLowerCase().includes(LANG_FILTER.toLowerCase());
 
 function normalize(url) {
   if (!url) return null;
@@ -59,7 +66,7 @@ async function fetchSitemap(url) {
       }
     }
 
-    return urls.map(normalize).filter(Boolean);
+    return urls.map(normalize).filter(Boolean).filter(matchesLangFilter);
   } catch (err) {
     console.error(`❌ Error leyendo ${url}: ${err.message}`);
     return [];
@@ -121,7 +128,7 @@ async function crawlAllSitemaps() {
 }
 
 // MAIN
-const urls = await crawlAllSitemaps();
+const urls = (await crawlAllSitemaps()).filter(matchesLangFilter);
 
 console.log(`\n📄 Total URLs encontradas en sitemap: ${urls.length}`);
 
@@ -130,4 +137,3 @@ fs.writeFileSync(outputPath, JSON.stringify(urls, null, 2), "utf8");
 
 console.log(`💾 Guardado en ${outputPath}`);
 console.log("🎉 Finalizado.");
-
