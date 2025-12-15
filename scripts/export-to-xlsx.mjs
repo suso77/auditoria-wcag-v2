@@ -23,9 +23,14 @@ const REPORTES_DIR = path.join(AUDITORIAS_DIR, "reportes");
 const CAPTURAS_DIR = path.join(AUDITORIAS_DIR, "capturas");
 const MERGED_PATH = path.join(REPORTES_DIR, "merged-results.json");
 const OUTPUT_PATH = path.join(REPORTES_DIR, "Informe-WCAG-IAAP-v6.5.xlsx");
+const DEVICE_INFO =
+  process.env.AUDIT_DEVICE_INFO ||
+  process.env.DEVICE_INFO ||
+  "MacBook Pro / macOS 14.6.1 / Chrome 143 / Axe DevTools";
 
 fs.mkdirSync(REPORTES_DIR, { recursive: true });
 fs.mkdirSync(CAPTURAS_DIR, { recursive: true });
+const CAPTURE_FILES = fs.existsSync(CAPTURAS_DIR) ? walkCaptureFiles(CAPTURAS_DIR) : [];
 
 // ============================================================
 // 📄 Cargar merged-results.json
@@ -44,6 +49,25 @@ if (!Array.isArray(data) || data.length === 0) {
 // ============================================================
 // 🧠 Funciones auxiliares
 // ============================================================
+function walkCaptureFiles(dir) {
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) files.push(...walkCaptureFiles(fullPath));
+    else files.push(fullPath);
+  }
+  return files;
+}
+
+function sanitizeForCapture(value) {
+  return (value || "")
+    .toLowerCase()
+    .replace(/https?:\/\//g, "")
+    .replace(/[^a-z0-9]/g, "")
+    .slice(0, 80);
+}
+
 function normalizeImpact(impact) {
   const i = (impact || "").toLowerCase();
   const map = {
@@ -80,14 +104,51 @@ function enrichCriterio(v) {
 
 function getCapturePath(issue) {
   if (issue.capturePath) {
-    const abs = path.join(AUDITORIAS_DIR, issue.capturePath);
+    const abs = path.isAbsolute(issue.capturePath)
+      ? issue.capturePath
+      : path.join(AUDITORIAS_DIR, issue.capturePath);
     if (fs.existsSync(abs)) return abs;
   }
-  const hint = (issue.pageUrl || "").replace(/[^\w-]/g, "_").slice(0, 60);
-  const found = fs
-    .readdirSync(CAPTURAS_DIR)
-    .find((f) => f.endsWith(".png") && f.includes(hint));
-  return found ? path.join(CAPTURAS_DIR, found) : null;
+  const slug = sanitizeForCapture(issue.pageUrl || issue.url);
+  if (!slug) return null;
+  return (
+    CAPTURE_FILES.find((file) => path.basename(file).toLowerCase().includes(slug)) ||
+    null
+  );
+}
+
+function buildRelativeCapturePath(absPath) {
+  if (!absPath) return null;
+  const rel = path.relative(REPORTES_DIR, absPath).split(path.sep).join("/");
+  return rel.startsWith("..") ? rel : `./${rel}`;
+}
+
+function buildTestingMethod(issue) {
+  const engine = (issue.engine || "IAAP PRO").toLowerCase();
+  const source = issue.source || "sitemap";
+  const state = issue.stateId ? ` · Estado ${issue.stateId}` : "";
+  if (source.includes("manual")) return "Manual – Revisión experta";
+  if (engine.includes("pa11y")) return `Automático – Pa11y (${source})${state}`;
+  if (engine.includes("axe")) return `Automático – Axe DevTools (${source})${state}`;
+  return `Automático – ${issue.engine || "IAAP PRO"} (${source})${state}`;
+}
+
+function buildResumen(issue, criterio) {
+  return (
+    issue.resultadoActual ||
+    issue.description ||
+    criterio?.resumen ||
+    "Incidencia detectada por IAAP PRO."
+  );
+}
+
+function buildNotas(issue, criterio) {
+  const notes = [];
+  if (issue.resultadoEsperado) notes.push(`Esperado: ${issue.resultadoEsperado}`);
+  if (issue.recomendacionW3C) notes.push(`Recomendación: ${issue.recomendacionW3C}`);
+  if (issue.helpUrl) notes.push(`Guía: ${issue.helpUrl}`);
+  else if (criterio?.url) notes.push(`Referencia: ${criterio.url}`);
+  return notes.join(" | ") || "—";
 }
 
 // ============================================================
@@ -100,6 +161,27 @@ wb.created = new Date();
 // ============================================================
 // 🧱 Definición de columnas IAAP PRO v6.5
 // ============================================================
+const informeFinalSheet = wb.addWorksheet("✅ Informe Final");
+informeFinalSheet.columns = [
+  { header: "ID", key: "id", width: 36 },
+  {
+    header: "Dispositivo, Sistema operativo, navegador y tecnología asistiva",
+    key: "device",
+    width: 55,
+  },
+  { header: "Resumen", key: "summary", width: 80 },
+  { header: "Páginas afectadas", key: "page", width: 70 },
+  { header: "Metodología de testing", key: "method", width: 40 },
+  { header: "Criterio WCAG", key: "wcag", width: 20 },
+  { header: "Captura de pantalla", key: "capture", width: 35 },
+  { header: "Notas", key: "notes", width: 80 },
+];
+informeFinalSheet.getRow(1).font = { bold: true };
+informeFinalSheet.autoFilter = { from: "A1", to: "H1" };
+informeFinalSheet.columns.forEach(
+  (c) => (c.alignment = { wrapText: true, vertical: "top" })
+);
+
 const columnas = [
   { header: "Origen", key: "origen", width: 15 },
   { header: "Motor", key: "engine", width: 15 },
@@ -138,11 +220,20 @@ Object.values(hojas).forEach((sheet) => {
 // ============================================================
 // 🧮 Procesar resultados IAAP PRO
 // ============================================================
-for (const issue of data) {
+data.forEach((issue, index) => {
   const origen = issue.source || "sitemap";
   const criterio = enrichCriterio(issue);
   const impactNorm = normalizeImpact(issue.impact);
   const capturePath = getCapturePath(issue);
+  const captureRelative = buildRelativeCapturePath(capturePath);
+  const captureCell = captureRelative
+    ? { text: "Ver captura", hyperlink: captureRelative }
+    : "—";
+  const resumen = buildResumen(issue, criterio);
+  const notas = buildNotas(issue, criterio);
+  const pageCell = issue.pageUrl
+    ? { text: issue.pageUrl, hyperlink: issue.pageUrl }
+    : "(sin URL)";
 
   const hojaDestino =
     hojas[origen] ||
@@ -152,6 +243,17 @@ for (const issue of data) {
       ? hojas.manual
       : hojas.sitemap);
 
+  informeFinalSheet.addRow({
+    id: issue.id || `ISSUE-${index + 1}`,
+    device: DEVICE_INFO,
+    summary: resumen,
+    page: pageCell,
+    method: buildTestingMethod(issue),
+    wcag: criterio.criterio,
+    capture: captureCell,
+    notes: notas,
+  });
+
   hojaDestino.addRow({
     origen,
     engine: issue.engine || "WCAG",
@@ -160,29 +262,27 @@ for (const issue of data) {
     principio: criterio.principio,
     impact: impactNorm,
     descripcion: issue.description || criterio.resumen,
-    resultadoActual:
-      issue.resultadoActual || issue.description || "(sin descripción)",
+    resultadoActual: issue.resultadoActual || issue.description || "(sin descripción)",
     resultadoEsperado:
-      issue.resultadoEsperado ||
-      "Debe cumplir con el criterio WCAG indicado.",
+      issue.resultadoEsperado || "Debe cumplir con el criterio WCAG indicado.",
     recomendacionW3C:
       issue.recomendacionW3C ||
       (criterio.url ? `Ver criterio en ${criterio.url}` : "—"),
     selector: issue.selector || "(sin selector)",
-    url: { text: issue.pageUrl || "(sin URL)", hyperlink: issue.pageUrl },
-    captura: capturePath
-      ? { text: "Evidencia local", hyperlink: `file://${capturePath}` }
-      : "—",
+    url: pageCell,
+    captura: captureCell,
   });
-}
+});
 
 // ============================================================
 // 🎨 Hipervínculos
 // ============================================================
-Object.values(hojas).forEach((sheet) => {
+const sheetsWithLinks = [informeFinalSheet, ...Object.values(hojas)];
+sheetsWithLinks.forEach((sheet) => {
   sheet.eachRow((row, num) => {
     if (num === 1) return;
-    ["criterio", "url", "captura"].forEach((key) => {
+    const keys = sheet === informeFinalSheet ? ["page", "capture"] : ["criterio", "url", "captura"];
+    keys.forEach((key) => {
       const cell = row.getCell(key);
       if (typeof cell.value === "object" && cell.value?.hyperlink) {
         cell.font = { color: { argb: "FF0563C1" }, underline: true };
