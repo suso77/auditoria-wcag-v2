@@ -31,6 +31,10 @@ const DEVICE_INFO =
 fs.mkdirSync(REPORTES_DIR, { recursive: true });
 fs.mkdirSync(CAPTURAS_DIR, { recursive: true });
 const CAPTURE_FILES = fs.existsSync(CAPTURAS_DIR) ? walkCaptureFiles(CAPTURAS_DIR) : [];
+const CAPTURE_INDEX = CAPTURE_FILES.map((file) => ({
+  path: file,
+  slug: sanitizeForCapture(path.basename(file)),
+}));
 
 // ============================================================
 // 📄 Cargar merged-results.json
@@ -61,11 +65,12 @@ function walkCaptureFiles(dir) {
 }
 
 function sanitizeForCapture(value) {
-  return (value || "")
+  if (!value) return "";
+  const clean = value
     .toLowerCase()
     .replace(/https?:\/\//g, "")
-    .replace(/[^a-z0-9]/g, "")
-    .slice(0, 80);
+    .replace(/[^a-z0-9]/g, "");
+  return clean.replace(/^https?/, "").slice(0, 100);
 }
 
 function normalizeImpact(impact) {
@@ -109,12 +114,12 @@ function getCapturePath(issue) {
       : path.join(AUDITORIAS_DIR, issue.capturePath);
     if (fs.existsSync(abs)) return abs;
   }
-  const slug = sanitizeForCapture(issue.pageUrl || issue.url);
+  const slug = sanitizeForCapture(issue.pageUrl || issue.url || issue.id);
   if (!slug) return null;
-  return (
-    CAPTURE_FILES.find((file) => path.basename(file).toLowerCase().includes(slug)) ||
-    null
+  const match = CAPTURE_INDEX.find(
+    ({ slug: fileSlug }) => fileSlug.includes(slug) || slug.includes(fileSlug)
   );
+  return match ? match.path : null;
 }
 
 function buildRelativeCapturePath(absPath) {
@@ -149,6 +154,16 @@ function buildNotas(issue, criterio) {
   if (issue.helpUrl) notes.push(`Guía: ${issue.helpUrl}`);
   else if (criterio?.url) notes.push(`Referencia: ${criterio.url}`);
   return notes.join(" | ") || "—";
+}
+
+function buildBarrierName(issue, criterio) {
+  return (
+    issue.help ||
+    issue.summary ||
+    issue.description ||
+    criterio?.resumen ||
+    "Barrera detectada por IAAP PRO"
+  );
 }
 
 // ============================================================
@@ -234,6 +249,7 @@ data.forEach((issue, index) => {
   const pageCell = issue.pageUrl
     ? { text: issue.pageUrl, hyperlink: issue.pageUrl }
     : "(sin URL)";
+  const barrierName = buildBarrierName(issue, criterio);
 
   const hojaDestino =
     hojas[origen] ||
@@ -244,7 +260,7 @@ data.forEach((issue, index) => {
       : hojas.sitemap);
 
   informeFinalSheet.addRow({
-    id: issue.id || `ISSUE-${index + 1}`,
+    id: barrierName,
     device: DEVICE_INFO,
     summary: resumen,
     page: pageCell,

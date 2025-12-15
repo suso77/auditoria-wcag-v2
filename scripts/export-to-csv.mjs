@@ -42,6 +42,10 @@ if (!Array.isArray(data) || data.length === 0) {
 }
 
 const CAPTURE_FILES = fs.existsSync(CAPTURAS_DIR) ? walkCaptureFiles(CAPTURAS_DIR) : [];
+const CAPTURE_INDEX = CAPTURE_FILES.map((file) => ({
+  path: file,
+  slug: sanitizeForCapture(path.basename(file)),
+}));
 
 function walkCaptureFiles(dir) {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -55,11 +59,12 @@ function walkCaptureFiles(dir) {
 }
 
 function sanitizeForCapture(value) {
-  return (value || "")
+  if (!value) return "";
+  const clean = value
     .toLowerCase()
     .replace(/https?:\/\//g, "")
-    .replace(/[^a-z0-9]/g, "")
-    .slice(0, 80);
+    .replace(/[^a-z0-9]/g, "");
+  return clean.replace(/^https?/, "").slice(0, 100);
 }
 
 function getCapturePath(issue) {
@@ -69,12 +74,12 @@ function getCapturePath(issue) {
       : path.join(AUDITORIAS_DIR, issue.capturePath);
     if (fs.existsSync(abs)) return abs;
   }
-  const slug = sanitizeForCapture(issue.pageUrl || issue.url);
+  const slug = sanitizeForCapture(issue.pageUrl || issue.url || issue.id);
   if (!slug) return null;
-  return (
-    CAPTURE_FILES.find((file) => path.basename(file).toLowerCase().includes(slug)) ||
-    null
+  const match = CAPTURE_INDEX.find(
+    ({ slug: fileSlug }) => fileSlug.includes(slug) || slug.includes(fileSlug)
   );
+  return match ? match.path : null;
 }
 
 function buildRelativeCapturePath(absPath) {
@@ -108,6 +113,16 @@ function buildNotas(issue) {
   return notes.join(" | ") || "—";
 }
 
+function buildBarrierName(issue) {
+  return (
+    issue.help ||
+    issue.summary ||
+    issue.description ||
+    issue.resultadoActual ||
+    "Barrera detectada por IAAP PRO"
+  );
+}
+
 // ===========================================================
 // 🧩 Transformar datos al formato IAAP PRO CSV
 // ===========================================================
@@ -119,7 +134,7 @@ const rows = data.map((item, index) => {
     : "—";
 
   return {
-    ID: item.id || `ISSUE-${index + 1}`,
+    ID: buildBarrierName(item),
     "Dispositivo, Sistema operativo, navegador y tecnología asistiva": DEVICE_INFO,
     Resumen: buildResumen(item),
     "Páginas afectadas": item.pageUrl || item.url || "(sin URL)",
