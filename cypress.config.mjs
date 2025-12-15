@@ -46,6 +46,43 @@ export default defineConfig({
         console.log("[IAAP] 🧠 Preprocesador configurado correctamente con esbuild moderno.");
       }
 
+      const resolveFilePath = (filePath) =>
+        path.isAbsolute(filePath) ? filePath : path.join(process.cwd(), filePath);
+
+      const initEvidenceFile = (filePath) => {
+        if (!filePath) return null;
+        try {
+          const resolved = resolveFilePath(filePath);
+          fs.ensureDirSync(path.dirname(resolved));
+          fs.writeJsonSync(resolved, [], { spaces: 2 });
+          console.log(`[IAAP] 📝 Evidencia inicializada en ${resolved}`);
+        } catch (err) {
+          console.error(`[IAAP] ❌ Error inicializando evidencia (${filePath}): ${err.message}`);
+        }
+        return null;
+      };
+
+      const appendEvidence = ({ filePath, record }) => {
+        if (!filePath || !record) return null;
+        try {
+          const resolved = resolveFilePath(filePath);
+          fs.ensureDirSync(path.dirname(resolved));
+          const existing = fs.existsSync(resolved) ? fs.readJsonSync(resolved) : [];
+          if (!Array.isArray(existing)) {
+            console.warn(`[IAAP] ⚠️ El archivo de evidencia no es un array, se reemplazará.`);
+          }
+          const next = Array.isArray(existing) ? existing : [];
+          next.push(record);
+          fs.writeJsonSync(resolved, next, { spaces: 2 });
+          console.log(
+            `[IAAP] 🗂️ Evidencia agregada (${next.length} registros) en ${resolved}`
+          );
+        } catch (err) {
+          console.error(`[IAAP] ❌ Error guardando evidencia (${filePath}): ${err.message}`);
+        }
+        return null;
+      };
+
       // Registrar tareas personalizadas
       const registerAxeTask = require("./cypress/plugins/get-axe-source.cjs");
       registerAxeTask(on);
@@ -76,6 +113,14 @@ export default defineConfig({
             console.warn("[IAAP] ⚠️ Error al limpiar capturas:", err.message);
           }
           return true;
+        },
+
+        initEvidenceFile(filePath) {
+          return initEvidenceFile(filePath);
+        },
+
+        appendEvidence(args) {
+          return appendEvidence(args || {});
         },
 
         createFolder(dir) {
