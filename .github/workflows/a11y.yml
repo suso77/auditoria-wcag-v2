@@ -35,13 +35,13 @@ jobs:
 
       - name: 🔍 Verificar disponibilidad de ${{ env.SITE_URL }}
         run: |
-          echo "🔎 Comprobando que $SITE_URL responde con 200 OK…"
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$SITE_URL")
-          if [ "$STATUS" != "200" ]; then
+          echo "🔎 Comprobando que $SITE_URL responde correctamente…"
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" -L "$SITE_URL")
+          if [[ ! "$STATUS" =~ ^(2|3) ]]; then
             echo "❌ El sitio respondió con HTTP $STATUS"
             exit 1
           fi
-          echo "✅ Sitio accesible (HTTP 200)."
+          echo "✅ Sitio accesible (HTTP $STATUS)."
 
       - name: 📦 Instalar dependencias
         run: |
