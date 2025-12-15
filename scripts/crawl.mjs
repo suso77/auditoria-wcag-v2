@@ -14,7 +14,38 @@ import puppeteer from "puppeteer";
 
 const START_URL = process.env.SITE_URL || "https://example.com";
 const RAW_LANG_FILTER = (process.env.LANG_FILTER || "").trim();
-const LANG_FILTER = RAW_LANG_FILTER.toLowerCase();
+const LANG_FILTER_PATTERNS = RAW_LANG_FILTER
+  ? RAW_LANG_FILTER.split(",")
+      .map((token) => token.trim())
+      .filter(Boolean)
+      .flatMap((token) => {
+        const variants = new Set();
+        const lower = token.toLowerCase();
+        variants.add(lower);
+
+        const noTrailing = lower.replace(/\/+$/, "");
+        variants.add(noTrailing);
+
+        const noLeading = noTrailing.replace(/^\/+/, "");
+        variants.add(noLeading);
+
+        if (noTrailing && !noTrailing.endsWith("/")) {
+          variants.add(`${noTrailing}/`);
+        }
+
+        if (noLeading && !noLeading.startsWith("/")) {
+          variants.add(`/${noLeading}`);
+          variants.add(`/${noLeading}/`);
+        }
+
+        if (noLeading) {
+          const bareNoSlash = noLeading.replace(/\/+/g, "");
+          variants.add(bareNoSlash);
+        }
+
+        return Array.from(variants).filter(Boolean);
+      })
+  : [];
 const MAX_URLS = 200;
 const MAX_DEPTH = 3;
 const CHROME_PROFILE_DIR = path.join(process.cwd(), ".chrome-crawler-profile");
@@ -41,8 +72,11 @@ const urlQueue = [{ url: initialURL, depth: 0 }];
 const queued = new Set([initialURL]);
 const visited = new Set();
 
-const matchesLangFilter = (url) =>
-  !LANG_FILTER || url.toLowerCase().includes(LANG_FILTER);
+const matchesLangFilter = (url) => {
+  if (LANG_FILTER_PATTERNS.length === 0) return true;
+  const target = url.toLowerCase();
+  return LANG_FILTER_PATTERNS.some((pattern) => pattern && target.includes(pattern));
+};
 
 async function extractHTMLLinks(page, base) {
   return await page.$$eval("a[href]", (as) =>
@@ -120,7 +154,7 @@ async function crawl() {
 
   const fallbackQueue = [];
   const fallbackSeen = new Set();
-  let enforcingFilter = Boolean(LANG_FILTER);
+  let enforcingFilter = LANG_FILTER_PATTERNS.length > 0;
   let filterMatchDetected = false;
   let retriedWithoutFilter = false;
 
@@ -155,12 +189,12 @@ async function crawl() {
         for (const found of all) {
           const clean = normalize(found);
           if (!clean) continue;
-          if (visited.has(clean) || queued.has(clean)) continue;
+        if (visited.has(clean) || queued.has(clean)) continue;
 
-          if (enforcingFilter && !matchesLangFilter(clean)) {
-            if (!fallbackSeen.has(clean)) {
-              fallbackQueue.push({ url: clean, depth: depth + 1 });
-              fallbackSeen.add(clean);
+        if (enforcingFilter && !matchesLangFilter(clean)) {
+          if (!fallbackSeen.has(clean)) {
+            fallbackQueue.push({ url: clean, depth: depth + 1 });
+            fallbackSeen.add(clean);
             }
             continue;
           }
@@ -206,9 +240,9 @@ async function crawl() {
 
   const visitedList = Array.from(visited);
   const filtered = visitedList.filter(matchesLangFilter);
-  if (LANG_FILTER && filtered.length === 0) {
+  if (LANG_FILTER_PATTERNS.length > 0 && filtered.length === 0) {
     console.warn(
-      `⚠️ No se encontraron URLs con el filtro "${LANG_FILTER}". Se usarán todas las URLs rastreadas.`
+      `⚠️ No se encontraron URLs con el filtro "${RAW_LANG_FILTER}". Se usarán todas las URLs rastreadas.`
     );
   }
 

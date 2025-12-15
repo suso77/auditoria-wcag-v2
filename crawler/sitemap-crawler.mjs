@@ -4,7 +4,39 @@ import path from "path";
 import { XMLParser } from "fast-xml-parser";
 
 const BASE_URL = process.env.SITE_URL;
-const LANG_FILTER = (process.env.LANG_FILTER || "").trim();
+const RAW_LANG_FILTER = (process.env.LANG_FILTER || "").trim();
+const LANG_FILTER_PATTERNS = RAW_LANG_FILTER
+  ? RAW_LANG_FILTER.split(",")
+      .map((token) => token.trim())
+      .filter(Boolean)
+      .flatMap((token) => {
+        const variants = new Set();
+        const lower = token.toLowerCase();
+        variants.add(lower);
+
+        const noTrailing = lower.replace(/\/+$/, "");
+        variants.add(noTrailing);
+
+        const noLeading = noTrailing.replace(/^\/+/, "");
+        variants.add(noLeading);
+
+        if (noTrailing && !noTrailing.endsWith("/")) {
+          variants.add(`${noTrailing}/`);
+        }
+
+        if (noLeading && !noLeading.startsWith("/")) {
+          variants.add(`/${noLeading}`);
+          variants.add(`/${noLeading}/`);
+        }
+
+        if (noLeading) {
+          const bareNoSlash = noLeading.replace(/\/+/g, "");
+          variants.add(bareNoSlash);
+        }
+
+        return Array.from(variants).filter(Boolean);
+      })
+  : [];
 if (!BASE_URL) {
   console.error("❌ Debes ejecutar con: SITE_URL=\"https://dominio.com\" node crawler/sitemap-crawler.mjs");
   process.exit(1);
@@ -12,7 +44,7 @@ if (!BASE_URL) {
 
 console.log("🚀 SITEMAP CRAWLER v1.1 (Node fetch FIX)");
 console.log(`🌐 Sitio: ${BASE_URL}`);
-if (LANG_FILTER) console.log(`🔎 Filtro de idioma: ${LANG_FILTER}`);
+if (RAW_LANG_FILTER) console.log(`🔎 Filtro de idioma: ${RAW_LANG_FILTER}`);
 
 const fetch = global.fetch; // 👈 FIX PARA NODE 18+
 
@@ -21,8 +53,11 @@ const parser = new XMLParser({
   attributeNamePrefix: "",
 });
 
-const matchesLangFilter = (url) =>
-  !LANG_FILTER || url.toLowerCase().includes(LANG_FILTER.toLowerCase());
+const matchesLangFilter = (url) => {
+  if (LANG_FILTER_PATTERNS.length === 0) return true;
+  const target = url.toLowerCase();
+  return LANG_FILTER_PATTERNS.some((pattern) => pattern && target.includes(pattern));
+};
 
 function normalize(url) {
   if (!url) return null;
@@ -129,9 +164,9 @@ async function crawlAllSitemaps() {
 const urls = await crawlAllSitemaps();
 const filtered = urls.filter(matchesLangFilter);
 
-if (LANG_FILTER && filtered.length === 0) {
+if (LANG_FILTER_PATTERNS.length > 0 && filtered.length === 0) {
   console.warn(
-    `⚠️ No se encontraron URLs con el filtro "${LANG_FILTER}". Se almacenarán todas las URLs del sitemap.`
+    `⚠️ No se encontraron URLs con el filtro "${RAW_LANG_FILTER}". Se almacenarán todas las URLs del sitemap.`
   );
 }
 
