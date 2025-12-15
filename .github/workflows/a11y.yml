@@ -14,6 +14,7 @@ on:
 env:
   NODE_VERSION: "20"
   SITE_URL: ${{ github.event.inputs.site_url || vars.SITE_URL || 'https://www.suntransfers.com' }}
+  LANG_FILTER: "/es/"
   TZ: Europe/Madrid
   LANG: es_ES.UTF-8
 
@@ -141,4 +142,3 @@ jobs:
             auditorias/**/*.json
             auditorias/**/*.png
           retention-days: 21
-
