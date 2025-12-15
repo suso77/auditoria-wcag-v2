@@ -1,4 +1,4 @@
-name: ♿ Auditoría de Accesibilidad – IAAP PRO
+ame: ♿ Auditoría de Accesibilidad – IAAP PRO
 
 on:
   workflow_dispatch:
@@ -7,6 +7,10 @@ on:
         description: "URL raíz del sitio a auditar (https://dominio.com)"
         required: true
         default: "https://www.suntransfers.com"
+      lang_filter:
+        description: "Fragmento/idioma para filtrar URLs (ej. /es/, vacío = sin filtro)"
+        required: false
+        default: "/es/"
   push:
     branches: [ main, master ]
   pull_request:
@@ -14,7 +18,7 @@ on:
 env:
   NODE_VERSION: "20"
   SITE_URL: ${{ github.event.inputs.site_url || vars.SITE_URL || 'https://www.suntransfers.com' }}
-  LANG_FILTER: "/es/"
+  LANG_FILTER: ${{ github.event.inputs.lang_filter || vars.LANG_FILTER || '' }}
   TZ: Europe/Madrid
   LANG: es_ES.UTF-8
 
