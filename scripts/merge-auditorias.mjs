@@ -20,7 +20,11 @@ const ROOT_DIR = process.cwd();
 const AUDITORIAS_DIR = path.join(ROOT_DIR, "auditorias");
 const REPORTES_DIR = path.join(AUDITORIAS_DIR, "reportes");
 const CAPTURAS_DIR = path.join(AUDITORIAS_DIR, "capturas");
+const CAPTURE_SUBFOLDERS = ["capturas", "auditoria-interactiva", "auditoria-sitemap"]
+  .map((dir) => path.join(AUDITORIAS_DIR, dir))
+  .filter((dir) => fs.existsSync(dir));
 const OUTPUT_FILE = path.join(REPORTES_DIR, "merged-results.json");
+const CAPTURE_INDEX = buildCaptureIndex();
 
 fs.mkdirSync(AUDITORIAS_DIR, { recursive: true });
 fs.mkdirSync(REPORTES_DIR, { recursive: true });
@@ -57,11 +61,65 @@ function getFirstTarget(violation) {
   return normalizeSelector(node.target?.[0] || node.target);
 }
 
+function walkCaptureFiles(dir) {
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) files.push(...walkCaptureFiles(fullPath));
+    else if (entry.isFile() && entry.name.toLowerCase().endsWith(".png")) files.push(fullPath);
+  }
+  return files;
+}
+
+function sanitizeForCapture(value) {
+  if (!value) return "";
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/https?:\/\//g, "")
+    .replace(/[^a-z0-9]+/g, "")
+    .replace(/^(https|http)/, "")
+    .replace(/^www/, "")
+    .slice(0, 120);
+}
+
+function buildCaptureIndex() {
+  const files = CAPTURE_SUBFOLDERS.flatMap((dir) => walkCaptureFiles(dir));
+  return files.map((absPath) => {
+    const relPath = path.relative(AUDITORIAS_DIR, absPath).split(path.sep).join("/");
+    return {
+      abs: absPath,
+      rel: relPath,
+      slug: sanitizeForCapture(relPath),
+    };
+  });
+}
+
+function findCaptureByUrl(url) {
+  const slug = sanitizeForCapture(url);
+  if (!slug) return null;
+  const match = CAPTURE_INDEX.find(
+    ({ slug: fileSlug }) => fileSlug.includes(slug) || slug.includes(fileSlug)
+  );
+  return match ? match.rel : null;
+}
+
 function toCapturePath(evidence) {
   const rel = evidence?.screenshot;
   if (!rel) return null;
   const normalized = rel.replace(/\\/g, "/");
-  return path.posix.join("capturas", normalized);
+  if (normalized.startsWith("capturas/") || normalized.startsWith("capturas\\")) {
+    return normalized;
+  }
+  const directPath = path.posix.join("capturas", normalized);
+  if (fs.existsSync(path.join(AUDITORIAS_DIR, directPath))) return directPath;
+  for (const subDir of ["auditoria-interactiva", "auditoria-sitemap"]) {
+    const candidate = path.posix.join(subDir, normalized);
+    if (fs.existsSync(path.join(AUDITORIAS_DIR, candidate))) return candidate;
+  }
+  return directPath;
 }
 
 function makeIssueId(seed) {
@@ -93,6 +151,9 @@ function normalizeViolation(meta, record, violation, violationIndex) {
     violationIndex,
   ].join("|");
 
+  const captureExists = capturePath && fs.existsSync(path.join(AUDITORIAS_DIR, capturePath));
+  const fallbackCapture = captureExists ? capturePath : findCaptureByUrl(url);
+
   return {
     id: makeIssueId(idSeed),
     source: meta.source,
@@ -121,7 +182,7 @@ function normalizeViolation(meta, record, violation, violationIndex) {
     help: violation.help || "",
     helpUrl: violation.helpUrl || wcagInfo?.url || "",
     context: violation.help || violation.description || "",
-    capturePath: capturePath && fs.existsSync(path.join(AUDITORIAS_DIR, capturePath)) ? capturePath : null,
+    capturePath: fallbackCapture || null,
     evidence: violation.evidence || null,
     highlightColor:
       violation.evidence?.highlightColor ||

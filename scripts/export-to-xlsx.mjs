@@ -30,11 +30,19 @@ const DEVICE_INFO =
 
 fs.mkdirSync(REPORTES_DIR, { recursive: true });
 fs.mkdirSync(CAPTURAS_DIR, { recursive: true });
-const CAPTURE_FILES = fs.existsSync(CAPTURAS_DIR) ? walkCaptureFiles(CAPTURAS_DIR) : [];
-const CAPTURE_INDEX = CAPTURE_FILES.map((file) => ({
-  path: file,
-  slug: sanitizeForCapture(path.basename(file)),
-}));
+const CAPTURE_FOLDERS = ["capturas", "auditoria-interactiva", "auditoria-sitemap"]
+  .map((dir) => path.join(AUDITORIAS_DIR, dir))
+  .filter((dir) => fs.existsSync(dir));
+const CAPTURE_FILES = CAPTURE_FOLDERS.flatMap((dir) => walkCaptureFiles(dir));
+const CAPTURE_INDEX = CAPTURE_FILES.map((absPath) => {
+  const rel = path.relative(AUDITORIAS_DIR, absPath).split(path.sep).join("/");
+  return {
+    abs: absPath,
+    rel,
+    slug: sanitizeForCapture(rel),
+    slugBase: sanitizeForCapture(path.basename(absPath)),
+  };
+});
 
 // ============================================================
 // 📄 Cargar merged-results.json
@@ -59,7 +67,7 @@ function walkCaptureFiles(dir) {
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) files.push(...walkCaptureFiles(fullPath));
-    else files.push(fullPath);
+    else if (entry.isFile() && entry.name.toLowerCase().endsWith(".png")) files.push(fullPath);
   }
   return files;
 }
@@ -120,10 +128,15 @@ function getCapturePath(issue) {
   }
   const slug = sanitizeForCapture(issue.pageUrl || issue.url || issue.id);
   if (!slug) return null;
-  const match = CAPTURE_INDEX.find(
-    ({ slug: fileSlug }) => fileSlug.includes(slug) || slug.includes(fileSlug)
-  );
-  return match ? match.path : null;
+  const match = CAPTURE_INDEX.find(({ slug: fileSlug, slugBase }) => {
+    return (
+      fileSlug.includes(slug) ||
+      slug.includes(fileSlug) ||
+      slugBase.includes(slug) ||
+      slug.includes(slugBase)
+    );
+  });
+  return match ? match.abs : null;
 }
 
 function buildRelativeCapturePath(absPath) {
@@ -143,12 +156,12 @@ function buildTestingMethod(issue) {
 }
 
 function buildResumen(issue, criterio) {
-  return (
-    issue.resultadoActual ||
-    issue.description ||
-    criterio?.resumen ||
-    "Incidencia detectada por IAAP PRO."
-  );
+  const spanish = criterio?.resumen?.trim();
+  const detalle = (issue.resultadoActual || issue.description || "").trim();
+  if (spanish && detalle && !detalle.toLowerCase().includes(spanish.toLowerCase())) {
+    return `${spanish} — ${detalle}`;
+  }
+  return spanish || detalle || "Incidencia detectada por IAAP PRO.";
 }
 
 function buildNotas(issue, criterio) {
@@ -161,13 +174,40 @@ function buildNotas(issue, criterio) {
 }
 
 function buildBarrierName(issue, criterio) {
-  return (
-    issue.help ||
+  const descripcion =
+    criterio?.resumen ||
     issue.summary ||
     issue.description ||
-    criterio?.resumen ||
-    "Barrera detectada por IAAP PRO"
-  );
+    issue.help ||
+    "Barrera detectada por IAAP PRO";
+  const criterioTag = criterio?.criterio ? ` (${criterio.criterio})` : "";
+  return `${descripcion}${criterioTag}`.trim();
+}
+
+function buildCaptureCell(absPath) {
+  if (!absPath) return "—";
+  const relativePath = buildRelativeCapturePath(absPath);
+  if (!relativePath) return "—";
+  const hyperlink = encodeURI(relativePath).replace(/#/g, "%23");
+  return {
+    text: "Ver captura",
+    hyperlink,
+    tooltip: "Abrir captura almacenada",
+  };
+}
+
+function buildPageCell(pageUrl) {
+  if (!pageUrl) return "(sin URL)";
+  return {
+    text: pageUrl,
+    hyperlink: pageUrl,
+    tooltip: pageUrl,
+  };
+}
+
+function cloneCellValue(value) {
+  if (!value || typeof value !== "object") return value;
+  return { ...value };
 }
 
 // ============================================================
@@ -244,15 +284,10 @@ data.forEach((issue, index) => {
   const criterio = enrichCriterio(issue);
   const impactNorm = normalizeImpact(issue.impact);
   const capturePath = getCapturePath(issue);
-  const captureRelative = buildRelativeCapturePath(capturePath);
-  const captureCell = captureRelative
-    ? { text: "Ver captura", hyperlink: captureRelative }
-    : "—";
+  const captureCell = buildCaptureCell(capturePath);
   const resumen = buildResumen(issue, criterio);
   const notas = buildNotas(issue, criterio);
-  const pageCell = issue.pageUrl
-    ? { text: issue.pageUrl, hyperlink: issue.pageUrl }
-    : "(sin URL)";
+  const pageCell = buildPageCell(issue.pageUrl);
   const barrierName = buildBarrierName(issue, criterio);
 
   const hojaDestino =
@@ -289,8 +324,8 @@ data.forEach((issue, index) => {
       issue.recomendacionW3C ||
       (criterio.url ? `Ver criterio en ${criterio.url}` : "—"),
     selector: issue.selector || "(sin selector)",
-    url: pageCell,
-    captura: captureCell,
+    url: cloneCellValue(pageCell),
+    captura: cloneCellValue(captureCell),
   });
 });
 
