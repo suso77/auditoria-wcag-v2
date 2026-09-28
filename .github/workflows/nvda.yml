@@ -43,10 +43,15 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Instalar dependencias
         run: npm ci
+
+      - name: Dónde estamos
+        # Una línea que ahorra media hora cuando algo falla: qué Node hay, qué
+        # shell ejecuta los scripts y dónde está plantado el paso.
+        run: node -v && npm -v && node -p "process.platform + ' ' + process.cwd()"
 
       - name: Las pruebas puras primero
         # Si el motor está roto, no tiene sentido arrancar un lector: el fallo

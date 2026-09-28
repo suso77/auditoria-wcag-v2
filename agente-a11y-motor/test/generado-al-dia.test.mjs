@@ -78,6 +78,20 @@ test("los tres pares de marcadores siguen siendo exactamente uno cada uno", () =
     });
 });
 
+test("los scripts de npm no dependen de que el shell expanda comodines", async () => {
+  // `npm test` era `node --test test/*.test.mjs`. Quien expande el `*` es el
+  // shell, y npm usa `cmd.exe` en Windows, que no expande nada: Node recibe el
+  // patrón tal cual y responde «Could not find 'test/*.test.mjs'». Se vio en la
+  // primera ejecución del workflow de NVDA, con las 478 pruebas cayendo en
+  // bloque antes de tocar el lector. Node 22 expande el patrón él mismo, así que
+  // en local no se notaba: el fallo solo aparecía en el runner.
+  const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+  const conComodin = Object.keys(pkg.scripts || {})
+    .filter((k) => /[*?]|\[[^\]]+\]/.test(pkg.scripts[k]))
+    .map((k) => k + ": " + pkg.scripts[k]);
+  assert.deepEqual(conComodin, [], "estos scripts fallarán en Windows (cmd.exe no expande comodines)");
+});
+
 test("toda batería de integración comprueba el navegador ARRANCANDO uno", async () => {
   // Que `playwright` importe no quiere decir que haya un Chromium descargado.
   // Una batería que se guarda con `try { await import("playwright") }` no se
