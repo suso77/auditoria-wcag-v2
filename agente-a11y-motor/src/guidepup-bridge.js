@@ -200,20 +200,72 @@ export async function captureWithNvda(html, opts) {
   const { promisify } = await import("util");
   const execAsync = promisify(exec);
 
+  /* El título de la ventana es ASCII y sin espacios a propósito: se usa para
+   * volver a traer el navegador al primer plano, y esa búsqueda acaba en un
+   * `-Match` de PowerShell —una expresión regular— dentro de un VBScript. Un
+   * acento o un paréntesis ahí no fallan: simplemente no encuentran nada. */
+  const TITULO = "GuidepupA11y";
   const file = path.join(os.tmpdir(), "a11y-motor-" + Date.now() + ".html");
   await fs.writeFile(file,
-    '<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Verificación</title></head><body>' +
+    '<!doctype html><html lang="es"><head><meta charset="utf-8"><title>' + TITULO + "</title></head><body>" +
     String(html || "") + "</body></html>", "utf8");
 
+  const esperar = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
   // `start` necesita un primer argumento como título de ventana; el `""` es
   // obligatorio, no decorativo: sin él, una ruta entrecomillada se toma por el
   // título y no se abre nada.
   const app = opts.browser || "chrome";
+  const exe = /\.exe$/i.test(app) ? app : app + ".exe";
   try {
     await nvda.start();
     await execAsync('start "" ' + app + ' "file:///' + file.replace(/\\/g, "/") + '"', { shell: "cmd.exe" });
-    await new Promise(function (r) { setTimeout(r, opts.loadMs == null ? 6000 : opts.loadMs); });
-    return await verifyWithScreenReader({ voiceOver: nvda, steps: opts.steps == null ? 15 : opts.steps });
+    await esperar(opts.loadMs == null ? 8000 : opts.loadMs);
+
+    /* Traer el navegador al PRIMER PLANO, y no darlo por hecho.
+     *
+     * Las teclas que NVDA manda van a la ventana que tenga el foco. En un
+     * escritorio de CI nadie ha hecho clic en nada: `start` abre Chrome, pero
+     * la ventana activa puede seguir siendo la consola desde la que se lanzó
+     * todo. Entonces las flechas no recorren la página, NVDA no anuncia nada, y
+     * la sesión entera devuelve cero frases sin un solo error — que es
+     * exactamente lo que pasó en la primera ejecución que llegó hasta aquí.
+     *
+     * `windowsActivate` hace ese trabajo (AppActivate + SetForegroundWindow).
+     * Si falla, se sigue: puede que la ventana ya estuviera delante, y abortar
+     * aquí sería tirar una sesión que quizá funcionaba. */
+    try {
+      const gp = opts.guidepup || await import("@guidepup/guidepup");
+      if (gp.windowsActivate) {
+        await gp.windowsActivate(exe, TITULO);
+        await esperar(1500);
+      }
+    } catch (e) {
+      console.error("  (aviso) no se pudo activar la ventana de " + exe + ": " + ((e && e.message) || e));
+    }
+
+    // Y colocar el cursor de NVDA al principio del documento. Sin esto, el
+    // recorrido empieza donde estuviera, que en una ventana recién abierta
+    // suele ser la barra de direcciones y no el contenido.
+    try { await nvda.press("Control+Home"); await esperar(500); } catch (e) { /* noop */ }
+
+    const phrases = await verifyWithScreenReader({ voiceOver: nvda, steps: opts.steps == null ? 15 : opts.steps });
+
+    /* Si no se capturó nada, volcar lo que NVDA tenga en su registro.
+     *
+     * Sin esto, una sesión vacía solo dice «ninguna captura sirvió», que no
+     * distingue entre «NVDA no habló» y «habló y no lo recogimos». Con el
+     * registro delante, la diferencia se ve en una línea. */
+    if (!phrases.length) {
+      try {
+        const registro = await nvda.spokenPhraseLog();
+        console.error("  (diagnóstico) NVDA no devolvió ninguna frase en el recorrido.");
+        console.error("  Registro completo del lector (" + registro.length + " entradas):");
+        registro.slice(0, 40).forEach(function (f, i) { console.error("    " + (i + 1) + ". " + f); });
+      } catch (e) {
+        console.error("  (diagnóstico) tampoco se pudo leer el registro de NVDA: " + ((e && e.message) || e));
+      }
+    }
+    return phrases;
   } finally {
     try { await nvda.stop(); } catch (e) { /* noop */ }
     if (!opts.keepOpen) { try { await fs.unlink(file); } catch (e) { /* noop */ } }
