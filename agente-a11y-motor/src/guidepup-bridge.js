@@ -138,13 +138,24 @@ export async function verifyWithScreenReader(opts) {
   return phrases;
 }
 
-// Empareja cada nodo previsto con la frase real de mayor solape de nombre/rol.
+/* Empareja cada nodo previsto con la frase real que mejor le encaja.
+ *
+ * La asignación es GLOBAL y por puntuación, no nodo a nodo por orden de
+ * aparición. La diferencia importa cuando hay dos elementos del mismo rol:
+ * en el componente de prueba hay un botón sin nombre y otro que se llama
+ * «Enviar formulario», y las frases son «button» y «button, Enviar
+ * formulario». Recorriendo los nodos en orden, el primero —el que no tiene
+ * nombre— podía quedarse con la frase del segundo, porque ambas puntúan por el
+ * rol; y entonces el botón sin nombre accesible aparecía nombrado, que es
+ * exactamente la forma de absolver un 4.1.2 real.
+ *
+ * Resolviendo primero las parejas de puntuación más alta, la frase con nombre
+ * se la lleva quien tiene ese nombre, y al otro le queda la que le toca.
+ */
 function alignPredictedToSpoken(predicted, phrases, lector) {
-  const used = new Set();
-  return predicted.map(function (p) {
-    let best = -1, bestScore = -1;
-    phrases.forEach(function (ph, idx) {
-      if (used.has(idx)) return;
+  const candidatas = [];
+  predicted.forEach(function (p, pi) {
+    phrases.forEach(function (ph, fi) {
       // Una frase del escritorio no puede «ganar» el emparejamiento: si lo
       // hiciera, le pondría a un control el nombre de una ventana del Finder.
       if (esRuidoDeEscritorio(ph.spoken, lector)) return;
@@ -164,10 +175,22 @@ function alignPredictedToSpoken(predicted, phrases, lector) {
         });
       }
       if (spokenHasRole(ph.spoken, p.role)) score += 1;
-      if (score > bestScore) { bestScore = score; best = idx; }
+      if (score > 0) candidatas.push({ pi: pi, fi: fi, score: score });
     });
-    if (best >= 0 && bestScore > 0) { used.add(best); return { predicted: p, spoken: phrases[best].spoken }; }
-    return { predicted: p, spoken: null };
+  });
+  // Mayor puntuación primero; a igualdad, el orden del recorrido, que es el
+  // orden en que el lector fue diciendo las cosas.
+  candidatas.sort(function (a, b) { return b.score - a.score || a.fi - b.fi || a.pi - b.pi; });
+
+  const deNodo = {}, usadas = new Set();
+  candidatas.forEach(function (c) {
+    if (deNodo[c.pi] != null || usadas.has(c.fi)) return;
+    deNodo[c.pi] = c.fi;
+    usadas.add(c.fi);
+  });
+  return predicted.map(function (p, pi) {
+    const fi = deNodo[pi];
+    return { predicted: p, spoken: fi == null ? null : phrases[fi].spoken };
   });
 }
 

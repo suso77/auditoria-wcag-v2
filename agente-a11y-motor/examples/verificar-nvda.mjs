@@ -24,6 +24,7 @@
 import { writeFile } from "fs/promises";
 import { understand, analyze, setDOMParser } from "../src/index.js";
 import { bridge, captureWithNvda } from "../src/guidepup-bridge.js";
+import { idiomaDelLector } from "../src/reader-lexicon.js";
 
 if (process.platform !== "win32") {
   console.error("✗ NVDA solo existe en Windows. Aquí no hay nada que verificar.");
@@ -84,9 +85,20 @@ const ms = Date.now() - t0;
 
 const prediccion = analyze(understand(HTML));
 
+/* En qué idioma habló. El runner de GitHub es una máquina en inglés, y eso
+ * cambia lo que esta sesión verifica: el mecanismo y las palabras inglesas sí,
+ * el léxico español no. Se anota para que el fixture no pueda mentir sobre su
+ * procedencia. */
+const idioma = idiomaDelLector(out.spokenPhrases);
+console.log("\n  Idioma del lector: " + (idioma || "no reconocido"));
+if (idioma && idioma !== "es") {
+  console.log("  Ojo: esta sesión NO verifica el léxico español. Para eso hace falta un NVDA en español.");
+}
+
 const informe = {
   creado: new Date().toISOString(),
   lector: "nvda",
+  idioma: idioma,
   duracionMs: ms,
   plataforma: process.platform,
   guidepup: deDonde,

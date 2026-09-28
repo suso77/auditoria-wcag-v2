@@ -138,3 +138,59 @@ test("rescata del registro del lector lo que el bucle se dejó", async () => {
   assert.ok(frases.some((f) => /Enviar formulario/.test(f)), "falta la que se perdió: " + JSON.stringify(frases));
   assert.equal(frases.filter((f) => /Saltar al contenido/.test(f)).length, 1, "y sin duplicar la que sí vio");
 });
+
+test("el botón sin nombre NO se queda con la frase del botón que sí lo tiene", async () => {
+  // El caso exacto del componente de prueba contra NVDA: dos botones, uno sin
+  // nombre accesible. Las dos frases puntúan por el rol, y emparejando nodo a
+  // nodo por orden el primero (el mudo) se llevaba «button, Enviar formulario».
+  // Resultado: un 4.1.2 real absuelto porque «el lector sí pronuncia un nombre».
+  const html = '<button><svg viewBox="0 0 24 24"><path d="M3 6h18"/></svg></button><button>Enviar formulario</button>';
+  const out = await bridge(html, {
+    lector: "nvda",
+    capture: async () => [
+      { step: 0, spoken: "button" },
+      { step: 1, spoken: "button, Enviar formulario" }
+    ]
+  });
+  assert.equal(out.summary["barrera-confirmada"], 1, JSON.stringify(out.results.map((r) => [r.verdict, r.spoken])));
+  assert.equal(out.summary.confirmado, 1);
+});
+
+test("y da igual el orden en que el lector las diga", async () => {
+  const html = '<button><svg viewBox="0 0 24 24"><path d="M3 6h18"/></svg></button><button>Enviar formulario</button>';
+  const out = await bridge(html, {
+    lector: "nvda",
+    capture: async () => [
+      { step: 0, spoken: "button, Enviar formulario" },
+      { step: 1, spoken: "button" }
+    ]
+  });
+  assert.equal(out.summary["barrera-confirmada"], 1, JSON.stringify(out.results.map((r) => [r.verdict, r.spoken])));
+  assert.equal(out.summary.confirmado, 1);
+});
+
+test("el recorrido completo del componente de prueba, con NVDA en inglés", async () => {
+  // Las frases son las que NVDA dijo de verdad en el runner, ya separadas por
+  // paso: es lo que debería salir al vaciar el registro antes del recorrido.
+  const html = [
+    '<button><svg viewBox="0 0 24 24"><path d="M3 6h18"/></svg></button>',
+    "<button>Enviar formulario</button>",
+    '<a href="#contenido">Saltar al contenido</a>',
+    '<main id="contenido"><h1>Verificación con lector real</h1><p>Fin del recorrido.</p></main>'
+  ].join("\n");
+  const out = await bridge(html, {
+    lector: "nvda",
+    capture: async () => [
+      { step: 0, spoken: "button" },
+      { step: 1, spoken: "button, Enviar formulario" },
+      { step: 2, spoken: "same page, link, Saltar al contenido" },
+      { step: 3, spoken: "main landmark, heading, level 1, Verificación con lector real" },
+      { step: 4, spoken: "Fin del recorrido." }
+    ]
+  });
+  const porLoc = {};
+  out.results.forEach((r) => { porLoc[r.locator] = r.verdict; });
+  assert.equal(out.summary["barrera-confirmada"], 1, "el botón de icono sin nombre: " + JSON.stringify(porLoc));
+  assert.equal(out.summary.confirmado, 3, "los otros tres: " + JSON.stringify(porLoc));
+  assert.equal(out.summary["no-encontrado"], 0);
+});

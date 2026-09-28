@@ -587,6 +587,8 @@ Ese JSON es el entregable. `node scripts/fixture-nvda.mjs verificacion-nvda.json
 
 **Mientras no haya transcripción real, esos tests se saltan solos** y dicen cómo producirla. No hay un fixture escrito a mano haciendo bulto: sería exactamente el supuesto que el fixture existe para desmentir.
 
+**Y un fichero por idioma, que no es un detalle.** El runner de GitHub es una máquina en inglés: su NVDA dice «button» y «heading, level 1». Esa transcripción vale para comprobar el mecanismo y las palabras inglesas del léxico, pero **no comprueba el español**, que es el que hace falta para auditar aquí. Guardarla como `nvda-es-real.json` sería el peor fixture posible: uno que parece probar el español y no lo prueba. Así que `scripts/fixture-nvda.mjs` detecta el idioma por las palabras de rol, escribe `nvda-en-real.json` o `nvda-es-real.json` según corresponda, y se niega a archivar una sesión cuyo idioma no reconoce. Las comprobaciones del recorte de estados —«casilla no marcada», «3 de 7»— solo corren con el fixture español.
+
 ### El cuaderno de juicio: los once que no se dictaminan
 
 Quedan **Once criterios de evaluación humana**, los que exigen que una persona mire y decida: subtítulos y audiodescripción (1.2.4, 1.2.5), secuencia significativa (1.3.2), características sensoriales (1.3.3), imágenes de texto (1.4.5), destellos (2.3.1), propósito de los enlaces en contexto (2.4.4), sugerencias ante errores y prevención de errores (3.3.3, 3.3.4), entrada redundante (3.3.7) y autenticación accesible (3.3.8).

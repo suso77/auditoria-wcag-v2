@@ -195,3 +195,30 @@ export function esRuidoDeEscritorio(spoken, lector) {
   }
   return false;
 }
+
+/**
+ * ¿En qué idioma está hablando el lector?
+ *
+ * Hace falta porque el runner de GitHub es una máquina en inglés y su NVDA
+ * anuncia «button», «link», «heading, level 1». Eso verifica el mecanismo y las
+ * palabras inglesas del léxico, pero NO el léxico español, que es el que hace
+ * falta para auditar aquí. Guardar esa transcripción como «NVDA en español»
+ * sería exactamente la clase de fixture que no prueba nada y lo parece.
+ *
+ * La detección es por palabras de rol inequívocas, no por el texto del
+ * contenido —que es español en las dos— y solo se pronuncia cuando hay
+ * diferencia clara. Ante la duda devuelve null, y quien llame decide.
+ *
+ * @param {Array<string>} frases
+ * @returns {"es"|"en"|null}
+ */
+const SOLO_INGLES = /\b(button|link|heading|graphic|checkbox|edit|landmark|list item|clickable|not checked|collapsed|visited|level \d)\b/gi;
+const SOLO_ESPANOL = /\b(bot[oó]n|enlace|v[ií]nculo|encabezado|gr[aá]fico|casilla|edici[oó]n|punto de referencia|elemento de lista|marcad[oa]|contra[ií]do|visitado|nivel \d)\b/gi;
+export function idiomaDelLector(frases) {
+  const texto = (frases || []).map(function (f) { return typeof f === "string" ? f : (f && f.spoken) || ""; }).join(" \n ");
+  if (!texto.trim()) return null;
+  const en = (texto.match(SOLO_INGLES) || []).length;
+  const es = (texto.match(SOLO_ESPANOL) || []).length;
+  if (en === es) return null;          // empate o nada reconocible: no se inventa
+  return en > es ? "en" : "es";
+}
