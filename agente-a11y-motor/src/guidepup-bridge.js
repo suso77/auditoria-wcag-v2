@@ -216,10 +216,35 @@ export async function captureWithNvda(html, opts) {
   // título y no se abre nada.
   const app = opts.browser || "chrome";
   const exe = /\.exe$/i.test(app) ? app : app + ".exe";
+
+  /* Qué ventanas hay abiertas y cómo se llaman.
+   *
+   * Es la pregunta que no supimos responder durante tres ejecuciones. NVDA
+   * contestaba «blank» —su forma de decir «documento vacío»— y desde el log no
+   * había manera de saber si el navegador se había quedado en una pestaña de
+   * bienvenida, si la página no había cargado, o si el foco estaba en otra
+   * ventana. El título de la ventana lo dice en una línea. */
+  const ventanas = async function (cuando) {
+    try {
+      const { stdout } = await execAsync(
+        'powershell -NoProfile -Command "Get-Process | Where-Object { $_.MainWindowTitle } | ForEach-Object { $_.ProcessName + \' :: \' + $_.MainWindowTitle }"',
+        { shell: "cmd.exe" });
+      const lineas = String(stdout || "").split(/\r?\n/).map(function (l) { return l.trim(); }).filter(Boolean);
+      console.error("  (ventanas " + cuando + ") " + (lineas.length ? lineas.join(" | ") : "ninguna con título"));
+    } catch (e) {
+      console.error("  (ventanas " + cuando + ") no se pudieron listar: " + ((e && e.message) || e));
+    }
+  };
+
   try {
     await nvda.start();
-    await execAsync('start "" ' + app + ' "file:///' + file.replace(/\\/g, "/") + '"', { shell: "cmd.exe" });
-    await esperar(opts.loadMs == null ? 8000 : opts.loadMs);
+    /* Las banderas no son opcionales en un perfil recién nacido: sin
+     * `--no-first-run` Chrome abre su pantalla de bienvenida, y la pestaña que
+     * queda delante no es la nuestra. */
+    await execAsync('start "" ' + app + ' --no-first-run --no-default-browser-check --start-maximized "file:///' +
+      file.replace(/\\/g, "/") + '"', { shell: "cmd.exe" });
+    await esperar(opts.loadMs == null ? 15000 : opts.loadMs);
+    await ventanas("tras abrir el navegador");
 
     /* Traer el navegador al PRIMER PLANO, y no darlo por hecho.
      *
@@ -242,6 +267,8 @@ export async function captureWithNvda(html, opts) {
     } catch (e) {
       console.error("  (aviso) no se pudo activar la ventana de " + exe + ": " + ((e && e.message) || e));
     }
+
+    await ventanas("tras activarla");
 
     // Y colocar el cursor de NVDA al principio del documento. Sin esto, el
     // recorrido empieza donde estuviera, que en una ventana recién abierta
