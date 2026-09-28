@@ -312,7 +312,27 @@ export async function captureWithNvda(html, opts) {
     // suele ser la barra de direcciones y no el contenido.
     try { await nvda.press("Control+Home"); await esperar(500); } catch (e) { /* noop */ }
 
-    const phrases = await verifyWithScreenReader({ voiceOver: nvda, steps: opts.steps == null ? 15 : opts.steps });
+    /* Vaciar el registro ANTES de empezar a recorrer.
+     *
+     * Al cargar la página, NVDA la lee entera de un tirón, y esa lectura entra
+     * en el registro como UNA sola entrada con todo dentro: «button, , button,
+     * Enviar formulario, same page, link, Saltar al contenido». Un bloque así no
+     * se puede emparejar con nada: contiene tres controles, y asignárselo a uno
+     * sería mentir sobre los otros dos — al botón sin nombre le pondría de
+     * nombre «Enviar formulario» y absolvería un 4.1.2 real.
+     *
+     * Vaciándolo aquí, lo que queda es una entrada por paso del recorrido, que
+     * es lo que sí se puede comparar. No se pierde nada: el recorrido pasa por
+     * todo igualmente. */
+    try { await nvda.clearSpokenPhraseLog(); } catch (e) { /* si no se puede, seguimos */ }
+
+    // Y un respiro algo mayor entre pasos, por la misma razón: si dos anuncios
+    // se pisan, NVDA los junta en una sola entrada.
+    const phrases = await verifyWithScreenReader({
+      voiceOver: nvda,
+      steps: opts.steps == null ? 15 : opts.steps,
+      sleepMs: opts.sleepMs == null ? 500 : opts.sleepMs
+    });
 
     /* Si no se capturó nada, volcar lo que NVDA tenga en su registro.
      *
