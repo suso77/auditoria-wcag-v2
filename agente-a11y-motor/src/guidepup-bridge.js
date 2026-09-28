@@ -294,7 +294,11 @@ export async function bridge(html, opts) {
 
   const results = aligned.map(function (a) {
     if (a.spoken == null) {
-      return { predicted: a.predicted, spoken: null, verdict: "no-encontrado", note: "El lector no visitó un elemento que casara con este nodo." };
+      // El `locator` va también aquí: sin él, el informe dice «no-encontrado»
+      // sobre un elemento sin nombre, y no hay forma de saber cuál de los nodos
+      // previstos se quedó sin verificar.
+      return { locator: a.predicted.locator, predicted: a.predicted, spoken: null, verdict: "no-encontrado",
+        note: "El lector no visitó un elemento que casara con este nodo." };
     }
     return Object.assign({ locator: a.predicted.locator }, compareAnnouncement(a.predicted, a.spoken, lector));
   });

@@ -109,6 +109,23 @@ const informe = {
 
 await writeFile(salida, JSON.stringify(informe, null, 2) + "\n", "utf8");
 
+/* La transcripción, SIEMPRE y en el log.
+ *
+ * Queda en el JSON, sí, pero el JSON es un artefacto que hay que bajar y
+ * descomprimir. Cuando esto corre en CI, lo único que se lee de verdad es el
+ * log, y sin las frases delante un recorrido que no casa con nada no se puede
+ * diagnosticar: no se distingue «el lector no dijo nada» de «dijo otra cosa».
+ */
+console.log("\n── Lo que dijo NVDA (" + out.spokenPhrases.length + " frase/s) ─────────────────");
+if (!out.spokenPhrases.length) {
+  console.log("  (ninguna)");
+} else {
+  out.spokenPhrases.forEach((p, i) => console.log("  " + (i + 1) + ". «" + String(p.spoken || "").replace(/\s+/g, " ").slice(0, 160) + "»"));
+}
+
+console.log("\n── Lo que el motor esperaba ───────────────────────────────");
+out.predicted.forEach((p) => console.log("  " + p.locator + "  nombre=«" + (p.name || "(sin nombre)") + "»  rol=" + p.role));
+
 console.log("\n── Resultado ──────────────────────────────────────────────");
 for (const r of informe.resultados) {
   console.log("  " + r.veredicto.padEnd(20) + r.locator + "  ← «" + (r.fraseLimpia || "").slice(0, 70) + "»");

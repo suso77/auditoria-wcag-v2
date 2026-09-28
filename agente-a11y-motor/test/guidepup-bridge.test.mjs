@@ -96,3 +96,15 @@ test("bridge: un icono sin nombre que el lector solo lee como «botón» → bar
 test("bridge: exige un capture", async () => {
   await assert.rejects(() => bridge("<button>x</button>", {}), /capture/);
 });
+
+test("un nodo que el lector no visitó dice CUÁL es", async () => {
+  // El veredicto `no-encontrado` salía sin `locator`, y en el informe aparecía
+  // como «no-encontrado undefined»: sabías que algo no se verificó, pero no
+  // qué. Visto en una ejecución real de NVDA en CI, con los cuatro nodos así.
+  const html = '<button aria-label="Cerrar"></button><a href="/x">Inicio</a>';
+  const out = await bridge(html, { capture: async () => [] });
+  assert.equal(out.results.length, 2);
+  assert.ok(out.results.every((r) => r.verdict === "no-encontrado"));
+  assert.deepEqual(out.results.map((r) => r.locator).filter(Boolean).length, 2,
+    "los dos tienen que llevar su locator: " + JSON.stringify(out.results.map((r) => r.locator)));
+});
