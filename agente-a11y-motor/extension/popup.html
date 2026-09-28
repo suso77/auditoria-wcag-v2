@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Agente de Accesibilidad</title>
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<header class="cab">
+  <h1>Agente de Accesibilidad</h1>
+  <p class="sub">WCAG 2.2 · A + AA · EN 301 549</p>
+</header>
+
+<div class="acciones">
+  <button id="analizar" type="button" class="btn primario">Analizar esta página</button>
+  <button id="muestra" type="button" class="btn">Añadir a la muestra</button>
+</div>
+
+<p id="estado" class="estado" role="status" aria-live="polite"></p>
+
+<section id="resumen" class="resumen" hidden aria-labelledby="h-res">
+  <h2 id="h-res" class="sr-only">Resumen</h2>
+  <div class="cifras" id="cifras"></div>
+</section>
+
+<section id="barreras" class="bloque" hidden aria-labelledby="h-bar">
+  <h2 id="h-bar">Barreras</h2>
+  <ul id="lista-barreras" class="lista"></ul>
+</section>
+
+<section id="pendientes" class="bloque" hidden aria-labelledby="h-pen">
+  <h2 id="h-pen">Requieren comprobación</h2>
+  <ul id="lista-pendientes" class="lista"></ul>
+</section>
+
+<section id="sitio" class="bloque" hidden aria-labelledby="h-sitio">
+  <h2 id="h-sitio">Coherencia entre páginas</h2>
+  <p class="nota" id="nota-sitio"></p>
+  <ul id="lista-sitio" class="lista"></ul>
+</section>
+
+<section id="avisos" class="bloque" hidden aria-labelledby="h-avisos">
+  <h2 id="h-avisos">Alcance de esta comprobación</h2>
+  <ul id="lista-avisos" class="lista sencilla"></ul>
+</section>
+
+<div class="acciones pie">
+  <button id="csv" type="button" class="btn" disabled>Exportar barreras (CSV)</button>
+  <button id="limpiar" type="button" class="btn sutil">Vaciar muestra</button>
+</div>
+
+<script src="motor.js"></script>
+<script src="popup.js"></script>
+</body>
+</html>

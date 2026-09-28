@@ -1,0 +1,72 @@
+{
+  "name": "agente-a11y-motor",
+  "version": "0.19.0",
+  "description": "Motor determinista de accesibilidad (WCAG 2.2 A+AA / EN 301 549): modela el árbol de accesibilidad, mide sobre render real, prueba la adaptación del contenido y exporta a los entregables OAW/IRA. Núcleo compartido por el Agente de Accesibilidad web, el CLI y la extensión.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./browser": "./src/browser.js",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "a11y-motor": "bin/a11y-motor.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:integracion": "node --test test/integration/*.test.mjs",
+    "test:watch": "node --test --watch",
+    "build:artifact": "node scripts/build-artifact.mjs",
+    "bench": "node bench/run.mjs",
+    "smoke": "node scripts/smoke-artifact.mjs",
+    "build:extension": "node scripts/build-extension.mjs",
+    "verificar:voiceover": "node examples/verificar-voiceover.mjs",
+    "verificar:nvda": "node examples/verificar-nvda.mjs",
+    "fixture:nvda": "node scripts/fixture-nvda.mjs"
+  },
+  "keywords": [
+    "accesibilidad",
+    "wcag",
+    "wcag-em",
+    "en-301-549",
+    "a11y",
+    "accname",
+    "aria",
+    "axe-core",
+    "auditoria"
+  ],
+  "author": "Jesús Fernández Abeledo (Suso) · jesusaccesible.com",
+  "license": "MIT",
+  "devDependencies": {
+    "axe-core": "^4.10.0",
+    "playwright": "^1.48.0"
+  },
+  "optionalDependencies": {
+    "@guidepup/guidepup": "^0.22.0"
+  },
+  "browser": "./src/browser.js",
+  "files": [
+    "src/",
+    "bin/",
+    "extension/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "linkedom": "^0.18.0"
+  },
+  "peerDependenciesMeta": {
+    "playwright": {
+      "optional": true
+    },
+    "axe-core": {
+      "optional": true
+    }
+  },
+  "peerDependencies": {
+    "axe-core": "^4.10.0",
+    "playwright": "^1.48.0"
+  }
+}

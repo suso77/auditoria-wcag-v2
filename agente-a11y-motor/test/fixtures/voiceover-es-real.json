@@ -1,0 +1,13 @@
+{
+  "origen": "voiceover-verificacion-real/transcripts/latest.json (captura real de Suso, VoiceOver en español, WebKit, 2026-04-02)",
+  "nota": "Frases TAL CUAL las devolvió VoiceOver. No se editan: el valor del fixture es que no son inventadas.",
+  "navegador": "webkit",
+  "spokenPhraseLog": [
+    "link Saltar al contenido. Estás en un elemento de tipo link, dentro del contenido web. Para hacer clic en este enlace, pulsa Control-Opción-Espacio. Para salir de esta área web, pulsa Control-Opción-Mayúsculas-Flecha Arriba.",
+    "link Saltar al contenido",
+    "Playwright no tiene ventanas. VoiceOver desactivado. Bienvenido a macOS. VoiceOver está activado.. Chrome Prompts Auditoría Automatizada - Documentos de Google - Google Chrome - Jesús ventana Contenido del documento área de entrada de texto Genera un título específico basado en la barrera real observada en la página. Inserción al final de la palabra: -- tiene el foco del teclado. Terminal suso — -zsh — 80×24 ventana shell texto Last login: Thu Apr 2 16:22:31 on ttys008 tiene el foco del teclado. Copiar. Estás en un elemento de tipo área de texto, dentro de un elemento de tipo área de desplazamiento. Para dejar de interactuar con esta área de desplazamiento, pulsa Control-Opción-Mayúsculas-Flecha Arriba.. Bienvenido a macOS. VoiceOver está activado.. Chrome Prompts Auditoría Automatizada - Documentos de Google - Google Chrome - Jesús ventana Contenido del documento área de entrada de texto Actúa como un Clasificador Experto en Accesibilidad WCAG. Analiza la barrera detectada automáticamente por axe DevTools y las capturas adjuntas. Inserción al principio de la palabra: mayor tiene el foco del teclado. VoiceOver desactivado. Finder suso ventana visualización como lista tabla Sin selección.. voiceover-verificacion-real Carpeta hoy, 17:45 -- Carpeta. Fallos _ Criterios de Accesibilidad Carpeta. VoiceOver desactivado. Bienvenido a macOS. VoiceOver está activado.. Codex Codex ventana imagen botón, grupo tiene el foco del teclado. Archivar hilo Pin thread 6 h botón, grupo lista Automatizaciones en New project 11 ítems. área de entrada de texto Solicitar cambios de seguimiento Inserción al principio del texto.. VoiceOver desactivado. Bienvenido a macOS. VoiceOver está activado.. Ajustes del Sistema Accesibilidad ventana Barra lateral tabla Fila 11 de 38 Accesibilidad seleccionado tiene el foco del teclado"
+  ],
+  "itemTextLog": [
+    "Saltar al contenido link"
+  ]
+}

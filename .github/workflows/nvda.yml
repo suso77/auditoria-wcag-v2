@@ -1,0 +1,84 @@
+# Verificación con NVDA real, sobre Windows.
+#
+# Por qué existe: el puente de lector del motor se verificaba solo con
+# VoiceOver, porque el equipo trabaja en macOS. Pero en España el lector
+# dominante es NVDA, y NVDA es Windows. Un runner `windows-latest` es la forma
+# realista de ejecutarlo sin tener una máquina Windows delante.
+#
+# Por qué vive AQUÍ y no en agente-a11y-motor/.github/: GitHub Actions solo lee
+# los workflows de la raíz del repositorio. Un .github anidado en una subcarpeta
+# no se ejecuta nunca — el fichero parece estar y no corre. Por eso los pasos
+# trabajan dentro de `agente-a11y-motor`.
+#
+# Qué hace: instala NVDA con `@guidepup/setup`, recorre un componente de prueba
+# con el lector de verdad, y guarda el JSON con la transcripción literal. Ese
+# JSON es el entregable: se baja como artefacto y se guarda en
+# `agente-a11y-motor/test/fixtures/nvda-es-real.json` con
+# `node scripts/fixture-nvda.mjs`, y a partir de ahí la comparación se puede
+# probar en cualquier máquina, sin Windows y sin lector.
+#
+# La ejecución NO se lanza sola en cada push: arrancar un lector de pantalla es
+# lento y frágil, y un fallo suyo no debería teñir de rojo un cambio de CSV. Se
+# lanza a mano (`workflow_dispatch`) y una vez por semana.
+name: NVDA (Windows)
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Lunes a las 06:00 UTC. Semanal: el objetivo es detectar que una versión
+    # nueva de NVDA cambia lo que anuncia, y eso no pasa todos los días.
+    - cron: "0 6 * * 1"
+
+defaults:
+  run:
+    working-directory: agente-a11y-motor
+
+jobs:
+  nvda:
+    runs-on: windows-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Las pruebas puras primero
+        # Si el motor está roto, no tiene sentido arrancar un lector: el fallo
+        # se vería como «NVDA no confirma» cuando el problema es otro.
+        run: npm test
+
+      - name: Preparar NVDA y los permisos
+        run: npx --yes @guidepup/setup
+
+      - name: Verificar con NVDA
+        shell: pwsh
+        env:
+          NVDA_NAVEGADOR: chrome
+          NVDA_PASOS: "16"
+        run: node examples/verificar-nvda.mjs verificacion-nvda.json
+
+      - name: Resumen en el log
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path verificacion-nvda.json) {
+            $j = Get-Content verificacion-nvda.json -Raw | ConvertFrom-Json
+            Write-Host "Resumen: $($j.resumen | ConvertTo-Json -Compress)"
+            foreach ($r in $j.resultados) { Write-Host "  $($r.veredicto)  $($r.locator)  <- $($r.fraseLimpia)" }
+          } else {
+            Write-Host "No se generó el informe: la captura no llegó a terminar."
+          }
+
+      - name: Guardar la transcripción
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verificacion-nvda
+          path: agente-a11y-motor/verificacion-nvda.json
+          if-no-files-found: warn
