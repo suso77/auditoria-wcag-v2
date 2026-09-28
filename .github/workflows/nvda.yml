@@ -59,7 +59,10 @@ jobs:
         run: npm test
 
       - name: Preparar NVDA y los permisos
-        run: npx --yes @guidepup/setup
+        # El subcomando `setup` NO es opcional: `npx @guidepup/setup` a secas
+        # imprime la ayuda del CLI y sale con código 1. Es el mismo tropiezo que
+        # ya nos pasó montándolo en el Mac, y aquí lo repetí.
+        run: npx --yes @guidepup/setup setup
 
       - name: Verificar con NVDA
         shell: pwsh
