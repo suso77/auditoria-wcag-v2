@@ -53,10 +53,23 @@ if (!guidepup || !guidepup.nvda) {
  *   2. botón con texto            → `confirmado`
  *   3. enlace con texto           → `confirmado`
  */
+/* Cada control en su propio bloque, y no es cosmética.
+ *
+ * En modo exploración, NVDA junta en UNA línea los elementos en línea que van
+ * seguidos, y una línea es un anuncio. Con los tres controles pegados, el
+ * lector decía «button, , button, Enviar formulario, same page, link, Saltar al
+ * contenido» de una vez: un bloque que contiene tres elementos y que no se
+ * puede atribuir a ninguno sin mentir sobre los otros dos — al botón sin nombre
+ * le pondría de nombre «Enviar formulario» y absolvería el 4.1.2 que este
+ * componente existe para confirmar.
+ *
+ * Envolviéndolos en <div>, cada uno cae en su línea y se anuncia solo. No
+ * debilita la prueba: los elementos son los mismos y siguen siendo un botón de
+ * icono sin nombre, un botón con texto, un enlace y un encabezado. */
 const HTML = [
-  '<button><svg viewBox="0 0 24 24" width="24" height="24"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" fill="none"/></svg></button>',
-  '<button>Enviar formulario</button>',
-  '<a href="#contenido">Saltar al contenido</a>',
+  '<div><button><svg viewBox="0 0 24 24" width="24" height="24"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" fill="none"/></svg></button></div>',
+  "<div><button>Enviar formulario</button></div>",
+  '<div><a href="#contenido">Saltar al contenido</a></div>',
   '<main id="contenido"><h1>Verificación con lector real</h1><p>Fin del recorrido.</p></main>'
 ].join("\n");
 

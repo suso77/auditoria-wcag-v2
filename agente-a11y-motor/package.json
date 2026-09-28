@@ -1,6 +1,6 @@
 {
   "name": "agente-a11y-motor",
-  "version": "0.20.0",
+  "version": "0.20.1",
   "description": "Motor determinista de accesibilidad (WCAG 2.2 A+AA / EN 301 549): modela el árbol de accesibilidad, mide sobre render real, prueba la adaptación del contenido y exporta a los entregables OAW/IRA. Núcleo compartido por el Agente de Accesibilidad web, el CLI y la extensión.",
   "type": "module",
   "main": "src/index.js",

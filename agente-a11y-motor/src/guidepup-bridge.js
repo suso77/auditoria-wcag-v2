@@ -349,6 +349,19 @@ export async function captureWithNvda(html, opts) {
      * todo igualmente. */
     try { await nvda.clearSpokenPhraseLog(); } catch (e) { /* si no se puede, seguimos */ }
 
+    /* Y que lea la línea en la que está ANTES del primer paso.
+     *
+     * `Control+Home` coloca el cursor en la primera línea y la anuncia, pero ese
+     * anuncio se acaba de tirar al vaciar el registro. Luego la primera flecha
+     * abajo salta YA a la segunda línea, así que la primera no la recoge nadie:
+     * en el componente de prueba eso era perder los dos botones y el enlace, que
+     * es justo lo que hay que verificar. `readLine` vuelve a decir la línea
+     * actual, y como el registro ya está limpio, entra como una entrada más. */
+    try {
+      await nvda.perform(nvda.keyboardCommands.readLine);
+      await esperar(600);
+    } catch (e) { /* noop */ }
+
     // Y un respiro algo mayor entre pasos, por la misma razón: si dos anuncios
     // se pisan, NVDA los junta en una sola entrada.
     const phrases = await verifyWithScreenReader({
