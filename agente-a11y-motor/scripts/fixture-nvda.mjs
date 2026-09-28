@@ -16,6 +16,7 @@
  * escribirlo.
  */
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { idiomaDelLector } from "../src/reader-lexicon.js";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -25,7 +26,7 @@ const FIXTURES = join(aqui, "..", "test", "fixtures");
 
 const entrada = process.argv[2];
 if (!entrada) {
-  console.error("Uso: node scripts/fixture-nvda.mjs <verificacion-nvda.json>");
+  console.error("Uso: node scripts/fixture-nvda.mjs <verificacion-nvda.json | verificacion-nvda.zip>");
   process.exit(2);
 }
 if (!existsSync(entrada)) {
@@ -33,7 +34,25 @@ if (!existsSync(entrada)) {
   process.exit(2);
 }
 
-const inf = JSON.parse(readFileSync(entrada, "utf8"));
+/* Acepta también el .zip tal cual lo baja GitHub.
+ *
+ * El artefacto de Actions se descarga comprimido, y descomprimirlo a mano antes
+ * de cada archivado es un paso que se olvida —se olvidó la primera vez— y que
+ * solo produce un «no existe» desconcertante. Si el fichero es un zip, se saca
+ * el JSON de dentro y listo. */
+function leer(ruta) {
+  if (!/\.zip$/i.test(ruta)) return readFileSync(ruta, "utf8");
+  try {
+    // `unzip -p` escribe a la salida estándar sin dejar nada en el disco.
+    return execFileSync("unzip", ["-p", ruta, "*.json"], { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
+  } catch (e) {
+    console.error("✗ No se pudo abrir el zip: " + ((e && e.message) || e));
+    console.error("  Descomprímelo a mano y pásame el .json de dentro.");
+    process.exit(2);
+  }
+}
+
+const inf = JSON.parse(leer(entrada));
 
 /* El nombre del fichero lo decide el IDIOMA en que habló el lector.
  *
