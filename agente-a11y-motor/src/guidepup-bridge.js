@@ -102,13 +102,38 @@ export async function verifyWithScreenReader(opts) {
 
   const phrases = [];
   const seen = new Set();
+  const anotar = function (spoken, step) {
+    const key = normalize(stripReaderNoise(spoken));
+    if (!spoken || !key || seen.has(key)) return false;
+    seen.add(key);
+    phrases.push({ step: step, spoken: spoken });
+    return true;
+  };
+
   for (let i = 0; i < steps; i++) {
     await vo.next();
     if (sleepMs) await sleep(sleepMs);
-    const spoken = await vo.lastSpokenPhrase();
-    const key = normalize(stripReaderNoise(spoken));
-    if (spoken && !seen.has(key)) { seen.add(key); phrases.push({ step: i, spoken: spoken }); }
-    if (opts.stopWhenRepeated && phrases.length && key && seen.size <= i) break;
+    anotar(await vo.lastSpokenPhrase(), i);
+    if (opts.stopWhenRepeated && phrases.length && seen.size <= i) break;
+  }
+
+  /* Y al final, el REGISTRO COMPLETO del lector.
+   *
+   * Preguntar «¿qué acabas de decir?» después de cada paso se pierde frases: el
+   * lector va por su cuenta, y si dice dos cosas seguidas entre dos preguntas,
+   * la primera no la ve nadie. Se vio en la primera sesión de NVDA que llegó a
+   * leer la página: dieciséis pasos, y solo dos frases recogidas —las dos
+   * últimas—, con los botones y el enlace del principio perdidos por el camino.
+   *
+   * `spokenPhraseLog()` devuelve todo lo que ha dicho, en orden. El bucle de
+   * arriba se queda porque marca el ritmo del recorrido; esto rescata lo que se
+   * escapó entre paso y paso. La deduplicación es la misma, así que no aparece
+   * nada dos veces, y un lector simulado que no tenga registro sigue valiendo. */
+  if (typeof vo.spokenPhraseLog === "function") {
+    try {
+      const registro = await vo.spokenPhraseLog();
+      (registro || []).forEach(function (spoken, i) { anotar(spoken, steps + i); });
+    } catch (e) { /* sin registro, nos quedamos con lo del bucle */ }
   }
   return phrases;
 }
@@ -124,8 +149,20 @@ function alignPredictedToSpoken(predicted, phrases, lector) {
       // hiciera, le pondría a un control el nombre de una ventana del Finder.
       if (esRuidoDeEscritorio(ph.spoken, lector)) return;
       const clean = normalize(stripReaderNoise(ph.spoken, lector));
+      /* Por PALABRA COMPLETA, no por subcadena.
+       *
+       * Buscando con `indexOf`, el nombre «Saltar al contenido» puntuaba contra
+       * «…Verificación con lector real» porque «al» está dentro de «real», y el
+       * enlace acababa emparejado con el encabezado. Las palabras de dos letras
+       * —al, de, la, el, en— aparecen dentro de casi cualquier cosa, así que
+       * además de comparar por palabra entera se descartan: no distinguen. */
+      const tokens = new Set(clean.split(/[^a-z0-9ñ]+/).filter(Boolean));
       let score = 0;
-      if (p.name) { normalize(p.name).split(" ").forEach(function (tok) { if (tok && clean.indexOf(tok) !== -1) score += 2; }); }
+      if (p.name) {
+        normalize(p.name).split(/[^a-z0-9ñ]+/).forEach(function (tok) {
+          if (tok && tok.length > 2 && tokens.has(tok)) score += 2;
+        });
+      }
       if (spokenHasRole(ph.spoken, p.role)) score += 1;
       if (score > bestScore) { bestScore = score; best = idx; }
     });

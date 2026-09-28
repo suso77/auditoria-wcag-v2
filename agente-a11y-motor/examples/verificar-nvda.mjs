@@ -133,10 +133,21 @@ for (const r of informe.resultados) {
 console.log("\n  " + JSON.stringify(out.summary));
 console.log("  Informe: " + salida + "  (" + Math.round(ms / 1000) + " s)");
 
-// Igual que con VoiceOver: mejor un fallo visible que un informe vacío que
-// parezca bueno. Si ninguna captura sirvió, la ejecución no verificó nada.
-const utiles = out.results.filter((r) => r.verdict !== "sin-captura" && r.verdict !== "no-encontrado").length;
-if (!utiles) {
-  console.error("\n✗ Ninguna captura sirvió. Casi siempre es que el navegador perdió el primer plano.");
+/* El listón: al menos UN nodo casado con lo que dijo el lector.
+ *
+ * «Que no haya reventado» no es lo mismo que «ha verificado algo». Una sesión
+ * en la que el lector recorrió otra cosa deja todos los nodos en
+ * `no-encontrado` y termina sin error; una en la que todo sale `divergente` es
+ * el léxico o el motor equivocándose en bloque. Las dos tienen que salir en
+ * rojo, porque las dos significan que nadie ha comprobado nada.
+ */
+const casados = out.results.filter((r) => r.verdict === "confirmado" || r.verdict === "barrera-confirmada").length;
+const perdidos = out.results.filter((r) => r.verdict === "no-encontrado" || r.verdict === "sin-captura").length;
+if (perdidos) {
+  console.error("\n  Aviso: " + perdidos + " de " + out.results.length + " nodo(s) no se emparejaron con ninguna frase del lector.");
+}
+if (!casados) {
+  console.error("\n✗ Ningún nodo quedó verificado contra el lector: la sesión no comprueba nada.");
+  console.error("  Si el recorrido no llegó al componente, mira arriba los títulos de ventana y la transcripción.");
   process.exit(1);
 }

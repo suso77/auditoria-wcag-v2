@@ -108,3 +108,33 @@ test("un nodo que el lector no visitó dice CUÁL es", async () => {
   assert.deepEqual(out.results.map((r) => r.locator).filter(Boolean).length, 2,
     "los dos tienen que llevar su locator: " + JSON.stringify(out.results.map((r) => r.locator)));
 });
+
+test("el emparejamiento no casa «al» con «real»: palabra entera, no subcadena", async () => {
+  // Visto en la primera sesión real de NVDA que leyó la página: el enlace
+  // «Saltar al contenido» salió emparejado con «main landmark, heading, level
+  // 1, Verificación con lector real», porque «al» está dentro de «real».
+  const html = '<a href="#c">Saltar al contenido</a><h1>Verificación con lector real</h1>';
+  const out = await bridge(html, {
+    capture: async () => [{ step: 0, spoken: "main landmark, heading, level 1, Verificación con lector real" }]
+  });
+  const enlace = out.results.find((r) => r.locator === "a");
+  assert.equal(enlace.verdict, "no-encontrado",
+    "el enlace no debería casar con el encabezado: " + JSON.stringify(enlace.spoken));
+  const h = out.results.find((r) => r.locator === "h1");
+  assert.equal(h.verdict, "confirmado", "y el encabezado sí, que es de quien es la frase");
+});
+
+test("rescata del registro del lector lo que el bucle se dejó", async () => {
+  // Preguntar «¿qué acabas de decir?» tras cada paso pierde frases cuando el
+  // lector dice dos cosas seguidas. El registro completo las trae todas.
+  const dicho = ["Enviar formulario button", "Saltar al contenido link"];
+  const vo = {
+    next: async () => {},
+    lastSpokenPhrase: async () => "Saltar al contenido link",  // el bucle solo ve la última
+    spokenPhraseLog: async () => dicho
+  };
+  const out = await verifyWithScreenReader({ voiceOver: vo, steps: 2, sleepMs: 0 });
+  const frases = out.map((p) => p.spoken);
+  assert.ok(frases.some((f) => /Enviar formulario/.test(f)), "falta la que se perdió: " + JSON.stringify(frases));
+  assert.equal(frases.filter((f) => /Saltar al contenido/.test(f)).length, 1, "y sin duplicar la que sí vio");
+});
