@@ -149,7 +149,7 @@ console.log(out.summary); // { confirmado, parcial, divergente, "barrera-confirm
 Demo (solo macOS; VoiceOver toma el control unos segundos):
 
 ```bash
-npx @guidepup/setup                    # una vez: permisos de accesibilidad
+npx @guidepup/setup setup              # una vez: permisos de accesibilidad (macOS)
 node examples/reader-bridge.mjs
 # o la prueba de integración, con opt-in explícito:
 A11Y_REAL_VO=1 npm run test:integracion
@@ -579,7 +579,7 @@ El puente de lector se verificaba solo con VoiceOver, porque el equipo trabaja e
 
 **Lo que sí era peligroso es el estado.** NVDA acompaña cada elemento de su estado y su posición: «casilla no marcada», «contraído», «visitado», «1 de 7», «nivel 2», «fila 3 columna 1», «clicable». Nada de eso es el nombre del control. Si no se recorta, un botón de icono **sin** nombre accesible —un 4.1.2 real— se queda con «no marcada» de residuo y el puente concluye que «el lector sí pronuncia un nombre»: una barrera de verdad absuelta por una palabra de estado. Es el mismo fallo que ya se arregló con el ruido del escritorio en macOS, con otro disfraz. Hay tests para los dos casos.
 
-**Y se ejecuta en CI, porque no hay otra forma.** El workflow `NVDA (Windows)` levanta un runner `windows-latest`, instala NVDA con `@guidepup/setup`, recorre el mismo componente de prueba que la verificación de VoiceOver y guarda la **transcripción literal** como artefacto. No corre en cada push —arrancar un lector es lento y frágil, y su fallo no debería teñir de rojo un cambio de CSV—: se lanza a mano y una vez por semana.
+**Y se ejecuta en CI, porque no hay otra forma.** El workflow `NVDA (Windows)` levanta un runner `windows-latest`, instala NVDA con `npx @guidepup/setup install`, recorre el mismo componente de prueba que la verificación de VoiceOver y guarda la **transcripción literal** como artefacto. No corre en cada push —arrancar un lector es lento y frágil, y su fallo no debería teñir de rojo un cambio de CSV—: se lanza a mano y una vez por semana.
 
 El fichero vive en el `.github/workflows/` de la **raíz del repositorio**, no dentro de esta carpeta, y sus pasos trabajan con `working-directory: agente-a11y-motor`. No es capricho: GitHub Actions solo lee los workflows de la raíz, y un `.github` anidado en una subcarpeta no se ejecuta nunca — el fichero parece estar y no corre.
 

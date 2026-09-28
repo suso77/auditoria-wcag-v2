@@ -12,7 +12,9 @@
  * probar sin Windows y sin lector.
  *
  * ── Antes de ejecutarlo ────────────────────────────────────────────────────
- *  - Windows con NVDA instalado y `npx @guidepup/setup` ejecutado.
+ *  - Windows con NVDA instalado por `npx @guidepup/setup install`. Ojo al
+ *    subcomando: `setup` en Windows no hace NADA —está vacío en el propio
+ *    CLI— y quien descarga y registra el lector es `install`.
  *  - NVDA ARRANCA y habla durante la prueba. No es para dejarlo de fondo.
  *  - El navegador tiene que quedarse en primer plano: `lastSpokenPhrase()` habla
  *    de todo el sistema, y si el foco se va, lo que se captura es la barra de
@@ -74,7 +76,8 @@ try {
   });
 } catch (e) {
   console.error("✗ La captura falló: " + (e && e.message ? e.message : e));
-  console.error("  Lo más habitual: NVDA no está instalado o falta `npx @guidepup/setup`.");
+  console.error("  Lo más habitual: NVDA no está instalado. Instálalo con `npx @guidepup/setup install`");
+  console.error("  desde esta carpeta (busca `@guidepup/guidepup` a partir del directorio actual).");
   process.exit(1);
 }
 const ms = Date.now() - t0;

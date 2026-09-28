@@ -58,11 +58,17 @@ jobs:
         # se vería como «NVDA no confirma» cuando el problema es otro.
         run: npm test
 
-      - name: Preparar NVDA y los permisos
-        # El subcomando `setup` NO es opcional: `npx @guidepup/setup` a secas
-        # imprime la ayuda del CLI y sale con código 1. Es el mismo tropiezo que
-        # ya nos pasó montándolo en el Mac, y aquí lo repetí.
-        run: npx --yes @guidepup/setup setup
+      - name: Instalar NVDA
+        # `setup` NO instala nada en Windows: en el código del propio CLI, el
+        # caso `win32` está vacío y sale diciendo «Environment setup complete».
+        # Quien descarga NVDA y lo registra para Guidepup es `install`, y por eso
+        # el run anterior murió con «NVDA not supported» después de un `setup`
+        # que había terminado en verde.
+        #
+        # Se ejecuta desde `agente-a11y-motor` porque el CLI busca
+        # `@guidepup/guidepup` a partir del directorio actual: de ahí saca el
+        # manifiesto con los lectores disponibles.
+        run: npx --yes @guidepup/setup install
 
       - name: Verificar con NVDA
         shell: pwsh

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Agente de Accesibilidad",
-  "version": "0.19.1",
+  "version": "0.19.2",
   "description": "Audita la pestaña activa contra WCAG 2.2 A+AA con el mismo motor determinista del Agente de Accesibilidad: sobre la página real, con tu sesión iniciada.",
   "permissions": [
     "activeTab",

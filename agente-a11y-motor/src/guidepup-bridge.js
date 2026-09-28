@@ -137,7 +137,7 @@ function alignPredictedToSpoken(predicted, phrases, lector) {
 /**
  * Adaptador REAL: captura los anuncios de VoiceOver sobre el componente con
  * Guidepup. Import perezoso; solo funciona en macOS con VoiceOver y permisos
- * concedidos (`npx @guidepup/setup`). Sirve el HTML en un archivo temporal y lo
+ * concedidos (`npx @guidepup/setup setup`). Sirve el HTML en un archivo temporal y lo
  * abre en el navegador; luego recorre con el lector.
  *
  * @param {string} html
@@ -183,7 +183,7 @@ export async function captureWithGuidepup(html, opts) {
  * —si se empieza a tabular antes, las primeras frases son del navegador y no de
  * la página, y el puente las descarta con razón, pero se pierden pasos.
  *
- * Pensado para correr en CI (`windows-latest` con `npx @guidepup/setup`), que es
+ * Pensado para correr en CI (`windows-latest` con `npx @guidepup/setup install`), que es
  * la única forma realista de verificar con NVDA desde un Mac.
  *
  * @param {string} html

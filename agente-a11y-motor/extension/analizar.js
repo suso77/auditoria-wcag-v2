@@ -324,7 +324,7 @@
   }
 
   window.__a11yAgente = {
-    version: "0.19.1",
+    version: "0.19.2",
     analizar: analizar,
     prepararPixeles: prepararPixeles,
     pintarSondas: pintarSondas,
