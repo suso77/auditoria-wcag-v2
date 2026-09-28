@@ -1,0 +1,78 @@
+{
+  "origen": "GitHub Actions · workflow «NVDA (Windows)» sobre windows-latest · 2026-09-28 · navegador chrome",
+  "nota": "Frases TAL CUAL las devolvió NVDA. No se editan: el valor del fixture es que no son inventadas.",
+  "lector": "nvda",
+  "idioma": "en",
+  "plataforma": "win32",
+  "navegador": "chrome",
+  "html": "<div><button><svg viewBox=\"0 0 24 24\" width=\"24\" height=\"24\"><path d=\"M3 6h18M3 12h18M3 18h18\" stroke=\"currentColor\" stroke-width=\"2\" fill=\"none\"/></svg></button></div>\n<div><button>Enviar formulario</button></div>\n<div><a href=\"#contenido\">Saltar al contenido</a></div>\n<main id=\"contenido\"><h1>Verificación con lector real</h1><p>Fin del recorrido.</p></main>",
+  "resumen": {
+    "confirmado": 3,
+    "parcial": 0,
+    "divergente": 0,
+    "barrera-confirmada": 1,
+    "no-encontrado": 0,
+    "sin-captura": 0
+  },
+  "resultados": [
+    {
+      "locator": "button",
+      "previsto": {
+        "name": "",
+        "role": "button",
+        "say": "botón",
+        "locator": "button"
+      },
+      "veredicto": "barrera-confirmada",
+      "nota": "El lector solo pronuncia el rol, sin nombre: la falta de nombre accesible es real.",
+      "frase": "button",
+      "fraseLimpia": "button"
+    },
+    {
+      "locator": "button",
+      "previsto": {
+        "name": "Enviar formulario",
+        "role": "button",
+        "say": "Enviar formulario, botón",
+        "locator": "button"
+      },
+      "veredicto": "confirmado",
+      "nota": "El lector anuncia el nombre y el rol previstos.",
+      "frase": "button, Spanish (not supported), Enviar formulario",
+      "fraseLimpia": "button, Spanish (not supported), Enviar formulario"
+    },
+    {
+      "locator": "a",
+      "previsto": {
+        "name": "Saltar al contenido",
+        "role": "link",
+        "say": "Saltar al contenido, enlace",
+        "locator": "a"
+      },
+      "veredicto": "confirmado",
+      "nota": "El lector anuncia el nombre y el rol previstos.",
+      "frase": "same page, link, Saltar al contenido",
+      "fraseLimpia": "same page, link, Saltar al contenido"
+    },
+    {
+      "locator": "h1",
+      "previsto": {
+        "name": "Verificación con lector real",
+        "role": "heading",
+        "say": "Verificación con lector real, encabezado de nivel 1",
+        "locator": "h1"
+      },
+      "veredicto": "confirmado",
+      "nota": "El lector anuncia el nombre y el rol previstos.",
+      "frase": "main landmark, heading, level 1, Verificación con lector real",
+      "fraseLimpia": "main landmark, heading, level 1, Verificación con lector real"
+    }
+  ],
+  "spokenPhraseLog": [
+    "button, Spanish (not supported), Enviar formulario",
+    "same page, link, Saltar al contenido",
+    "main landmark, heading, level 1, Verificación con lector real",
+    "Fin del recorrido.",
+    "button"
+  ]
+}
