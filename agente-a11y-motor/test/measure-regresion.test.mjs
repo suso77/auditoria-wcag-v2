@@ -223,14 +223,32 @@ test("2.4.3 informa de la SECUENCIA de foco, no solo del veredicto", () => {
   const o = res.filter((r) => r.crit === "2.4.3");
   assert.equal(o.length, 1);
   assert.equal(o[0].verdict, "pasa");
-  assert.match(o[0].detail, /button#a → button#b → button#c/);
+  /* Cada control va con su TEXTO al lado. Sin él, una fila de enlaces sin id ni
+   * clase salía como «a → a → a → a», que no permite comprobar nada: no se sabe de
+   * qué enlace habla cada tramo. */
+  assert.match(o[0].detail, /button#a «a» → button#b «b» → button#c «c»/);
 });
 
 test("un tabindex positivo reordena la secuencia mostrada", () => {
   const res = run('<button id="a">a</button><button id="b" tabindex="1">b</button>');
   const o = res.filter((r) => r.crit === "2.4.3")[0];
   assert.equal(o.verdict, "revisar");
-  assert.match(o.detail, /button#b → button#a/, "el tabindex=1 va primero: " + o.detail);
+  assert.match(o.detail, /button#b «b» → button#a «a»/, "el tabindex=1 va primero: " + o.detail);
+  assert.match(o.detail, /tabindex` positivo/, "y se dice por qué está a revisar");
+});
+
+test("regresión: 2.4.3 se compara con el orden VISUAL, no solo con el tabindex", () => {
+  /* El único criterio de decisión era la existencia de un `tabindex` positivo: sin
+   * él, `pasa` y la evidencia «sigue el orden del DOM». Pero 2.4.3 exige que el
+   * orden de foco preserve el significado, y el orden del DOM y el visual se separan
+   * con `flex-direction: row-reverse`, `order`, `float`… y nada de eso se miraba.
+   *
+   * Con `linkedom` no hay layout, así que este caso vive en la batería de
+   * integración (`test/integration/render-real.test.mjs`); aquí se comprueba que,
+   * sin rects, el veredicto no se inventa una inversión que no puede ver. */
+  const res = run('<button id="a">a</button><button id="b">b</button>');
+  const o = res.filter((r) => r.crit === "2.4.3")[0];
+  assert.equal(o.verdict, "pasa", "sin layout no hay inversión detectable: " + o.detail);
 });
 
 /* ── 2.4.7 cuando el documento NO tiene el foco del sistema ──────────────────

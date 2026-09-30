@@ -1909,7 +1909,9 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
           ? { crit: "2.1.1", label: "Enfocable con teclado", node: loc, verdict: "pasa", detail: "recibe el foco" }
           : { crit: "2.1.1", label: "Enfocable con teclado", node: loc, verdict: "falla", detail: "no recibe foco con Tab" });
         if (focusable) {
-          focusables.push({ loc: loc, ti: ti, path: ruta });
+          // El RECT viaja con el control: sin él no se puede comparar el orden de
+          // tabulación con el orden visual, que es de lo que habla 2.4.3.
+          focusables.push({ loc: loc, ti: ti, path: ruta, rect: el.getBoundingClientRect(), texto: (el.textContent || "").replace(/[\s\u00a0]+/g, " ").trim().slice(0, 24) });
           // 2.4.11: con el foco puesto, ¿lo tapa algo fijo?
           if (flotantes.length) {
             /* El rect se lee CON la página desplazada, como cuando se tabula.
@@ -2107,14 +2109,27 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     // bloques de texto de la página.
     const conTexto = Array.prototype.slice.call(doc.querySelectorAll("body *")).filter(function (el) { return ownText(el); });
     const textoLim = Math.min(conTexto.length, limit);
-    for (let i = 0; i < textoLim; i++) {
+    /* El cupo se gasta en los que SE MIDEN, no en los que se descartan.
+     *
+     * El bucle recorría los primeros `limit` elementos de la lista y se saltaba los
+     * ya medidos, los invisibles y los que no dan contraste — pero esos habían
+     * gastado cupo igual. Con seis párrafos `display:none` delante, el cupo de seis
+     * se agotaba sin medir ni uno y los seis visibles ilegibles de después no se
+     * miraban. Y la nota de cobertura imprimía el CUPO como si fuera lo medido: «se
+     * midió el contraste de 6 de 18» con cero mediciones detrás. Ni se detectaba la
+     * barrera ni se avisaba: lo peor de los dos mundos. */
+    let medidosAqui = 0, descartados = 0, yaMedidos = 0;
+    for (let i = 0; i < conTexto.length && medidosAqui < limit; i++) {
       const el = conTexto[i];
       const loc = locatorM(el), ruta = rutaM(el);
-      if (medidos.has(el)) continue;
-      if (!renderedM(el, win)) continue;
+      // Ya medido en la primera pasada (era un control): cuenta como medido, no como
+      // pendiente — si no, la nota decía que quedaban por comprobar los que ya estaban.
+      if (medidos.has(el)) { yaMedidos++; continue; }
+      if (!renderedM(el, win)) { descartados++; continue; }
       const c = contrastOf(el, win);
-      if (!c) continue;
+      if (!c) { descartados++; continue; }
       medidos.add(el);
+      medidosAqui++;
       if (c.undetermined) {
         res.push({ crit: "1.4.3", label: "Contraste del texto", node: loc, path: ruta, verdict: "revisar", detail: c.motivo || "fondo con imagen o degradado: no medible automáticamente" });
       } else {
@@ -2127,8 +2142,45 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         });
       }
     }
-    if (conTexto.length > textoLim) {
-      res.push({ crit: "__meta", label: "Cobertura del contraste", node: textoLim + "/" + conTexto.length, verdict: "revisar", detail: "se midió el contraste de " + textoLim + " de " + conTexto.length + " bloques de texto (límite): el resto NO está comprobado" });
+    /* Lo que la medición NO alcanza se declara: shadow DOM e iframes.
+     *
+     * Todos los barridos usan `doc.querySelectorAll(...)` sobre el documento
+     * principal, que no entra en un `shadowRoot` ni en un marco. Eso es una
+     * limitación conocida, pero no se decía en ninguna parte: no salía hallazgo, no
+     * salía nota, y el informe quedaba idéntico a uno de una página sin nada dentro.
+     * Comprobado: un componente con shadow DOM con texto a 1.2:1 y un botón de 12×12,
+     * más un iframe del mismo origen con lo mismo, y cero mediciones y cero notas.
+     *
+     * Que no se mida es discutible; que no se diga, no. Un criterio que nadie ha
+     * comprobado no puede parecerse a un criterio que cumple. */
+    const conShadow = Array.prototype.slice.call(doc.querySelectorAll("*")).filter(function (el) {
+      return el.shadowRoot && el.shadowRoot.querySelector && el.shadowRoot.querySelector("*");
+    });
+    const marcos = Array.prototype.slice.call(doc.querySelectorAll("iframe,frame")).filter(function (f) {
+      return renderedM(f, win);
+    });
+    if (conShadow.length) {
+      res.push({ crit: "__meta", label: "Shadow DOM sin medir", node: conShadow.length + " componente(s)", verdict: "revisar",
+        detail: "hay " + conShadow.length + " componente(s) con shadow DOM (" +
+          conShadow.slice(0, 5).map(function (el) { return locatorM(el); }).join(", ") + (conShadow.length > 5 ? ", …" : "") +
+          ") y esta medición no entra dentro: el contraste, el tamaño de los objetivos, el foco visible y el orden de foco de su contenido NO están comprobados. Míralos con las herramientas del navegador o por separado." });
+    }
+    if (marcos.length) {
+      res.push({ crit: "__meta", label: "Marcos sin medir", node: marcos.length + " iframe(s)", verdict: "revisar",
+        detail: "hay " + marcos.length + " marco(s) pintado(s) (" +
+          marcos.slice(0, 5).map(function (f) { return locatorM(f) + (f.getAttribute("src") ? " → " + String(f.getAttribute("src")).slice(0, 60) : ""); }).join(", ") +
+          (marcos.length > 5 ? ", …" : "") +
+          ") y la medición solo recorre el documento principal: su contenido NO está comprobado. Audita cada marco por su propia URL." });
+    }
+
+    // La nota dice lo que se midió DE VERDAD, y de cuántos.
+    const cubiertos = medidosAqui + yaMedidos + descartados;
+    const sinMirar = conTexto.length - cubiertos;
+    if (sinMirar > 0) {
+      res.push({ crit: "__meta", label: "Cobertura del contraste", node: (medidosAqui + yaMedidos) + "/" + conTexto.length, verdict: "revisar",
+        detail: "se midió el contraste de " + (medidosAqui + yaMedidos) + " de " + conTexto.length + " bloques de texto con texto propio" +
+          (descartados ? " (" + descartados + " más se descartaron por no estar pintados o no dar un contraste medible)" : "") +
+          "; quedan " + sinMirar + " sin comprobar por el límite de la medición (" + limit + "). Súbelo para dictaminarlos." });
     }
 
     if (focusables.length > 1) {
@@ -2139,12 +2191,60 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         const at = a.ti > 0 ? a.ti : Infinity, bt = b.ti > 0 ? b.ti : Infinity;
         return at - bt;
       }).slice(0, 25);
-      const seq = ordenados.map(function (f) { return f.loc; });
+      /* 2.4.3 se COMPARA con el orden visual, que es de lo que habla el criterio.
+       *
+       * El único criterio de decisión era la existencia de un `tabindex` positivo:
+       * sin él, `pasa` y la evidencia «sigue el orden del DOM». Pero 2.4.3 exige que
+       * el orden de foco preserve el significado, y el orden del DOM y el visual se
+       * separan con `flex-direction: row-reverse`, `order`, `grid-area`, `float` o
+       * `position:absolute`, y nada de eso se miraba. Reproducido: una fila con
+       * `row-reverse` se tabula de derecha a izquierda respecto a lo que se ve, y
+       * salía «pasa».
+       *
+       * Se comparan las inversiones DENTRO de una misma línea visual, que es donde la
+       * señal es limpia: dos controles que se solapan en vertical y cuyo orden
+       * horizontal es el contrario al de tabulación. Entre líneas distintas no se
+       * acusa —una barra lateral que va primero en el DOM y se pinta a la derecha es
+       * una decisión de maquetación legítima, y juzgar si preserva el significado es
+       * de una persona—, pero se dice cuántas hay.
+       *
+       * El veredicto es `revisar`, no `falla`: que el orden difiera del visual no es
+       * automáticamente una barrera (el criterio habla de preservar el significado),
+       * pero tampoco se puede firmar como conforme sin que alguien lo mire. */
+      const rtl = (win.getComputedStyle(doc.documentElement).direction === "rtl");
+      const conRect = ordenados.filter(function (f) { return f.rect && f.rect.width > 0 && f.rect.height > 0; });
+      const mismaLinea = function (a, b) {
+        const solape = Math.min(a.rect.bottom, b.rect.bottom) - Math.max(a.rect.top, b.rect.top);
+        return solape > Math.min(a.rect.height, b.rect.height) * 0.5;
+      };
+      const inversionesFila = [], inversionesVert = [];
+      for (let i = 0; i < conRect.length - 1; i++) {
+        const a = conRect[i], b = conRect[i + 1];
+        if (mismaLinea(a, b)) {
+          const alRevés = rtl ? (b.rect.left > a.rect.left + 2) : (b.rect.left + 2 < a.rect.left);
+          if (alRevés) inversionesFila.push({ a: a, b: b });
+        } else if (b.rect.top + 2 < a.rect.top) {
+          inversionesVert.push({ a: a, b: b });
+        }
+      }
+      const nombra = function (f) { return f.loc + (f.texto ? " «" + f.texto + "»" : ""); };
+      const seq = ordenados.map(function (f) { return nombra(f); });
       const cola = seq.join(" → ") + (focusables.length > 25 ? " → …" : "");
+      const problemas = [];
+      if (positive) problemas.push("hay un `tabindex` positivo, que altera el orden natural");
+      if (inversionesFila.length) {
+        problemas.push(inversionesFila.length + " salto(s) hacia atrás dentro de la misma línea visual: " +
+          inversionesFila.slice(0, 4).map(function (x) { return nombra(x.a) + " → " + nombra(x.b) + ", que está a su " + (rtl ? "derecha" : "izquierda"); }).join(" · "));
+      }
+      if (inversionesVert.length) {
+        problemas.push(inversionesVert.length + " salto(s) hacia arriba entre líneas (puede ser maquetación en columnas, míralo)");
+      }
       res.push({
         crit: "2.4.3", label: "Orden de foco", node: focusables.length + " controles",
-        verdict: positive ? "revisar" : "pasa",
-        detail: (positive ? "un tabindex positivo altera el orden natural → " : "sigue el orden del DOM: ") + cola,
+        verdict: problemas.length ? "revisar" : "pasa",
+        detail: (problemas.length
+          ? "el orden de tabulación no sigue el orden visual: " + problemas.join("; ") + ". Secuencia de tabulación: "
+          : "la tabulación sigue el orden visual de la página (comparado línea a línea): ") + cola,
         // Este hallazgo no es de UN elemento, así que no lleva `path`: lleva la
         // secuencia de rutas. El nombre legible se repite («a → a → a») y por sí
         // solo no deja comprobar el orden; con las rutas sí.

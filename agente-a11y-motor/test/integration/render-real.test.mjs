@@ -188,3 +188,86 @@ test("regresión: 2.4.11 no acusa a lo que se pinta DETRÁS, y sí ve lo que tap
   assert.ok(m.some((x) => x.verdict === "falla" && /div\.cookies/.test(x.detail)),
     "y la barra de cookies sí tapa el último enlace al tabular hasta él: " + JSON.stringify(m.map((x) => x.verdict + " " + x.detail.slice(0, 60))));
 });
+
+/* ── Regresión: la cuarta tanda — lo que la medición no miraba ni declaraba ─── */
+
+test("regresión: 2.4.3 compara la tabulación con el orden VISUAL", { skip }, async () => {
+  /* El único criterio de decisión era la existencia de un `tabindex` positivo: sin
+   * él, `pasa` y la evidencia «sigue el orden del DOM». Pero 2.4.3 exige que el
+   * orden de foco preserve el significado, y el orden del DOM y el visual se separan
+   * con `flex-direction: row-reverse`. Medido: la fila se tabula de derecha a
+   * izquierda respecto a lo que se ve, y salía «pasa» — con el detalle «a → a → a →
+   * a», que además no permite comprobar nada. */
+  const invertida = await analyzeRendered({
+    html: '<style>.fila{display:flex;flex-direction:row-reverse;gap:1em}</style>' +
+      '<main><h1>O</h1><div class="fila"><a href="/1">Uno</a><a href="/2">Dos</a><a href="/3">Tres</a></div></main>'
+  }, { launchOptions });
+  const m = invertida.measurements.find((x) => x.crit === "2.4.3");
+  assert.equal(m.verdict, "revisar", "orden visual invertido y salió «" + m.verdict + "»: " + m.detail);
+  assert.match(m.detail, /no sigue el orden visual/);
+  assert.match(m.detail, /salto\(s\) hacia atrás dentro de la misma línea visual/);
+  assert.match(m.detail, /«Uno»/, "y cada control se identifica con su texto, no como «a → a → a»");
+
+  // Control: la misma fila en orden normal no puede salir a revisar.
+  const normal = await analyzeRendered({
+    html: '<style>.fila{display:flex;gap:1em}</style>' +
+      '<main><h1>O</h1><div class="fila"><a href="/1">Uno</a><a href="/2">Dos</a><a href="/3">Tres</a></div></main>'
+  }, { launchOptions });
+  const n = normal.measurements.find((x) => x.crit === "2.4.3");
+  assert.equal(n.verdict, "pasa", "el orden normal no puede salir señalado: " + n.detail);
+  assert.match(n.detail, /sigue el orden visual/);
+});
+
+test("regresión: el shadow DOM y los iframes se declaran sin medir", { skip }, async () => {
+  /* Todos los barridos usan `doc.querySelectorAll` sobre el documento principal, que
+   * no entra en un `shadowRoot` ni en un marco. Es una limitación conocida y no se
+   * decía en ninguna parte: ni hallazgo, ni nota, y el informe quedaba idéntico a uno
+   * de una página sin nada dentro. Que no se mida es discutible; que no se diga, no. */
+  const shadowJS = [
+    "class T extends HTMLElement {",
+    "  connectedCallback() {",
+    "    const s = this.attachShadow({ mode: 'open' });",
+    "    s.innerHTML = '<style>p{color:#eeeeee;background:#fff}</style><p>Texto del shadow</p>';",
+    "  }",
+    "}",
+    "customElements.define('mi-tarjeta', T);"
+  ].join("\n");
+  const html = "<main><h1>C</h1><mi-tarjeta></mi-tarjeta>" +
+    '<iframe src="about:blank" title="M" width="200" height="80"></iframe></main>' +
+    "<script>" + shadowJS + "</script>";
+  const out = await analyzeRendered({ html }, { launchOptions });
+  const etiquetas = out.coberturas.map((c) => c.label);
+  assert.ok(etiquetas.some((l) => /Shadow DOM sin medir/.test(l)), JSON.stringify(etiquetas));
+  assert.ok(etiquetas.some((l) => /Marcos sin medir/.test(l)), JSON.stringify(etiquetas));
+  const sh = out.coberturas.find((c) => /Shadow DOM/.test(c.label));
+  assert.match(sh.detail, /NO están comprobados/);
+  assert.match(sh.detail, /mi-tarjeta/, "y se dice qué componente");
+
+  // Una página sin nada de eso no puede llevar las notas.
+  const limpia = await analyzeRendered({ html: "<main><h1>C</h1><p>Texto normal.</p></main>" }, { launchOptions });
+  assert.ok(!limpia.coberturas.some((c) => /Shadow DOM|Marcos/.test(c.label)),
+    JSON.stringify(limpia.coberturas.map((c) => c.label)));
+});
+
+test("regresión: el cupo del contraste se gasta en lo que se mide, y la nota no miente", { skip }, async () => {
+  /* El bucle recorría los primeros `limit` elementos y se saltaba los invisibles —que
+   * habían gastado cupo igual—. Con seis párrafos `display:none` delante, un cupo de
+   * seis se agotaba sin medir ni uno, y la nota imprimía el CUPO como si fuera lo
+   * medido: «se midió el contraste de 6 de 18» con cero mediciones detrás. */
+  const ocultos = Array.from({ length: 6 }, (_, i) => '<p style="display:none">o' + i + "</p>").join("");
+  const malos = Array.from({ length: 6 }, (_, i) => '<p style="color:#eee">Texto ilegible ' + i + "</p>").join("");
+  const out = await analyzeRendered({ html: "<main><h1>C</h1>" + ocultos + malos + "</main>" },
+    { launchOptions, measureLimit: 6 });
+
+  const medidas = out.measurements.filter((x) => x.crit === "1.4.3");
+  assert.ok(medidas.length >= 6, "el cupo tiene que gastarse en los visibles: " + medidas.length);
+  assert.ok(medidas.some((x) => x.verdict === "falla"), "y los ilegibles salen como barrera: " +
+    JSON.stringify(medidas.map((x) => x.verdict)));
+
+  const nota = out.coberturas.find((c) => /Cobertura del contraste/.test(c.label));
+  if (nota) {
+    const dicho = Number(String(nota.node).split("/")[0]);
+    assert.ok(dicho > 0, "la nota no puede decir que midió cero cuando midió: " + nota.node);
+    assert.match(nota.detail, /se descartaron|quedan/, nota.detail);
+  }
+});

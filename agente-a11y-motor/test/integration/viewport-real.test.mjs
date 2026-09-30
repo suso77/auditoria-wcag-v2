@@ -52,6 +52,12 @@ const CASOS = {
   // La misma tarjeta sin alto fijo: aguanta el 200 % y no puede salir en rojo.
   "/zoom-flexible": BASE(`<main><h1>Z</h1><div class="tarjeta"><p>Primera línea</p><p>Segunda línea</p></div></main>`,
     ".tarjeta p{font-size:14px;line-height:1.5;margin:0}"),
+  /* Bloqueo de orientación desde un script EXTERNO y por referencia indirecta: las
+     dos formas que la búsqueda en el texto de los scripts en línea no veía. */
+  "/orientacion-externa": BASE(`<main><h1>T</h1><p>${TEXTO}</p></main>`).replace("</body>",
+    '<script src="/orientacion.js"></script></body>'),
+  "/orientacion-indirecta": BASE(`<main><h1>T</h1><p>${TEXTO}</p></main>`).replace("</body>",
+    "<script>var o = screen.orientation; try{ o.lock('portrait'); }catch(e){}</script></body>"),
   // Bloqueo de orientación por JavaScript.
   "/orientacion": BASE(`<main><h1>T</h1><p>${TEXTO}</p></main>`) .replace("</body>",
     "<script>try{screen.orientation.lock('portrait')}catch(e){}</script></body>")
@@ -61,7 +67,12 @@ let server, base;
 before(async () => {
   if (!sonda.ok) return;
   server = createServer((req, res) => {
-    const c = CASOS[req.url.replace(/\?.*$/, "")];
+    const ruta = req.url.replace(/\?.*$/, "");
+    if (ruta === "/orientacion.js") {
+      res.writeHead(200, { "content-type": "application/javascript" });
+      return res.end("try{ screen.orientation.lock('portrait'); }catch(e){}");
+    }
+    const c = CASOS[ruta];
     res.writeHead(c ? 200 : 404, { "content-type": "text/html; charset=utf-8" });
     res.end(c || "no");
   });
@@ -221,4 +232,26 @@ test("regresión: una página que aguanta el 200 % de verdad sigue cumpliendo", 
   const f = out.findings.find((x) => x.c.n === "1.4.4");
   assert.ok(f.verdict === "cumple" || f.verdict === "revisar",
     "sin alto fijo no hay recorte, así que no puede salir falla: " + f.verdict + " · " + f.evid[0]);
+});
+
+test("regresión: el bloqueo de orientación se OBSERVA, no se busca en el texto", { skip }, async () => {
+  /* La detección leía solo `script:not([src])` con una expresión literal, así que no
+   * veía nada de lo habitual: la llamada en un bundle externo, una referencia
+   * intermedia (`var o = screen.orientation; o.lock(…)`), un módulo, un minificador
+   * que renombre. Y con eso se emitía `cumple` afirmando «y no hay bloqueo de
+   * orientación»: una afirmación sobre un JavaScript que nadie había leído.
+   *
+   * Envolviendo la API antes de que cargue la página, da igual dónde esté escrita la
+   * llamada ni cómo. Los tres casos tienen que fallar, y la página limpia no. */
+  for (const ruta of ["/orientacion", "/orientacion-externa", "/orientacion-indirecta"]) {
+    const out = await viewportAnalyze({ url: base + ruta }, {});
+    const f = out.findings.find((x) => x.c.n === "1.3.4");
+    assert.equal(f.verdict, "falla", ruta + " → " + f.verdict + ": " + f.evid[0]);
+    assert.ok(out.trazas.orientation.bloqueoJS, ruta + ": la llamada tiene que quedar observada");
+    assert.ok((out.trazas.orientation.llamadas || []).length, ruta + ": y anotada, para poder citarla");
+  }
+  const limpio = await viewportAnalyze({ url: base + "/sano" }, {});
+  const l = limpio.findings.find((x) => x.c.n === "1.3.4");
+  assert.notEqual(l.verdict, "falla", "una página sin bloqueo no puede salir señalada: " + l.evid[0]);
+  assert.equal(limpio.trazas.orientation.bloqueoJS, false);
 });

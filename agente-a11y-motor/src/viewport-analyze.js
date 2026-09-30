@@ -220,6 +220,43 @@ export async function viewportAnalyze(target, opts) {
   try {
     const page = opts.page || await browser.newPage({ viewport: { width: baseW, height: baseH } });
     if (opts.page) await page.setViewportSize({ width: baseW, height: baseH });
+
+    /* El bloqueo de orientación se OBSERVA, no se busca en el texto de los scripts.
+     *
+     * La detección leía solo `script:not([src])` y con una expresión literal
+     * (`screen.orientation.lock(`), así que no veía nada de lo habitual: la llamada
+     * en un bundle externo, una referencia intermedia (`var o = screen.orientation;
+     * o.lock(…)`), un módulo, un minificador que renombre. Y con eso `viewport.js`
+     * emitía `cumple` afirmando «y no hay bloqueo de orientación»: una afirmación
+     * sobre un JavaScript que nadie había leído. Comprobado con las dos formas: las
+     * dos salían conformes.
+     *
+     * Envolviendo la API antes de que cargue la página, da igual dónde esté escrita
+     * la llamada ni cómo: si se llama, se anota. Se envuelve también la API antigua
+     * (`lockOrientation` y sus prefijos), y la llamada se deja pasar al original
+     * —envuelta, no bloqueada— para no cambiar el comportamiento de la página. */
+    await page.addInitScript(function () {
+      window.__a11yOrientacion = { llamadas: [] };
+      var anota = function (api, args) {
+        try { window.__a11yOrientacion.llamadas.push(api + "(" + Array.prototype.slice.call(args).join(", ") + ")"); } catch (e) {}
+      };
+      try {
+        var SO = window.ScreenOrientation && window.ScreenOrientation.prototype;
+        if (SO && SO.lock) {
+          var origLock = SO.lock;
+          SO.lock = function () { anota("screen.orientation.lock", arguments); return origLock.apply(this, arguments); };
+        }
+      } catch (e) {}
+      ["lockOrientation", "mozLockOrientation", "msLockOrientation"].forEach(function (m) {
+        try {
+          if (window.screen && typeof window.screen[m] === "function") {
+            var orig = window.screen[m];
+            window.screen[m] = function () { anota("screen." + m, arguments); return orig.apply(this, arguments); };
+          }
+        } catch (e) {}
+      });
+    });
+
     await abrir(page);
 
     // ── 1.4.10 Reflujo: estrechar a 320 px y buscar desplazamiento horizontal ──
@@ -405,7 +442,14 @@ export async function viewportAnalyze(target, opts) {
             }
           });
         });
-        return { bloqueoJS: /screen\\s*\\.\\s*orientation\\s*\\.\\s*lock\\s*\\(|lockOrientation\\s*\\(/.test(src), mediaBloqueante: media };`);
+        /* La detección de verdad viene de la API envuelta (window.__a11yOrientacion),
+           que ve la llamada venga de donde venga. La búsqueda en el texto de los
+           scripts en línea se queda como PISTA para la evidencia, no como veredicto:
+           sirve para decirle al auditor dónde mirar cuando sí está escrita ahí. */
+        var observado = (window.__a11yOrientacion && window.__a11yOrientacion.llamadas) || [];
+        var enTexto = /screen\\s*\\.\\s*orientation\\s*\\.\\s*lock\\s*\\(|lockOrientation\\s*\\(/.test(src);
+        return { bloqueoJS: observado.length > 0, llamadas: observado.slice(0, 6),
+                 enScriptEnLinea: enTexto, mediaBloqueante: media };`);
       await page.setViewportSize({ width: 390, height: 844 });
       await page.waitForTimeout(250);
       const vert = await evalIn(page, "return (document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().length;");
