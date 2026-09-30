@@ -110,3 +110,67 @@ test("la fase de disclosure se ejecuta y no pierde el resto si algo falla", { sk
   assert.equal(r.trace.disclosures, 1);
   assert.ok(r.findings.some((f) => f.c.n === "4.1.2"));
 });
+
+/* ── Regresión: el cortafuegos es un pestillo, no un interruptor ────────────
+ *
+ * El cortafuegos se armaba al empezar cada fase de interacción y se desarmaba al
+ * acabarla. Pero el manejador de un control no lanza su petición durante el
+ * `click()`: la lanza después, en un `await`, un `setTimeout` o un `debounce`,
+ * que es lo normal. Cuando llegaba, la fase ya había terminado, el cortafuegos
+ * ya estaba abierto, y la petición salía — mientras el aviso decía «No han
+ * llegado al servidor».
+ *
+ * La prueba anterior de esta batería no lo veía porque su botón destructivo
+ * lanza el `fetch` de forma síncrona, dentro del propio `click()`. Aquí el
+ * retardo se barre a propósito, porque el fallo era una carrera y un solo valor
+ * puede pasar por casualidad.
+ */
+for (const retardo of [0, 30, 150, 400]) {
+  test("modo seguro: ni una petición con efecto sale, aunque el manejador espere " + retardo + " ms",
+    { skip: disponible ? false : "sin Chromium" }, async () => {
+      const recibidasApi = [];
+      const pagina = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>T</title></head><body>
+<main><h1>Panel</h1>` +
+        Array.from({ length: 6 }, (_, i) =>
+          `<button id="b${i}" aria-expanded="false" aria-controls="p${i}">Borrar ${i}</button><div id="p${i}" hidden>p${i}</div>`).join("") +
+        `</main><script>
+document.querySelectorAll("button[aria-expanded]").forEach(function (b) {
+  b.addEventListener("click", function () {
+    setTimeout(function () { fetch("/api/papelera?de=" + b.id, { method: "DELETE" }); }, ${retardo});
+  });
+});
+</script></body></html>`;
+
+      const srv = createServer((req, res) => {
+        if (req.url.startsWith("/api/")) recibidasApi.push(req.method + " " + req.url);
+        res.writeHead(200, { "content-type": req.url.startsWith("/api/") ? "application/json" : "text/html; charset=utf-8" });
+        res.end(req.url.startsWith("/api/") ? "{}" : pagina);
+      });
+      await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+      const url = "http://127.0.0.1:" + srv.address().port + "/";
+
+      try {
+        const out = await dynamicAnalyze({ url }, { launchOptions });
+        // Margen generoso: lo que se cuela, se cuela después de que la sonda acabe.
+        await new Promise((r) => setTimeout(r, retardo + 900));
+        /* El invariante es UNO: al servidor auditado no llega nada con efecto. Que
+         * la petición se abortara en la ruta o que no llegara a dispararse —porque
+         * el apagado de la página se llevó su temporizador por delante— da igual, y
+         * las dos cosas pasan según el retardo. Exigir que `bloqueadas` no esté
+         * vacía convertiría en fallo el caso MÁS seguro de los dos. */
+        assert.deepEqual(recibidasApi, [],
+          "ninguna petición con efecto puede llegar al servidor auditado; llegaron: " + JSON.stringify(recibidasApi));
+        assert.ok((out.bloqueadas || []).every((b) => b.startsWith("DELETE")),
+          "lo que se anota como abortado son los DELETE del manejador, y nada más: " + JSON.stringify(out.bloqueadas));
+        // Y cuando se abortó algo, el aviso no promete más de lo que el cortafuegos cubre.
+        if ((out.bloqueadas || []).length) {
+          const aviso = (out.avisos || []).find((a) => /abortad/i.test(a)) || "";
+          assert.ok(!/No han llegado al servidor/.test(aviso),
+            "el aviso no puede afirmar en absoluto algo que solo vale desde la primera interacción");
+          assert.match(aviso, /Desde la primera interacción/);
+        }
+      } finally {
+        srv.close();
+      }
+    });
+}

@@ -37,3 +37,41 @@ test("auditSample: recorre la muestra con el analizador inyectado", async () => 
 test("auditSample: exige analyze", async () => {
   await assert.rejects(() => auditSample([{ url: "/a" }], {}), /analyze/);
 });
+
+/* ── Regresión: el guardia de «muestra incompleta» no se puede apagar solo ──
+ *
+ * `rollupSample` deducía «esta página no se analizó» de «no trae hallazgos». Es
+ * un indicio razonable, y se apagaba en cuanto alguien añadía hallazgos de SITIO
+ * a cada página —la coherencia entre páginas, el cuaderno de la muestra—, porque
+ * entonces ninguna lista quedaba vacía. Eso es exactamente lo que hace
+ * `auditSite`: con dos de tres páginas caídas, el rollup decía «3 de 3
+ * analizadas» y la conformidad salía «Requiere revisión manual» en lugar de
+ * «Incompleta». La página muerta pasaba por auditada.
+ */
+test("regresión: una página caída no pasa por analizada porque lleve hallazgos de sitio", () => {
+  const deSitio = { c: { n: "3.2.3", t: "Navegación coherente", lvl: "AA" }, verdict: "humano", evid: ["x"] };
+  const pages = [
+    { url: "https://ej.test/a", analizada: true,  findings: [{ c: { n: "1.1.1", t: "Contenido no textual", lvl: "A" }, verdict: "cumple", evid: ["x"] }, deSitio] },
+    { url: "https://ej.test/b", analizada: false, error: "net::ERR_CONNECTION_REFUSED", findings: [deSitio] },
+    { url: "https://ej.test/c", analizada: false, error: "Timeout 30000ms exceeded", findings: [deSitio] }
+  ];
+  const r = rollupSample(pages);
+  assert.equal(r.paginasAnalizadas, 1, "una de tres, no tres de tres");
+  assert.equal(r.sinAnalizar.length, 2);
+  assert.match(r.conformidad, /^Incompleta: 2 de 3/);
+  assert.match(r.sinAnalizar[0].error, /CONNECTION_REFUSED/, "y se dice qué falló, no «no se obtuvo ningún hallazgo»");
+});
+
+test("`analizada: true` manda sobre el indicio de «sin hallazgos»", () => {
+  // Una página de verdad analizada en la que el motor no encontró nada que decir
+  // es rarísima, pero si el analizador lo afirma, se le cree.
+  const r = rollupSample([{ url: "https://ej.test/a", analizada: true, findings: [] }]);
+  assert.equal(r.sinAnalizar.length, 0);
+  assert.equal(r.paginasAnalizadas, 1);
+});
+
+test("sin el campo `analizada`, sigue valiendo el indicio de siempre", () => {
+  const r = rollupSample([{ url: "https://ej.test/a", findings: [] }]);
+  assert.equal(r.sinAnalizar.length, 1);
+  assert.match(r.sinAnalizar[0].error, /no se obtuvo ningún hallazgo/);
+});

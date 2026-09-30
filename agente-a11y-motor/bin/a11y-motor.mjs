@@ -63,7 +63,21 @@ if (asJson) {
     ? (model.primary.role + (model.primary.name.name ? " «" + model.primary.name.name + "»" : ""))
     : (model.pattern ? model.pattern.name : model.primary.role);
   console.log("\nInforme de conformidad — " + titulo);
-  console.log(s.falla + " barreras · " + (s.revisar + s.humano) + " a revisar · " + s.cumple + " cumplen · de " + a.findings.length + " criterios evaluados\n");
+  /* «Cumplen» son los que cumplen, y ninguno más.
+   *
+   * `cumple-parcial` quiere decir que el motor midió la presencia y la calidad la
+   * juzga una persona (el texto de un `alt`, el nombre de un encabezado). Contarlo
+   * como conforme —que es lo que hacía este resumen— le decía al lector que el
+   * 1.1.1 estaba resuelto cuando nadie había leído un solo alternativo. Va con lo
+   * que queda por revisar, que es donde está el trabajo. */
+  const aRevisar = s.revisar + s.humano + s["cumple-parcial"];
+  console.log(s.falla + " barreras · " + aRevisar + " a revisar · " + (s.cumple + s.pasa) + " cumplen" +
+    (s["no-aplica"] ? " · " + s["no-aplica"] + " no aplican" : "") +
+    " · de " + a.findings.length + " criterios evaluados");
+  if (s["cumple-parcial"]) {
+    console.log("  (" + s["cumple-parcial"] + " de los que hay que revisar cumplen la parte automatizable; lo que falta es juicio humano sobre la calidad del texto.)");
+  }
+  console.log("");
   if (!fallas.length) {
     console.log("  Sin barreras deterministas en este componente.");
   } else {

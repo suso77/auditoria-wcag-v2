@@ -71,19 +71,39 @@ export function axeFindingsNuevos(violations, yaFallan) {
     let peor = 0;
     const ORDEN = { leve: 1, moderada: 2, grave: 3, "crítica": 4 };
     let sev = "moderada";
-    const vistos = new Set((yaFallanNodos && yaFallanNodos[sc]) || []);
+    /* Dos conjuntos, y la diferencia importa.
+     *
+     * `delMotor` son los elementos que el motor ya señaló en este criterio: si
+     * axe repite uno, no se añade fila Y se dice en la evidencia, porque eso es
+     * información real («las dos fuentes ven lo mismo»).
+     *
+     * `vistos` es la deduplicación DENTRO de axe: dos reglas distintas de axe
+     * —`image-alt` y `role-img-alt`, por ejemplo— señalan el mismo elemento en el
+     * mismo criterio. También hay que quedarse con una fila, pero eso no lo
+     * detectó el motor, y contarlo como tal ponía en el informe la frase «1
+     * elemento(s) ya los había detectado el motor» en páginas donde el motor no
+     * había visto nada. Una evidencia falsa, escrita por nosotros, en un
+     * entregable con efectos legales. */
+    const delMotor = new Set((yaFallanNodos && yaFallanNodos[sc]) || []);
+    const vistos = new Set();
     let repetidos = 0;
     vs.forEach(function (v) {
       const s = SEV_AXE[v.impact];
       if (s && (ORDEN[s] || 0) > peor) { peor = ORDEN[s]; sev = s; }
       (v.nodes || []).forEach(function (n) {
-        const locator = (n.target || []).join(" ") || "(sin selector)";
+        const locator = (Array.isArray(n.target) ? n.target : [n.target]).filter(Boolean).join(" ") || "(sin selector)";
+        // La RUTA canónica es lo que permite cruzar con el motor: el selector de
+        // axe y el del motor nombran el mismo elemento de dos maneras distintas.
+        // Ver `render-analyze.js`, donde se resuelve con la página abierta.
+        const path = n.__path || null;
         // Antes se descartaba el criterio ENTERO si el motor ya fallaba en él, así
         // que 25 imágenes sin alt vistas por axe se perdían porque el motor había
         // visto una. Lo que se repite es el ELEMENTO, no el criterio.
-        if (vistos.has(locator)) { repetidos++; return; }
-        vistos.add(locator);
-        nodes.push({ locator: locator, name: v.id });
+        if ((path && delMotor.has(path)) || delMotor.has(locator)) { repetidos++; return; }
+        const clave = path || locator;
+        if (vistos.has(clave)) return;   // otra regla de axe, el mismo elemento
+        vistos.add(clave);
+        nodes.push({ locator: locator, name: v.id, path: path || "" });
       });
     });
     if (!nodes.length) return;
@@ -224,11 +244,23 @@ export async function auditRun(target, opts) {
     if (axeViol) {
       // Qué ELEMENTOS ha visto ya el motor en cada criterio, no solo qué
       // criterios: así axe aporta las instancias nuevas en vez de perderse entero.
+      // Se apuntan las RUTAS, no los locators legibles. El locator del motor es
+      // «img» y el de axe `img[src="a.png"]`: comparar esas dos cadenas no casaba
+      // nunca, así que la deduplicación no se disparaba jamás y cada barrera que
+      // ven las dos fuentes salía dos veces en el IRA. La ruta canónica
+      // (`html > body > main:nth-of-type(1) > img:nth-of-type(1)`) sí identifica.
       const yaFallan = {};
       findings.filter(function (f) { return f.verdict === "falla"; }).forEach(function (f) {
         const k = f.c.n;
         if (!yaFallan[k]) yaFallan[k] = [];
-        (f.nodes || []).forEach(function (nd) { if (nd && nd.locator) yaFallan[k].push(nd.locator); });
+        (f.nodes || []).forEach(function (nd) {
+          if (!nd) return;
+          if (nd.path) yaFallan[k].push(nd.path);
+          if (nd.uid && nd.uid !== nd.path) yaFallan[k].push(nd.uid);
+          // El locator se sigue apuntando por si otra capa no trae ruta: no casa
+          // con axe, pero tampoco estorba.
+          if (nd.locator) yaFallan[k].push(nd.locator);
+        });
       });
       axeExtra = axeFindingsNuevos(axeViol, yaFallan);
       findings = findings.concat(axeExtra);
@@ -278,12 +310,22 @@ export async function auditRun(target, opts) {
         duracionMs: Date.now() - t0
       },
       reconciliacion: reconciliacion,
-      summary: {
-        falla: cuenta.falla || 0, revisar: cuenta.revisar || 0, humano: cuenta.humano || 0,
-        "cumple-parcial": cuenta["cumple-parcial"] || 0, pasa: cuenta.pasa || 0, cumple: cuenta.cumple || 0,
-        criteriosDistintos: new Set(findings.map(function (f) { return f.c.n; })).size,
-        soloAxe: axeExtra.length
-      }
+      // Un cubo por veredicto del vocabulario, `no-aplica` incluido: el cuaderno
+      // emite hasta once hallazgos `no-aplica` por página y sin su cubo se
+      // evaporaban del resumen —los criterios estaban decididos y el resumen
+      // decía que no existían—. `otros` recoge cualquier veredicto que no
+      // conozcamos, para que un vocabulario nuevo se note en vez de perderse.
+      summary: (function () {
+        const s = {
+          falla: cuenta.falla || 0, revisar: cuenta.revisar || 0, humano: cuenta.humano || 0,
+          "cumple-parcial": cuenta["cumple-parcial"] || 0, pasa: cuenta.pasa || 0, cumple: cuenta.cumple || 0,
+          "no-aplica": cuenta["no-aplica"] || 0
+        };
+        s.otros = Object.keys(cuenta).reduce(function (a, k) { return s[k] === undefined ? a + cuenta[k] : a; }, 0);
+        s.criteriosDistintos = new Set(findings.map(function (f) { return f.c.n; })).size;
+        s.soloAxe = axeExtra.length;
+        return s;
+      })()
     };
   } finally {
     await browser.close();
@@ -342,7 +384,18 @@ export async function auditSite(targets, opts) {
    * expediente —una por página— diciendo cosas distintas del mismo criterio.
    * Los cuadernos por página siguen en `paginas[i].cuaderno` para el detalle. */
   const cuadernos = paginas.map(function (p) { return p.cuaderno; }).filter(Boolean);
-  const cuaderno = cuadernos.length ? cuadernoDeMuestra(cuadernos, { sitio: opts.sitio || null }) : null;
+  /* Las páginas que faltan van AL cuaderno, no solo al aviso de arriba.
+   *
+   * El cuaderno de la muestra decide «no aplica en el sitio» cuando no aplica en
+   * ninguna página, y con dos de tres páginas caídas eso llegaba a poner nueve
+   * criterios como «No aplica» para el sitio entero a partir de UNA página. Con
+   * la lista de huecos delante, el cuaderno los deja pendientes y explica por qué. */
+  const cuaderno = cuadernos.length
+    ? cuadernoDeMuestra(cuadernos, {
+        sitio: opts.sitio || null,
+        sinAnalizar: paginas.filter(function (p) { return p.error || !p.cuaderno; }).map(function (p) { return p.url; })
+      })
+    : null;
   const deJuicio = cuaderno ? findingsDelCuaderno(cuaderno) : [];
   const sinJuicio = function (list) {
     return (list || []).filter(function (f) { return f.scope !== "juicio"; });
@@ -359,7 +412,18 @@ export async function auditSite(targets, opts) {
   // El rollup necesita ver la coherencia y el cuaderno en todas las páginas para
   // que el peor veredicto del criterio sea el del sitio, no el de una suelta.
   const pages = paginas.map(function (p) {
-    return { url: p.url, findings: sinJuicio(p.findings).concat(coherencia).concat(deJuicio) };
+    const propios = sinJuicio(p.findings);
+    return {
+      url: p.url,
+      // `error` y `analizada` viajan con la página, y no son adorno: son lo que
+      // permite a `rollupSample` distinguir una página SIN barreras de una página
+      // que no se llegó a auditar. Sin ellos, los hallazgos de sitio que se
+      // añaden justo aquí —coherencia y cuaderno— rellenaban la lista de toda
+      // página caída y el guardia de «muestra incompleta» no se disparaba nunca.
+      error: p.error || null,
+      analizada: !p.error && propios.length > 0,
+      findings: propios.concat(coherencia).concat(deJuicio)
+    };
   });
 
   return {

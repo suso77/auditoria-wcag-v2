@@ -18,9 +18,25 @@ export function rollupSample(pages) {
   // página que no se llegó a analizar (falló la carga, se cayó una capa). Antes
   // las dos se contaban igual y una muestra con dos tercios sin auditar salía
   // «Sin barreras deterministas en la muestra».
+  /* Y el «sin hallazgos» es solo el último recurso.
+   *
+   * Es un indicio, no un dato: sirve cuando el analizador no dice nada más, pero
+   * se apaga en cuanto alguien añade hallazgos de SITIO a cada página —la
+   * coherencia entre páginas, el cuaderno de la muestra—, porque entonces
+   * ninguna lista está vacía y una página muerta pasa por analizada. Eso es lo
+   * que hacía `auditSite`: con dos de tres páginas caídas, el rollup decía
+   * «3 de 3 analizadas» y la conformidad salía «Requiere revisión manual» en vez
+   * de «Incompleta». Quien rellena `pages` puede decirlo explícitamente con
+   * `analizada`, y entonces manda eso. */
   const sinAnalizar = (pages || []).filter(function (p) {
-    return p && (p.error || !(p.findings || []).length);
-  }).map(function (p) { return { url: p.url || "(sin url)", error: p.error || "no se obtuvo ningún hallazgo" }; });
+    if (!p) return true;
+    if (p.error) return true;
+    if (p.analizada === false) return true;
+    if (p.analizada === true) return false;
+    return !(p.findings || []).length;
+  }).map(function (p) {
+    return { url: (p && p.url) || "(sin url)", error: (p && p.error) || "no se obtuvo ningún hallazgo" };
+  });
   (pages || []).forEach(function (p) {
     (p.findings || []).forEach(function (f) {
       const n = f.c.n;

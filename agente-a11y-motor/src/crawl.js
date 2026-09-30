@@ -115,7 +115,7 @@ function coincide(ruta, patron) {
 
 const EXTRAER = `
 function __vis(el){ if(!el||!el.getClientRects||!el.getClientRects().length) return false; var cs=getComputedStyle(el); return cs.visibility!=='hidden'&&cs.display!=='none'; }
-function __cls(el){ var c=(el.getAttribute('class')||'').trim().split(/\s+/).filter(Boolean)[0]; return c||''; }
+function __cls(el){ var c=(el.getAttribute('class')||'').trim().split(/\\s+/).filter(Boolean)[0]; return c||''; }
 /* Firma de PLANTILLA: la forma de la MAQUETACIÓN, no del contenido.
    Landmarks en orden + la clase de body y de main + las clases de los bloques de
    primer nivel + cuántos enlaces tiene la navegación.
@@ -129,7 +129,7 @@ function __plantilla(){
   var marcas=[];
   Array.prototype.forEach.call(document.querySelectorAll('header,nav,main,aside,footer,[role=banner],[role=navigation],[role=main],[role=complementary],[role=contentinfo],[role=search]'), function(el){
     if(!__vis(el)) return;
-    var r=(el.getAttribute('role')||'').split(/\s+/)[0] || el.tagName.toLowerCase();
+    var r=(el.getAttribute('role')||'').split(/\\s+/)[0] || el.tagName.toLowerCase();
     marcas.push(r);
   });
   var main=document.querySelector('main,[role=main]')||document.body;

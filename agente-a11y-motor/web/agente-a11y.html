@@ -1452,12 +1452,24 @@
           : "Requiere evaluación humana; ninguna máquina lo dictamina.") + porque] };
     });
 
-    const summary = { falla: 0, revisar: 0, humano: 0, cumple: 0, "crítica": 0, "grave": 0, "moderada": 0, "leve": 0 };
+    /* Un cubo por veredicto, y `cumple` solo para `cumple`.
+     *
+     * El `else` que había aquí metía en `cumple` todo lo que no era falla, revisar
+     * ni humano: también `cumple-parcial`. Y `cumple-parcial` significa lo
+     * contrario de conforme — «la presencia está medida, la calidad la juzga una
+     * persona»—, así que el CLI imprimía «5 cumplen» contando el 1.1.1 de una
+     * página cuyos textos alternativos nadie había leído. Eso es exactamente lo que
+     * la regla de oro prohíbe: un criterio sin comprobar no se cuenta como
+     * conforme. Cualquier veredicto que no reconozcamos cae en `otros` y no infla
+     * ninguna columna. */
+    const summary = {
+      falla: 0, revisar: 0, humano: 0, "cumple-parcial": 0, pasa: 0, cumple: 0, "no-aplica": 0, otros: 0,
+      "crítica": 0, "grave": 0, "moderada": 0, "leve": 0
+    };
     findings.forEach(function (f) {
-      if (f.verdict === "falla") { summary.falla++; summary[f.sev]++; }
-      else if (f.verdict === "revisar") summary.revisar++;
-      else if (f.verdict === "humano") summary.humano++;
-      else summary.cumple++;
+      if (f.verdict === "falla") { summary.falla++; if (summary[f.sev] !== undefined) summary[f.sev]++; }
+      else if (summary[f.verdict] !== undefined) summary[f.verdict]++;
+      else summary.otros++;
     });
     return { findings: findings, summary: summary };
   }

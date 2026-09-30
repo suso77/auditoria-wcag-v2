@@ -115,15 +115,52 @@ export async function dynamicAnalyze(target, opts) {
      * la interacción, más las navegaciones del marco principal. Lo abortado se
      * anota y sale en los avisos: callarlo sería peor que no bloquearlo.
      */
+    /* Y una vez armado, NO se desarma: es un pestillo, no un interruptor.
+     *
+     * Estaba escrito como interruptor —`navBlocked = true` al empezar cada fase de
+     * interacción, `= false` al acabarla— y eso deja una rendija por la que se
+     * cuela justo lo que el cortafuegos existe para parar. El manejador de un
+     * control no lanza su petición durante el `click()`: la lanza después, en un
+     * `await`, un `setTimeout` o un `debounce`, que es lo normal. Cuando llega, la
+     * fase ya terminó, `navBlocked` ya es `false`, y la petición sale.
+     *
+     * Reproducido: seis botones cuyo manejador hace `fetch(…, {method:"DELETE"})`
+     * dentro de un `setTimeout`; el cortafuegos abortaba cinco y la sexta llegaba
+     * al servidor — mientras el aviso decía «No han llegado al servidor». Un
+     * `DELETE` ejecutado en el sitio de un cliente, con la sesión del auditor, y el
+     * informe afirmando que no había salido nada.
+     *
+     * Ahora, en cuanto la sonda toca algo, el cortafuegos se queda armado hasta el
+     * final. Las recargas de la SONDA siguen pasando, pero por otra vía
+     * (`propia`), que distingue la navegación que pedimos nosotros de la que
+     * dispara la página: antes se desarmaba el cortafuegos entero para poder
+     * recargar, y en esa ventana volvía a colarse cualquier cosa. */
     let navBlocked = false;
+    let pestillo = false;   // armado permanente: una vez puesto, ya no se quita
+    let propia = false;     // ventana para las recargas que pide la propia sonda
     const bloqueadas = [];
     const soloLectura = opts.soloLectura !== false;
+    const armar = function () { navBlocked = true; pestillo = true; };
+    const desarmar = function () { if (!pestillo) navBlocked = false; };
+    const mismaPagina = function (u) {
+      if (!target.url) return false;
+      try { const a = new URL(u), b = new URL(target.url); return a.origin === b.origin && a.pathname === b.pathname; }
+      catch (e) { return u === target.url; }
+    };
     await page.route("**/*", function (route) {
       const req = route.request();
       if (navBlocked) {
         const metodo = (req.method() || "GET").toUpperCase();
         const esNav = req.isNavigationRequest() && req.frame() === page.mainFrame();
-        if (esNav || (soloLectura && metodo !== "GET" && metodo !== "HEAD")) {
+        if (esNav) {
+          // La recarga que pide la sonda sí pasa; la navegación que dispara la
+          // página, no. Es la misma distinción de siempre, hecha por quién la pide
+          // en vez de por en qué momento llega.
+          if (propia && (metodo === "GET" || metodo === "HEAD") && mismaPagina(req.url())) return route.continue();
+          if (bloqueadas.length < 20) bloqueadas.push(metodo + " " + req.url().slice(0, 120));
+          return route.abort();
+        }
+        if (soloLectura && metodo !== "GET" && metodo !== "HEAD") {
           if (bloqueadas.length < 20) bloqueadas.push(metodo + " " + req.url().slice(0, 120));
           return route.abort();
         }
@@ -140,7 +177,7 @@ export async function dynamicAnalyze(target, opts) {
 
     const reached = []; let trapped = false;
     await fase("tabulación", async function () {
-      navBlocked = true;
+      armar();
       await page.evaluate(function () { var b = document.body || document.documentElement; if (b && b.focus) b.focus(); });
       let sameCount = 0, last = null;
       const seen = new Set();
@@ -157,9 +194,9 @@ export async function dynamicAnalyze(target, opts) {
         last = k;
         if (k && !seen.has(k)) { seen.add(k); reached.push(cur); }
       }
-      navBlocked = false;
+      desarmar();
     });
-    navBlocked = false;
+    desarmar();
     const tabFindings = analyzeTabTrace({ focusables: focusables, reached: reached, trapped: trapped, exhausted: exhausted, tabs: maxTabs });
 
     /* 1 bis) 3.2.1 / 3.2.2: ¿enfocar o cambiar un valor mueve el suelo?
@@ -172,7 +209,7 @@ export async function dynamicAnalyze(target, opts) {
     const ctxEventos = [], noSondados = [];
     let recargasContexto = 0;
     await fase("cambio de contexto", async function () {
-      navBlocked = true;
+      armar();
       const uids = await evalIn(page,
         "return Array.prototype.slice.call(document.querySelectorAll('a[href],button,input:not([type=hidden]),select,textarea,[tabindex]'))" +
         ".filter(function(e){ return __visible(e) && !e.disabled; }).slice(0," + (opts.maxContexto || 20) + ").map(__uid);");
@@ -189,9 +226,9 @@ export async function dynamicAnalyze(target, opts) {
         if (!target.url || recargas >= 6) return false;
         recargas++;
         try {
-          navBlocked = false;
+          propia = true;
           await page.goto(target.url, { waitUntil: opts.waitUntil || "load", timeout: opts.timeout || 30000 });
-          navBlocked = true;
+          propia = false;
           return true;
         } catch (e) { return false; }
       };
@@ -206,9 +243,9 @@ export async function dynamicAnalyze(target, opts) {
           if (target.url && recargas < 4) {
             recargas++;
             try {
-              navBlocked = false;
+              propia = true;
               await page.goto(target.url, { waitUntil: opts.waitUntil || "load", timeout: opts.timeout || 30000 });
-              navBlocked = true;
+              propia = false;
               return await evalIn(page, expr, arg);
             } catch (e3) { /* nada que hacer */ }
           }
@@ -285,9 +322,9 @@ export async function dynamicAnalyze(target, opts) {
         } catch (e) { noSondados.push(uid); /* un control que no se deja sondar no tumba la fase */ }
       }
       recargasContexto = recargas;
-      navBlocked = false;
+      desarmar();
     });
-    navBlocked = false;
+    desarmar();
     const ctxFindings = analyzeContextChange(ctxEventos, noSondados.length);
     if (recargasContexto) avisos.push("Durante la prueba de 3.2.1/3.2.2 hubo que recargar la página " + recargasContexto + " vez/veces: algún control se la llevaba por delante al enfocarlo o al cambiarlo. El cortafuegos impidió que la navegación saliera a la red.");
 
@@ -295,16 +332,16 @@ export async function dynamicAnalyze(target, opts) {
     //    cambia al abrir un acordeón y el índice i deja de apuntar al mismo nodo.
     const discEvents = [];
     await fase("disclosure", async function () {
-      navBlocked = true;  // pulsar un expandible puede lanzar fetch/XHR: ver el cortafuegos
+      armar();  // pulsar un expandible puede lanzar fetch/XHR: ver el cortafuegos
       const uids = await evalIn(page, "return Array.prototype.slice.call(document.querySelectorAll('[aria-expanded]')).slice(0," + (opts.maxWidgets || 15) + ").map(__uid);");
       for (const uid of uids) {
         const before = await evalIn(page, "var el=__el(__arg); if(!el) return null; var c=el.getAttribute('aria-controls'); var tgt=c?document.getElementById(c.split(/\\s+/)[0]):null; return { locator:__loc(el), name:(el.getAttribute('aria-label')||el.textContent||'').trim().replace(/\\s+/g,' ').slice(0,40), expanded: el.getAttribute('aria-expanded'), shown: tgt?__visible(tgt):null };", uid);
         if (!before) continue;
         let clicked = true, reason = null;
-        navBlocked = true;
+        armar();
         try { await page.locator(uid).first().click({ timeout: 2000 }); }
         catch (e) { clicked = false; reason = (e && e.message ? String(e.message).split("\n")[0] : "clic no realizado"); }
-        navBlocked = false;
+        desarmar();
         const after = await evalIn(page, "var el=__el(__arg); if(!el) return null; var c=el.getAttribute('aria-controls'); var tgt=c?document.getElementById(c.split(/\\s+/)[0]):null; return { expanded: el.getAttribute('aria-expanded'), shown: tgt?__visible(tgt):null };", uid);
         discEvents.push({
           locator: before.locator, name: before.name, clicked: clicked, reason: reason,
@@ -313,25 +350,25 @@ export async function dynamicAnalyze(target, opts) {
         });
       }
     });
-    navBlocked = false;
+    desarmar();
     const discFindings = analyzeDisclosure(discEvents);
 
     // 3) Pestañas
     const tabEvents = [];
     await fase("pestañas", async function () {
-      navBlocked = true;
+      armar();
       const uids = await evalIn(page, "return Array.prototype.slice.call(document.querySelectorAll('[role=tab]')).slice(0," + (opts.maxWidgets || 15) + ").map(__uid);");
       for (const uid of uids) {
         let clicked = true, reason = null;
-        navBlocked = true;
+        armar();
         try { await page.locator(uid).first().click({ timeout: 2000 }); }
         catch (e) { clicked = false; reason = (e && e.message ? String(e.message).split("\n")[0] : "clic no realizado"); }
-        navBlocked = false;
+        desarmar();
         const st = await evalIn(page, "var el=__el(__arg); if(!el) return null; var tabs=document.querySelectorAll('[role=tab]'); var others=0; Array.prototype.forEach.call(tabs,function(t){ if(t!==el && t.getAttribute('aria-selected')==='true') others++; }); var c=el.getAttribute('aria-controls'); var tgt=c?document.getElementById(c.split(/\\s+/)[0]):null; return { locator:__loc(el), name:(el.textContent||'').trim().replace(/\\s+/g,' ').slice(0,40), selectedAfter: el.getAttribute('aria-selected'), othersSelected: others, panelShown: tgt?__visible(tgt):null };", uid);
         if (st) tabEvents.push(Object.assign(st, { clicked: clicked, reason: reason }));
       }
     });
-    navBlocked = false;
+    desarmar();
     const tabWidgetFindings = analyzeTabs(tabEvents);
 
     // 4) Errores de formulario forzados
@@ -354,7 +391,7 @@ export async function dynamicAnalyze(target, opts) {
         if (formMode === "submit") {
           avisos.push("forms:\"submit\" — el formulario se ha enviado DE VERDAD al servidor de destino.");
         } else {
-          navBlocked = true; // cortafuegos de red
+          armar(); // cortafuegos de red
         }
 
         const trace = await evalIn(page, `
@@ -405,7 +442,7 @@ export async function dynamicAnalyze(target, opts) {
           return { uid: __arg.uid, intercepted: intercepted, listener: !!intercept };
         `, { uid: cand.uid, seguro: formMode !== "submit" });
 
-        if (!trace) { formInfo.motivo = "el formulario desapareció del DOM"; navBlocked = false; return; }
+        if (!trace) { formInfo.motivo = "el formulario desapareció del DOM"; desarmar(); return; }
         await page.waitForTimeout(400);
 
         const campos = await evalIn(page, `
@@ -428,7 +465,7 @@ export async function dynamicAnalyze(target, opts) {
           "try{ window.__a11yQuitarSubmit && window.__a11yQuitarSubmit(); }catch(e){} " +
           "delete window.__a11yRestaurarCampos; delete window.__a11yQuitarSubmit; return true;").catch(function () {});
 
-        navBlocked = false;
+        desarmar();
         if (campos) {
           formInfo.probado = true;
           formInfo.interceptado = !!trace.intercepted;
@@ -438,16 +475,48 @@ export async function dynamicAnalyze(target, opts) {
           }
         }
       });
-      navBlocked = false;
+      desarmar();
     }
 
     // Lo abortado SE DICE. Un `POST` que el sitio intentó lanzar al pulsar un
     // expandible es información de auditoría, no ruido: significa que ese control
     // tiene efectos, y que la prueba los ha parado.
+    /* Y se dice lo que el cortafuegos GARANTIZA, que no es lo mismo que «no ha
+     * llegado nada al servidor».
+     *
+     * La frase anterior afirmaba eso, en absoluto, y era falsa mientras el
+     * cortafuegos fue un interruptor que se apagaba al acabar cada fase: una
+     * petición diferida salía después y el aviso seguía diciendo que no. Ahora el
+     * cortafuegos se arma en cuanto la sonda toca algo y no se desarma, así que la
+     * garantía es real — pero empieza cuando empieza la interacción, no antes: lo
+     * que la página lanzara al cargar, antes de que nadie pulse nada, no lo para
+     * esto ni tiene por qué. Se dice tal cual. */
     if (bloqueadas.length) {
       avisos.push("Se han abortado " + bloqueadas.length + " petición(es) con efecto que la página intentó lanzar durante la prueba (" +
         bloqueadas.slice(0, 4).join(" · ") + (bloqueadas.length > 4 ? " · …" : "") +
-        "). No han llegado al servidor. Si alguna es legítima, ten en cuenta que esa parte no se ha ejercitado de verdad.");
+        "). Desde la primera interacción de la sonda no ha salido a la red ninguna petición que no sea de lectura: esas no se han ejecutado en el servidor. " +
+        "Si alguna es legítima, ten en cuenta que esa parte no se ha ejercitado de verdad.");
+    }
+
+    /* Y lo último de todo: apagar la página antes de recoger.
+     *
+     * El cortafuegos vive en `page.route`, que deja de existir cuando el navegador
+     * se cierra. Un `setTimeout` que el manejador de un control dejó pendiente
+     * puede dispararse justo en ese hueco —entre la última fase y el cierre— y
+     * entonces su petición sale sin pasar por la ruta. Es un fallo intermitente, y
+     * se veía como tal: la misma página, seis `DELETE` diferidos, y uno de cada
+     * tres intentos dejaba llegar el último al servidor, con el aviso diciendo que
+     * se habían abortado los seis (que es verdad: se abortó, y además salió).
+     *
+     * Ir a `about:blank` destruye el documento y con él todos sus temporizadores y
+     * peticiones pendientes, y no es una petición de red, así que no la para el
+     * propio cortafuegos. Si falla, se dice en los errores: cerrar sin apagar es
+     * exactamente el caso que esto viene a cubrir. */
+    try {
+      await page.goto("about:blank", { timeout: 5000 });
+    } catch (e) {
+      errores.push({ capa: "cierre", error: "no se pudo apagar la página antes de cerrar (" +
+        ((e && e.message) || e) + "): una petición diferida podría haber salido después de la prueba." });
     }
 
     const findings = [].concat(tabFindings, ctxFindings, discFindings, tabWidgetFindings, errFindings);

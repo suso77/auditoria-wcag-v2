@@ -194,3 +194,61 @@ test("el recorrido completo del componente de prueba, con NVDA en inglés", asyn
   assert.equal(out.summary.confirmado, 3, "los otros tres: " + JSON.stringify(porLoc));
   assert.equal(out.summary["no-encontrado"], 0);
 });
+
+/* ── Regresión: el nombre se compara por PALABRA, no por subcadena ──────────
+ *
+ * El arreglo por palabra completa se hizo en `alignPredictedToSpoken` y no se
+ * trajo a `compareAnnouncement`, que seguía usando `indexOf` sobre las cadenas
+ * normalizadas. Así, «Ver» casaba dentro de «Verificar mis datos» y el puente
+ * devolvía `confirmado` con la nota «el lector anuncia el nombre y el rol
+ * previstos» sobre un elemento que el lector anuncia con OTRO nombre.
+ *
+ * Es el peor error posible en este módulo: no un fallo de detección, sino una
+ * evidencia falsa escrita por nosotros. El puente existe para que un 4.1.2 deje
+ * de ser una hipótesis; si confirma lo que no ha comprobado, no sirve para nada.
+ */
+test("regresión: un nombre que es prefijo de otra palabra NO se da por confirmado", () => {
+  [["Ver", "botón, Verificar mis datos", "button"],
+   ["Ir", "enlace, Iribarren", "link"],
+   ["Alta", "botón, Altavoz", "button"],
+   ["Envío", "botón, Envíos internacionales pendientes", "button"]
+  ].forEach(([name, spoken, role]) => {
+    const r = compareAnnouncement({ name, role }, spoken, "voiceover");
+    assert.equal(r.verdict, "divergente", "«" + name + "» dentro de «" + spoken + "» no es el mismo nombre");
+    assert.equal(r.nameFound, false);
+  });
+});
+
+test("y el nombre que sí está, como secuencia de palabras, sigue confirmándose", () => {
+  [["Ver", "botón, Ver", "button"],
+   ["Ver más", "botón, Ver más tarde", "button"],
+   ["Ir a", "enlace, Ir a", "link"],
+   ["Enviar formulario", "button, Enviar formulario", "button"],
+   ["Envíos", "botón, Envíos internacionales", "button"]
+  ].forEach(([name, spoken, role]) => {
+    const r = compareAnnouncement({ name, role }, spoken, "voiceover");
+    assert.equal(r.verdict, "confirmado", "«" + name + "» sí está en «" + spoken + "»");
+  });
+});
+
+test("regresión: un nodo SIN nombre no se queda con el nombre del vecino", async () => {
+  /* El emparejamiento descartaba los tokens de dos letras por no distinguir, y con
+   * eso un nombre hecho solo de palabras cortas —«Ir a»— no puntuaba por nombre.
+   * Empataba con el nodo sin nombre (los dos puntúan solo por el rol) y el
+   * desempate por orden se la llevaba el que NO tiene nombre: el enlace-imagen sin
+   * `alt` salía nombrado «Ir a», y su 4.1.2 como «posible falso positivo del
+   * motor». La absolución exacta que este emparejamiento existe para impedir. */
+  const html = '<div><a href="/x"><img src="i.png"></a></div>\n<div><a href="/y">Ir a</a></div>';
+  const out = await bridge(html, {
+    lector: "voiceover",
+    capture: async () => [{ step: 0, spoken: "enlace, Ir a" }, { step: 1, spoken: "enlace" }]
+  });
+  const sinNombre = out.results.find((r) => !r.predicted.name);
+  const conNombre = out.results.find((r) => r.predicted.name === "Ir a");
+  assert.equal(sinNombre.spoken, "enlace", "la frase sin nombre es la que le toca");
+  assert.equal(sinNombre.verdict, "barrera-confirmada");
+  assert.equal(conNombre.spoken, "enlace, Ir a");
+  assert.equal(conNombre.verdict, "confirmado");
+  assert.equal(out.summary["barrera-confirmada"], 1);
+  assert.equal(out.summary.divergente, 0);
+});

@@ -20,6 +20,34 @@
 import { understand, analyze, announcement } from "./engine.js";
 import { normalize, spokenHasRole, stripReaderNoise, esRuidoDeEscritorio, ROLE_KEYWORDS } from "./reader-lexicon.js";
 
+/* ¿Está el nombre previsto DENTRO de la frase, como secuencia de palabras enteras?
+ *
+ * Con `indexOf` sobre las cadenas ya normalizadas, «Ver» casaba dentro de
+ * «Verificar mis datos», «Ir» dentro de «Iribarren» y «Alta» dentro de
+ * «Altavoz»: el puente devolvía `confirmado` con la nota «el lector anuncia el
+ * nombre y el rol previstos» sobre un elemento que el lector anuncia con OTRO
+ * nombre. Es la peor clase de error de este proyecto: no un fallo de detección,
+ * sino una evidencia falsa escrita por nosotros en un informe con efectos
+ * legales. (El mismo arreglo se hizo en `alignPredictedToSpoken` y no se trajo
+ * aquí.)
+ *
+ * Se compara por secuencia de palabras completas, así que «Ver» casa con «botón,
+ * Ver» y con «Ver más tarde», pero no con «Verificar». Palabras de dos letras
+ * incluidas: aquí se exige la secuencia entera, no tokens sueltos, y «Ir a» tiene
+ * que aparecer como «ir» seguido de «a».
+ */
+function palabras(s) { return String(s || "").split(/[^a-z0-9ñ]+/).filter(Boolean); }
+function contienePalabras(heno, aguja) {
+  const h = palabras(heno), a = palabras(aguja);
+  if (!a.length) return false;
+  for (let i = 0; i + a.length <= h.length; i++) {
+    let casa = true;
+    for (let j = 0; j < a.length; j++) if (h[i + j] !== a[j]) { casa = false; break; }
+    if (casa) return true;
+  }
+  return false;
+}
+
 // Texto que queda tras quitar ruido del lector y las palabras del rol: si es
 // trivial, el lector no pronunció ningún nombre.
 function residualName(spoken, role, lector) {
@@ -57,7 +85,7 @@ export function compareAnnouncement(predicted, spoken, lector) {
 
   const roleFound = spokenHasRole(spoken, predicted.role);
   const expectName = normalize(predicted.name || "");
-  const nameFound = expectName ? normalize(cleaned).indexOf(expectName) !== -1 : null;
+  const nameFound = expectName ? contienePalabras(normalize(cleaned), expectName) : null;
 
   let verdict, note;
   if (!expectName) {
@@ -170,11 +198,34 @@ function alignPredictedToSpoken(predicted, phrases, lector) {
       const tokens = new Set(clean.split(/[^a-z0-9ñ]+/).filter(Boolean));
       let score = 0;
       if (p.name) {
+        /* El nombre COMPLETO puntúa, además de sus palabras largas.
+         *
+         * Descartar los tokens de dos letras deja sin puntuación los nombres
+         * hechos solo de palabras cortas —«Ir a», «Sí», los números de una
+         * paginación—. Ese nodo empataba con uno SIN nombre (los dos puntúan solo
+         * por el rol) y el desempate por orden se la llevaba el nodo sin nombre:
+         * el enlace-imagen sin `alt` aparecía nombrado «Ir a» y su 4.1.2 salía
+         * como «posible falso positivo del motor». Justo la absolución que este
+         * emparejamiento se reescribió para impedir.
+         *
+         * Con la secuencia entera esos nombres vuelven a puntuar, y fuerte: casar
+         * el nombre completo vale más que casar palabras sueltas. */
+        if (contienePalabras(clean, normalize(p.name))) score += 3;
         normalize(p.name).split(/[^a-z0-9ñ]+/).forEach(function (tok) {
           if (tok && tok.length > 2 && tokens.has(tok)) score += 2;
         });
       }
       if (spokenHasRole(ph.spoken, p.role)) score += 1;
+      /* Y una frase con nombre no se le adjudica a un nodo SIN nombre mientras
+       * otro nodo previsto reclame ese nombre. Solo por el rol, cualquier frase
+       * encaja con cualquier control del mismo rol, y la que lleva nombre es
+       * precisamente la que no puede acabar en el nodo que no lo tiene. */
+      if (!p.name && score === 1) {
+        const residuo = residualName(ph.spoken, p.role, lector);
+        if (residuo.length >= 2 && predicted.some(function (q) {
+          return q !== p && q.name && contienePalabras(residuo, normalize(q.name));
+        })) return;
+      }
       if (score > 0) candidatas.push({ pi: pi, fi: fi, score: score });
     });
   });

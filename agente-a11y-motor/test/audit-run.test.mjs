@@ -15,7 +15,9 @@ test("axe aporta al informe lo que el motor NO ha visto", () => {
   assert.equal(out[0].verdict, "falla");
   assert.equal(out[0].sev, "crítica");
   assert.equal(out[0].origen, "axe-core");
-  assert.deepEqual(out[0].nodes, [{ locator: "img.logo", name: "image-alt" }]);
+  // `path` viaja vacío cuando axe no trae ruta resuelta: el selector de axe no se
+  // inventa como si fuera la ruta canónica del motor.
+  assert.deepEqual(out[0].nodes, [{ locator: "img.logo", name: "image-alt", path: "" }]);
   assert.match(out[0].evid[0], /axe-core «image-alt»/);
 });
 
@@ -77,4 +79,62 @@ test("regresión: la muestra se ordena antes de elegir, así la semilla basta", 
   const B = seleccionarMuestra(c.slice().reverse(), { semilla: "S", max: 8 });
   assert.equal(urls(A), urls(B), "el orden de entrada no puede cambiar la muestra");
   assert.notEqual(urls(A), urls(seleccionarMuestra(c, { semilla: "T", max: 8 })), "otra semilla sí");
+});
+
+/* ── Regresión: cruzar motor y axe por ELEMENTO, no por cadena ──────────────
+ *
+ * El motor nombra un elemento con su ruta canónica
+ * (`html > body > main:nth-of-type(1) > img:nth-of-type(1)`) y axe con su propio
+ * selector mínimo (`img[src="a.png"]`, `a`, `.btn > span`). Son dos maneras de
+ * nombrar el MISMO elemento, y la deduplicación comparaba las cadenas: no casaba
+ * nunca. Resultado: la misma imagen sin alt salía dos veces en el IRA —una fila
+ * por fuente— y `num_barreras` iba al doble. La ruta la resuelve
+ * `render-analyze.js` con la página abierta y viaja en `__path`.
+ */
+test("regresión: axe no duplica un elemento que el motor ya vio, aunque lo nombre distinto", () => {
+  const RUTA = "html > body > main:nth-of-type(1) > img:nth-of-type(1)";
+  const v = {
+    id: "image-alt", impact: "critical", help: "h", tags: ["wcag2a", "wcag111"],
+    // Lo que axe devuelve de verdad: su selector, más la ruta ya resuelta.
+    nodes: [{ target: ['img[src="a.png"]'], __path: RUTA }]
+  };
+  // El motor apunta la RUTA (así lo hace ahora `auditRun`).
+  assert.deepEqual(axeFindingsNuevos([v], { "1.1.1": [RUTA] }), [],
+    "mismo elemento, dos nombres: una sola fila");
+  // Y si de verdad es otro elemento, entra.
+  const otro = axeFindingsNuevos([v], { "1.1.1": ["html > body > main:nth-of-type(1) > img:nth-of-type(2)"] });
+  assert.equal(otro.length, 1);
+  assert.equal(otro[0].nodes[0].path, RUTA, "la ruta llega al informe: la columna Selector la necesita");
+  assert.match(otro[0].evid.join(" "), /axe-core «image-alt»/);
+});
+
+test("regresión: no se dice «ya los había detectado el motor» cuando el motor no vio nada", () => {
+  // Dos reglas de axe sobre el mismo elemento y el mismo criterio. Hay que
+  // quedarse con una fila, sí, pero eso no lo detectó el motor: la frase era una
+  // evidencia falsa escrita por nosotros en un entregable con efectos legales.
+  const mismas = [
+    { id: "image-alt",     impact: "critical", help: "A", tags: ["wcag2a", "wcag111"], nodes: [{ target: ["main > img"] }] },
+    { id: "role-img-alt",  impact: "serious",  help: "B", tags: ["wcag2a", "wcag111"], nodes: [{ target: ["main > img"] }] }
+  ];
+  const out = axeFindingsNuevos(mismas, {});
+  assert.equal(out.length, 1);
+  assert.equal(out[0].nodes.length, 1, "un elemento, una fila");
+  assert.ok(!out[0].evid.some((e) => /ya los había detectado el motor/.test(e)),
+    "el motor no vio nada: no se puede decir que lo viera");
+  assert.match(out[0].evid.join(" "), /image-alt/);
+  assert.match(out[0].evid.join(" "), /role-img-alt/, "las dos reglas se siguen citando");
+
+  // Y cuando el motor SÍ lo vio, la frase vuelve, porque entonces es verdad.
+  const conMotor = axeFindingsNuevos(
+    [{ id: "image-alt", impact: "critical", help: "A", tags: ["wcag2a", "wcag111"],
+       nodes: [{ target: ["main > img"] }, { target: ["main > img.otra"] }] }],
+    { "1.1.1": ["main > img"] }
+  );
+  assert.match(conMotor[0].evid.join(" "), /1 elemento\(s\) ya los había detectado el motor/);
+});
+
+test("el target de axe se acepta como lista o como cadena", () => {
+  const comoCadena = { id: "image-alt", impact: "critical", help: "h", tags: ["wcag2a", "wcag111"],
+    nodes: [{ target: "main > img" }] };
+  assert.equal(axeFindingsNuevos([comoCadena], {})[0].nodes[0].locator, "main > img");
 });

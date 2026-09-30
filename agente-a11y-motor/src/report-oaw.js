@@ -92,6 +92,13 @@ export function barreras(findings, ctx) {
         // 1.3.1 pueden ser `-I` (una tabla) y `-D` (una lista).
         const oaw = letraOAW(f, { overrides: ctx.overrides, nodo: nd });
         rows.push(Object.assign({}, base, {
+          // Y el NODO manda sobre el hallazgo, cuando sabe de qué página es. El
+          // cuaderno de la muestra sella sus hallazgos como «(toda la muestra)»
+          // —el criterio es del sitio— pero cada elemento del expediente viene de
+          // una página concreta. Sin esto, un `falla` firmado sobre veinte
+          // enlaces dejaba veinte filas con la Página sin resolver, que es justo
+          // el dato que hace falta para ir a arreglarlo.
+          pagina: (nd && nd.url) || base.pagina,
           elemento: nd ? (nd.locator + (nd.name ? " «" + nd.name + "»" : "")) : "",
           // El locator se lee; el selector IDENTIFICA. Dos <img> sin id ni clase
           // son las dos «img», y con eso no se puede ir a buscar el elemento.

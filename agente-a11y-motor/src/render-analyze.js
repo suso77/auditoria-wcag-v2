@@ -122,7 +122,48 @@ export async function analyzeRendered(target, opts) {
         const { createRequire } = await import("module");
         const require = createRequire(import.meta.url);
         await page.addScriptTag({ path: require.resolve("axe-core/axe.min.js") });
-        const r = await page.evaluate(async function () { return await axe.run(document, { resultTypes: ["violations"] }); });
+        /* Cada nodo de axe sale con la RUTA del motor al lado, resuelta aquí.
+         *
+         * axe identifica los elementos con su propio selector mínimo
+         * (`img[src="a.png"]`, `a`, `.btn > span`); el motor los identifica con la
+         * ruta canónica `html > body > tag:nth-of-type(n) > …`. Son dos maneras de
+         * nombrar el MISMO elemento, y comparar las cadenas no casa nunca: por eso
+         * la deduplicación motor↔axe no se disparaba jamás y la misma imagen sin
+         * alt salía dos veces en el IRA, una por fuente, con `num_barreras` al
+         * doble. El único sitio donde se puede resolver esto es aquí, con la
+         * página abierta: se pasa el selector de axe por `querySelector` y se
+         * calcula la ruta canónica del elemento que devuelve. */
+        const r = await page.evaluate(async function () {
+          const res = await axe.run(document, { resultTypes: ["violations"] });
+          function rutaCanonica(el) {
+            const partes = [];
+            let n = el;
+            while (n && n.nodeType === 1) {
+              const t = n.tagName.toLowerCase();
+              if (t === "html" || t === "body") break;
+              const p = n.parentElement;
+              if (!p) { partes.unshift(t); break; }
+              let i = 1, s = p.firstElementChild;
+              while (s && s !== n) { if (s.tagName === n.tagName) i++; s = s.nextElementSibling; }
+              partes.unshift(t + ":nth-of-type(" + i + ")");
+              n = p;
+            }
+            return partes.length ? "html > body > " + partes.join(" > ") : "body";
+          }
+          (res.violations || []).forEach(function (v) {
+            (v.nodes || []).forEach(function (nd) {
+              // `target` puede ser una cadena o una lista (un nivel por cada
+              // frame anidado); el elemento vive en el último tramo.
+              const t = nd.target;
+              const sel = Array.isArray(t) ? t[t.length - 1] : t;
+              try {
+                const el = typeof sel === "string" ? document.querySelector(sel) : null;
+                nd.__path = el ? rutaCanonica(el) : null;
+              } catch (e) { nd.__path = null; }
+            });
+          });
+          return res;
+        });
         axe = r.violations || [];
       } catch (e) { axe = { error: (e && e.message) || String(e) }; }
     }

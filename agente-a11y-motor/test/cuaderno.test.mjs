@@ -366,3 +366,135 @@ test("cuadernoDeMuestra necesita al menos un cuaderno", () => {
   assert.throws(() => cuadernoDeMuestra([]), /al menos un cuaderno/);
   assert.throws(() => cuadernoDeMuestra(null), /al menos un cuaderno/);
 });
+
+/* ── Regresión: la firma del auditor tiene que sobrevivir a la agregación ───
+ *
+ * Los cuatro casos de abajo salieron de una revisión completa del agente, y los
+ * cuatro estaban rotos a la vez. El peor: un `falla` firmado a mano sobre una
+ * ficha que el motor había marcado «no aplica» salía del informe del SITIO como
+ * «No aplica», y la conformidad pasaba de «No conforme» a «Sin barreras
+ * deterministas en la muestra». Es decir: el agente absolvía al sitio de una
+ * barrera que una persona había confirmado y firmado.
+ */
+
+test("regresión: firmar un veredicto pone la ficha en juego, aunque el motor la hubiera descartado", () => {
+  // Página sin <video>: el motor marca 1.2.5 «no aplica». El auditor mira la
+  // página de verdad y encuentra un reproductor inyectado por JS.
+  const c = cuad("<main><h1>Hola</h1><p>Texto.</p></main>", { url: "https://ej.test/a" });
+  assert.equal(fichaDe(c, "1.2.5").aplica, false, "el motor no ve vídeo en el marcado");
+
+  const firmado = registrarJuicio(c, {
+    criterio: "1.2.5", veredicto: "falla", auditor: "Suso",
+    motivo: "Reproductor inyectado por JS con vídeo sin audiodescripción."
+  });
+  const f = fichaDe(firmado, "1.2.5");
+  assert.equal(f.veredicto, "falla");
+  assert.equal(f.aplica, true, "la firma manda sobre la detección: si hay barrera, el criterio viene al caso");
+
+  // Y un `no-aplica` firmado sí lo deja fuera, que es lo que significa.
+  const fuera = registrarJuicio(c, {
+    criterio: "1.2.4", veredicto: "no-aplica", auditor: "Suso",
+    motivo: "No hay ninguna emisión en directo en todo el sitio."
+  });
+  assert.equal(fichaDe(fuera, "1.2.4").aplica, false);
+});
+
+test("regresión: un falla firmado en una página es un falla del SITIO, no un «No aplica»", () => {
+  const c = cuad("<main><h1>Hola</h1><p>Texto.</p></main>", { url: "https://ej.test/a" });
+  const firmado = registrarJuicio(c, {
+    criterio: "1.2.5", veredicto: "falla", auditor: "Suso",
+    motivo: "Reproductor inyectado por JS con vídeo sin audiodescripción."
+  });
+
+  const muestra = cuadernoDeMuestra([firmado], { sitio: "https://ej.test" });
+  const f = fichaDe(muestra, "1.2.5");
+  assert.equal(f.veredicto, "falla");
+  assert.ok(f.decision, "la decisión del auditor viaja al cuaderno de la muestra");
+  assert.match(f.decision.motivo, /Reproductor inyectado/);
+  assert.match(f.decision.motivo, /https:\/\/ej\.test\/a/, "dice en qué página se firmó");
+  assert.equal(f.decision.auditor, "Suso");
+  assert.equal(muestra.resumen.decididos, 1);
+
+  const h = findingsDelCuaderno(muestra).find((x) => x.c.n === "1.2.5");
+  assert.equal(h.verdict, "falla", "y llega al informe como barrera, no como «no aplica» ni como «humano»");
+  assert.equal(h.sev, "grave");
+});
+
+test("regresión: una firma en una página no cierra el criterio del sitio si falta otra", () => {
+  const conEnlaces = '<main><h1>H</h1><p><a href="/a">Leer más</a> <a href="/b">Más información</a></p></main>';
+  const a = registrarJuicio(cuad(conEnlaces, { url: "https://ej.test/a" }), {
+    criterio: "2.4.4", veredicto: "cumple", auditor: "Suso",
+    motivo: "El contexto de cada enlace deja claro a dónde lleva."
+  });
+  const b = cuad(conEnlaces, { url: "https://ej.test/b" });   // sin firmar
+
+  const muestra = cuadernoDeMuestra([a, b]);
+  const f = fichaDe(muestra, "2.4.4");
+  assert.equal(f.decision, null, "un `cumple` en A no dice nada de B");
+  assert.ok((f.loQueYaSabemos || []).some((s) => /Decidido a mano en 1 de 2/.test(s)),
+    "pero el trabajo hecho se dice, para que nadie lo repita");
+  assert.equal(findingsDelCuaderno(muestra).find((x) => x.c.n === "2.4.4").verdict, "humano");
+
+  // Firmadas las dos, el sitio hereda la peor.
+  const bFirmada = registrarJuicio(b, {
+    criterio: "2.4.4", veredicto: "falla", auditor: "Ana",
+    motivo: "Aquí «Leer más» se repite doce veces sin contexto que lo distinga."
+  });
+  const cerrada = cuadernoDeMuestra([a, bFirmada]);
+  const g = fichaDe(cerrada, "2.4.4");
+  assert.equal(g.veredicto, "falla", "el peor de los dos manda");
+  assert.match(g.decision.auditor, /Ana/);
+  assert.equal(findingsDelCuaderno(cerrada).find((x) => x.c.n === "2.4.4").verdict, "falla");
+});
+
+test("regresión: un falla firmado se lleva TODOS los elementos, no ocho", () => {
+  // En el IRA cada elemento afectado es una fila de «Barreras» y alimenta
+  // `num_barreras`: recortar a ocho no recortaba una lista de ejemplos, mentía en
+  // el recuento. Veinte enlaces salían como ocho.
+  const enlaces = Array.from({ length: 20 }, (_, i) => '<a href="/p' + i + '">Leer más</a>').join(" ");
+  const c = cuad("<main><h1>H</h1><p>" + enlaces + "</p></main>", { url: "https://ej.test/a" });
+  assert.equal(fichaDe(c, "2.4.4").queMirar.length, 20);
+
+  const firmado = registrarJuicio(c, {
+    criterio: "2.4.4", veredicto: "falla", auditor: "Suso",
+    motivo: "Veinte enlaces «Leer más» sin contexto que los distinga."
+  });
+  const h = findingsDelCuaderno(firmado).find((x) => x.c.n === "2.4.4");
+  assert.equal(h.nodes.length, 20, "una fila por elemento afectado");
+
+  // En los demás veredictos el tope sigue, pero se dice cuántos quedan fuera.
+  const aRevisar = registrarJuicio(c, {
+    criterio: "2.4.4", veredicto: "revisar", auditor: "Suso",
+    motivo: "Hay que verlos con el contexto delante, uno por uno."
+  });
+  const r = findingsDelCuaderno(aRevisar).find((x) => x.c.n === "2.4.4");
+  assert.equal(r.nodes.length, 8);
+  assert.ok(r.evid.some((e) => /Se listan 8 de 20/.test(e)), "y no se recorta en silencio");
+});
+
+/* ── Regresión: una muestra con huecos no puede declarar «no aplica» ──────── */
+
+test("regresión: con páginas sin auditar, «no aplica en el sitio» se queda en pendiente", () => {
+  const c = cuad("<main><h1>Hola</h1><p>Texto.</p></main>", { url: "https://ej.test/a" });
+
+  // Sin huecos: el criterio se cierra, como debe.
+  const limpia = cuadernoDeMuestra([c]);
+  assert.equal(fichaDe(limpia, "1.2.5").aplica, false);
+  assert.equal(findingsDelCuaderno(limpia).find((x) => x.c.n === "1.2.5").verdict, "no-aplica");
+
+  // Con dos páginas caídas de tres, de esas dos no se sabe si tenían vídeo.
+  const conHuecos = cuadernoDeMuestra([c], { sinAnalizar: ["https://ej.test/b", "https://ej.test/c"] });
+  const f = fichaDe(conHuecos, "1.2.5");
+  assert.equal(f.aplica, true, "no se puede afirmar que no venga al caso en el sitio");
+  assert.equal(f.veredicto, null);
+  assert.ok((f.loQueYaSabemos || []).some((s) => /no se auditaron/.test(s)), "y se dice por qué");
+  assert.equal(findingsDelCuaderno(conHuecos).find((x) => x.c.n === "1.2.5").verdict, "humano");
+
+  // Un falla firmado sí se mantiene: una barrera confirmada basta.
+  const firmado = registrarJuicio(c, {
+    criterio: "1.2.5", veredicto: "falla", auditor: "Suso",
+    motivo: "Reproductor inyectado por JS sin audiodescripción."
+  });
+  const conFalla = cuadernoDeMuestra([firmado], { sinAnalizar: ["https://ej.test/b"] });
+  assert.equal(fichaDe(conFalla, "1.2.5").veredicto, "falla");
+});

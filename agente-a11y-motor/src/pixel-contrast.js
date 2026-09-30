@@ -190,7 +190,7 @@ function __uid(el){
 function __loc(el){
   var t=el.tagName.toLowerCase();
   if(el.id) return t+'#'+el.id;
-  var c=(el.getAttribute('class')||'').trim().split(/\s+/).filter(Boolean)[0];
+  var c=(el.getAttribute('class')||'').trim().split(/\\s+/).filter(Boolean)[0];
   return c ? t+'.'+c : t;
 }
 function __propio(el){ var s='',k=el.childNodes||[]; for(var i=0;i<k.length;i++) if(k[i].nodeType===3) s+=k[i].nodeValue||''; return s.replace(/\\s+/g,' ').trim(); }

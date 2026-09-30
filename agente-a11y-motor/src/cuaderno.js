@@ -668,7 +668,23 @@ export function registrarJuicio(cuaderno, d) {
     evidencia: Array.isArray(d.evidencia) ? d.evidencia.slice(0, 20) : []
   };
   const criterios = cuaderno.criterios.slice();
-  criterios[i] = Object.assign({}, criterios[i], { decision: decision, veredicto: d.veredicto });
+  /* `aplica` lo decide la FIRMA, no la detección previa.
+   *
+   * El agente marca `aplica: false` cuando no ve el supuesto en el marcado —un
+   * 1.2.5 sin `<video>`, por ejemplo—. Pero el auditor mira la página de verdad:
+   * si firma un `falla` ahí, es que había un reproductor inyectado por JS que el
+   * marcado no delataba. Dejar `aplica: false` debajo de esa firma hacía que
+   * `cuadernoDeMuestra` descartara la ficha como «no viene al caso en ninguna
+   * página» y el `falla` firmado saliera del informe convertido en «No aplica»:
+   * la conformidad del sitio pasaba de «No conforme» a «Sin barreras».
+   *
+   * Así que la decisión manda en las dos direcciones: cualquier veredicto que no
+   * sea `no-aplica` significa que el criterio SÍ viene al caso. */
+  criterios[i] = Object.assign({}, criterios[i], {
+    decision: decision,
+    veredicto: d.veredicto,
+    aplica: d.veredicto !== "no-aplica"
+  });
   return Object.assign({}, cuaderno, { criterios: criterios, resumen: resumenDe(criterios) });
 }
 
@@ -687,13 +703,25 @@ export function findingsDelCuaderno(cuaderno) {
     const base = { c: { n: c.criterio, t: c.nombre, lvl: c.nivel }, en: c.en, scope: "juicio", sev: null };
     if (c.decision) {
       const d = c.decision;
+      const todos = (c.queMirar || []).map(function (m) { return { locator: m.locator, name: "", path: m.path, url: m.pagina || undefined }; });
+      /* Un `falla` firmado se lleva TODOS los elementos, sin tope.
+       *
+       * En el IRA cada elemento afectado es una fila de «Barreras», así que el
+       * tope de 8 no recortaba una lista de ejemplos: recortaba el recuento de
+       * barreras. Veinte enlaces «Leer más» firmados como falla salían como ocho
+       * y `num_barreras` mentía por doce. En los demás veredictos el tope sí es
+       * razonable —ahí la lista es para orientar a quien lee, no para contar— y
+       * se dice cuántos quedan fuera en vez de recortar en silencio. */
+      const recorte = d.veredicto === "falla" ? todos : todos.slice(0, 8);
+      const sobran = todos.length - recorte.length;
       return Object.assign({}, base, {
         verdict: d.veredicto,
         sev: d.veredicto === "falla" ? "grave" : null,
         evid: [
           "Decisión de " + d.auditor + " (" + String(d.fecha).slice(0, 10) + "): " + d.motivo
-        ].concat(d.evidencia.length ? ["Evidencia aportada: " + d.evidencia.join(" · ")] : []),
-        nodes: (c.queMirar || []).slice(0, 8).map(function (m) { return { locator: m.locator, name: "", path: m.path }; })
+        ].concat(d.evidencia.length ? ["Evidencia aportada: " + d.evidencia.join(" · ")] : [])
+          .concat(sobran ? ["Se listan " + recorte.length + " de " + todos.length + " elemento(s) del expediente; el resto está en el cuaderno."] : []),
+        nodes: recorte
       });
     }
     if (!c.aplica) {
@@ -731,6 +759,72 @@ function refPag(m, url) {
   return { locator: m.locator, path: m.path, detalle: m.detalle, pagina: url || null };
 }
 
+/**
+ * La decisión del SITIO a partir de las decisiones por página.
+ *
+ * @param {Array<{url:string, f:object}>} firmadas  fichas con `decision`.
+ * @param {Array<{url:string, f:object}>} aplican   fichas donde el criterio viene al caso.
+ * @returns {object|null} una `decision` agregada, o `null` si el criterio sigue pendiente.
+ */
+function decisionDeMuestra(firmadas, aplican) {
+  if (!firmadas.length) return null;
+
+  const junta = function (elegidas, nota) {
+    const peor = elegidas.reduce(function (a, x) {
+      return peorVeredicto(a, x.f.decision.veredicto);
+    }, null);
+    const fechas = elegidas.map(function (x) { return String(x.f.decision.fecha); }).sort();
+    const autores = [];
+    elegidas.forEach(function (x) {
+      if (autores.indexOf(x.f.decision.auditor) === -1) autores.push(x.f.decision.auditor);
+    });
+    return {
+      veredicto: peor,
+      motivo: nota + " " + elegidas.map(function (x) {
+        return x.url + ": «" + x.f.decision.motivo + "» (" + x.f.decision.auditor + ", " +
+          String(x.f.decision.fecha).slice(0, 10) + ", " + x.f.decision.veredicto + ")";
+      }).join(" · "),
+      auditor: autores.join(", "),
+      fecha: fechas[fechas.length - 1],
+      evidencia: elegidas.reduce(function (a, x) { return a.concat(x.f.decision.evidencia || []); }, []).slice(0, 20),
+      porPagina: elegidas.map(function (x) {
+        return { pagina: x.url, veredicto: x.f.decision.veredicto, auditor: x.f.decision.auditor,
+          fecha: x.f.decision.fecha, motivo: x.f.decision.motivo };
+      })
+    };
+  };
+
+  // 1) Un falla firmado en cualquier página es un falla del sitio.
+  const fallan = firmadas.filter(function (x) { return x.f.decision.veredicto === "falla"; });
+  if (fallan.length) {
+    return junta(fallan, "Barrera confirmada a mano en " + fallan.length + " página(s) de la muestra —" +
+      "basta una para que el sitio no sea conforme—:");
+  }
+
+  // 2) Todas las que aplican, firmadas: el sitio hereda la peor.
+  const sinFirmar = aplican.filter(function (x) { return !x.f.decision; });
+  if (!sinFirmar.length) {
+    return junta(firmadas, "Decidido a mano en todas las páginas donde el criterio viene al caso:");
+  }
+
+  // 3) Queda trabajo: el criterio sigue pendiente. Las firmas se cuentan arriba,
+  //    en `loQueYaSabemos`, pero no cierran el criterio del sitio.
+  return null;
+}
+
+/* El orden de gravedad, solo para los cuatro veredictos que una persona firma.
+ * No se importa de `verdicts.js` a propósito: este módulo lo empaqueta
+ * `build-artifact.mjs` en la región ENGINE, que no arrastra dependencias. */
+const PEOR = { falla: 4, revisar: 3, cumple: 2, "no-aplica": 1 };
+/* Un veredicto desconocido cuenta como `revisar`: nunca como conforme (sería
+ * exportar como correcto algo que nadie ha comprobado) y nunca por encima de un
+ * `falla` (taparía una barrera confirmada con una palabra que no entendemos). */
+function peorVeredicto(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  return (PEOR[b] || 3) > (PEOR[a] || 3) ? b : a;
+}
+
 /* Cruce de 3.3.7 entre páginas: la misma clave de dato en dos páginas
  * distintas es el caso que ninguna ficha por página puede ver. */
 function redundanciaEntrePaginas(cuadernos) {
@@ -753,7 +847,9 @@ function redundanciaEntrePaginas(cuadernos) {
  * Junta los cuadernos de las páginas de una muestra en uno solo.
  *
  * @param {Array<object>} cuadernos  los que devuelve `cuadernoDeJuicio`, uno por página.
- * @param {{ sitio?:string }} [opts]
+ * @param {{ sitio?:string, sinAnalizar?:Array<string> }} [opts]
+ *   `sinAnalizar`: URLs de la muestra que NO se pudieron auditar. Cambia el
+ *   resultado, no solo el texto: ver abajo.
  */
 export function cuadernoDeMuestra(cuadernos, opts) {
   opts = opts || {};
@@ -761,18 +857,98 @@ export function cuadernoDeMuestra(cuadernos, opts) {
   if (!lista.length) throw new Error("cuadernoDeMuestra necesita al menos un cuaderno de página");
   const urls = lista.map(function (c) { return c.url || "(sin url)"; });
 
+  /* Páginas de la muestra que no se llegaron a auditar.
+   *
+   * Con huecos en la muestra, «no aplica en el sitio» deja de ser una conclusión
+   * y pasa a ser una suposición: de las páginas que no cargaron no se sabe si
+   * tenían vídeo, formularios o límites de tiempo. Y es exactamente el error que
+   * este módulo dice existir para no cometer —declarar «no aplica» porque no
+   * aplicaba en las páginas que sí se vieron—. Con tres páginas y dos caídas, el
+   * cuaderno llegaba a poner nueve criterios como «No aplica» para el sitio
+   * entero sobre la base de UNA página. Así que, si falta alguna, un «no aplica»
+   * se queda en pendiente y lo dice. Lo que no cambia: un `falla` firmado sigue
+   * siendo un `falla`, y lo que ya estaba pendiente sigue pendiente. */
+  const huecos = (opts.sinAnalizar || []).filter(Boolean);
+  const avisoHueco = huecos.length
+    ? "ATENCIÓN: " + huecos.length + " página(s) de la muestra no se auditaron (" +
+      huecos.slice(0, 4).join(", ") + (huecos.length > 4 ? ", …" : "") +
+      "), así que no se puede afirmar que el criterio no venga al caso en el sitio: solo que no venía al caso en las que sí se vieron."
+    : null;
+
   const criterios = CRITERIOS_DE_JUICIO.map(function (n) {
     const fichas = lista.map(function (c, i) {
       return { url: urls[i], f: (c.criterios || []).find(function (x) { return x.criterio === n; }) };
     }).filter(function (x) { return x.f; });
 
     const aplican = fichas.filter(function (x) { return x.f.aplica; });
+    const firmadas = fichas.filter(function (x) { return x.f.decision; });
     const modelo = (aplican[0] || fichas[0]).f;
 
+    /* Lo FIRMADO va primero, y por encima de la detección.
+     *
+     * `cuadernoDeMuestra` agregaba mirando solo `aplica` y `veredicto`, y no
+     * tocaba `decision`. El resultado era que una decisión de auditor no
+     * sobrevivía a la agregación: un `falla` firmado en una página salía del
+     * informe del sitio como `humano` («pendiente de mirar»), y si además el
+     * agente había marcado la ficha «no aplica», como «No aplica». Las dos cosas
+     * borran trabajo hecho y firmado, y la segunda además absuelve al sitio de
+     * una barrera que alguien había confirmado a mano.
+     *
+     * Reglas, en el orden en que se aplican:
+     *  - un `falla` firmado en CUALQUIER página es un `falla` del sitio, sin más
+     *    condiciones: es la regla de oro del motor;
+     *  - si todas las páginas donde el criterio aplica están firmadas, el sitio
+     *    hereda la PEOR de esas decisiones;
+     *  - si queda alguna sin firmar, el criterio sigue pendiente —una firma en la
+     *    página A no dice nada de la B— pero las decisiones ya tomadas se dicen,
+     *    para que nadie repita el trabajo. */
+    const decidido0 = decisionDeMuestra(firmadas, aplican);
+    /* Con huecos en la muestra, un `no-aplica` —venga de la detección o de una
+     * firma— tampoco cierra el criterio: quien firmó miró las páginas que
+     * cargaron, no las que no. La firma no se pierde: se cuenta abajo, en lo que
+     * ya sabemos, y el criterio sigue pendiente hasta que la muestra esté
+     * completa. Un `falla`, un `cumple` o un `revisar` firmados sí se mantienen:
+     * el primero porque una barrera confirmada basta, y los otros dos porque
+     * hablan de contenido que alguien vio de verdad. */
+    const decidido = (avisoHueco && decidido0 && decidido0.veredicto === "no-aplica") ? null : decidido0;
+
+    if (!aplican.length && !firmadas.length) {
+      const porque = "No viene al caso en ninguna de las " + fichas.length + " página(s) de la muestra que sí se auditaron. " +
+        (modelo.loQueYaSabemos || []).join(" ");
+      if (!avisoHueco) return noAplica(n, porque);
+      // Muestra con huecos: no se cierra como «no aplica».
+      return ficha(n, {
+        aplica: true,
+        veredicto: null,
+        pregunta: modelo.pregunta || "¿Viene al caso este criterio en las páginas que no se pudieron auditar?",
+        loQueYaSabemos: [avisoHueco, porque],
+        comoDecidir: (modelo.comoDecidir && modelo.comoDecidir.length ? modelo.comoDecidir : []).concat([
+          "Vuelve a lanzar la auditoría sobre las páginas que fallaron, o míralas a mano: hasta entonces este criterio no se puede cerrar."
+        ])
+      });
+    }
+
+    /* Una ficha firmada `no-aplica` por el auditor y ninguna que aplique: el
+     * sitio no aplica, pero lo dice la FIRMA y no la detección. Se conserva la
+     * decisión para que el motivo y el auditor salgan en el informe. */
     if (!aplican.length) {
-      return noAplica(n,
-        "No viene al caso en ninguna de las " + fichas.length + " página(s) de la muestra. " +
-        (modelo.loQueYaSabemos || []).join(" "));
+      const porque = "No viene al caso en ninguna de las " + fichas.length + " página(s) de la muestra que sí se auditaron. " +
+        (modelo.loQueYaSabemos || []).join(" ");
+      if (decidido) {
+        return Object.assign({}, noAplica(n, porque), { decision: decidido, veredicto: decidido.veredicto });
+      }
+      if (!avisoHueco) return noAplica(n, porque);
+      return ficha(n, {
+        aplica: true,
+        veredicto: null,
+        pregunta: modelo.pregunta || "¿Viene al caso este criterio en las páginas que no se pudieron auditar?",
+        loQueYaSabemos: [avisoHueco, porque].concat(firmadas.length
+          ? ["Ya decidido a mano en " + firmadas.map(function (x) { return x.url + " → " + x.f.decision.veredicto + " («" + x.f.decision.motivo + "», " + x.f.decision.auditor + ")"; }).join(" · ") + "."]
+          : []),
+        comoDecidir: [
+          "Vuelve a lanzar la auditoría sobre las páginas que fallaron, o míralas a mano: hasta entonces este criterio no se puede cerrar."
+        ]
+      });
     }
 
     // Todo lo que hay que mirar, de todas las páginas, con su página al lado.
@@ -792,13 +968,21 @@ export function cuadernoDeMuestra(cuadernos, opts) {
       sabemos.push("En las otras " + (fichas.length - aplican.length) + " no viene al caso, pero el criterio es del sitio: basta una página para que haya que decidirlo.");
     }
 
+    if (firmadas.length) {
+      sabemos.push("Decidido a mano en " + firmadas.length + " de " + fichas.length + " página(s): " +
+        firmadas.map(function (x) { return x.url + " → " + x.f.decision.veredicto; }).join(" · ") + "." +
+        (decidido ? "" : " Falta por decidir en el resto: una firma en una página no cierra el criterio del sitio."));
+    }
+    if (avisoHueco) sabemos.unshift(avisoHueco);
+
     // El veredicto adelantado (2.4.4 sin enlaces vagos, por ejemplo) solo se
     // mantiene si TODAS las páginas donde aplica lo comparten.
     const veredictos = aplican.map(function (x) { return x.f.veredicto; });
     const comun = veredictos.every(function (v) { return v === veredictos[0]; }) ? veredictos[0] : null;
 
     return ficha(n, {
-      veredicto: comun,
+      decision: decidido,
+      veredicto: decidido ? decidido.veredicto : comun,
       pregunta: modelo.pregunta,
       queMirar: queMirar,
       loQueYaSabemos: sabemos,
