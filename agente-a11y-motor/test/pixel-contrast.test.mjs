@@ -183,3 +183,62 @@ test("regresión: color transparent → no se dictamina (lo pinta otra cosa)", (
   assert.equal(r.determinado, false);
   assert.match(r.motivo, /transparent/);
 });
+
+/* ── Regresión: la tolerancia del 2 % absolvía texto ilegible ────────────────
+ *
+ * La tolerancia se justificaba por «el ruido de remuestreo y compresión», y se
+ * aplicaba a píxeles con cobertura ≥ 0.9 — el NÚCLEO del glifo, ya filtrado de
+ * antialiasing—, donde ese ruido no existe. Sobre un degradado ese 2 % son letras
+ * enteras. Y la evidencia llegaba a decir «todo el texto llega al mínimo» junto a
+ * «1.00:1 en el peor punto»: una contradicción en la misma línea.
+ */
+function nucleoPlano(total, ilegibles) {
+  // `total` píxeles de cobertura 1; los `ilegibles` primeros, sobre fondo blanco
+  // (con texto blanco → 1.00:1); el resto sobre un gris oscuro legible.
+  const mk = () => ({ width: total, height: 1, data: new Uint8Array(total * 4) });
+  const A = mk(), B = mk(), F = mk();
+  for (let i = 0; i < total; i++) {
+    const p = i * 4;
+    A.data[p] = 255; A.data[p + 1] = 0; A.data[p + 2] = 255; A.data[p + 3] = 255;
+    B.data[p] = 0; B.data[p + 1] = 255; B.data[p + 2] = 0; B.data[p + 3] = 255;
+    const v = i < ilegibles ? 255 : 40;
+    F.data[p] = v; F.data[p + 1] = v; F.data[p + 2] = v; F.data[p + 3] = 255;
+  }
+  return { sondaA: A, sondaB: B, fondo: F };
+}
+const TXT_BLANCO = { r: 255, g: 255, b: 255, a: 1 };
+
+test("regresión: el 1 % del texto ilegible ya no sale como «pasa»", () => {
+  const r = analizarPixeles(nucleoPlano(1000, 10), TXT_BLANCO, {});
+  assert.equal(r.verdict, "falla", "diez píxeles de núcleo a 1.00:1 no son ruido de compresión");
+  assert.ok(r.peor < 1.05);
+  // Y el 2 % justo, que era el borde exacto de la tolerancia.
+  assert.equal(analizarPixeles(nucleoPlano(1000, 20), TXT_BLANCO, {}).verdict, "falla");
+});
+
+test("regresión: la evidencia no puede decir «todo el texto llega» con 1.00:1 al lado", () => {
+  [0, 1, 3, 4, 10, 20].forEach((malos) => {
+    const r = analizarPixeles(nucleoPlano(1000, malos), TXT_BLANCO, {});
+    const d = detallePixeles(r, "rgb(255 255 255)");
+    if (/todo el texto llega al mínimo/.test(d)) {
+      assert.ok(r.peor >= r.minExigido,
+        "con «todo el texto llega al mínimo» el peor punto tiene que llegar, y es " + r.peor.toFixed(2) + ":1");
+    }
+  });
+});
+
+test("un puñado de píxeles sueltos pide revisión, y no absuelve", () => {
+  // El caso real que justificaba la tolerancia: dos o tres píxeles del borde del
+  // glifo que el filtro de cobertura no acabó de limpiar. `revisar` no es conforme.
+  const r = analizarPixeles(nucleoPlano(1000, 3), TXT_BLANCO, {});
+  assert.equal(r.verdict, "revisar");
+  assert.equal(r.pixelesQueFallan, 3);
+  assert.match(detallePixeles(r, "rgb(255 255 255)"), /píxel\(es\) sueltos por debajo del mínimo/);
+  assert.ok(!/todo el texto llega/.test(detallePixeles(r, "rgb(255 255 255)")));
+});
+
+test("sin ni un píxel por debajo, sigue siendo «pasa»", () => {
+  const r = analizarPixeles(nucleoPlano(1000, 0), TXT_BLANCO, {});
+  assert.equal(r.verdict, "pasa");
+  assert.match(detallePixeles(r, "rgb(255 255 255)"), /todo el texto llega al mínimo/);
+});

@@ -53,8 +53,33 @@ export function analyzeReflow(trace) {
   if (!trace || trace.clientWidth == null) return [];
   const exceso = Math.round(trace.scrollWidth - trace.clientWidth);
   const donde = " a " + trace.w + "×" + trace.h + " px CSS";
+  /* El contenido RECORTADO cuenta, y cuenta antes que la barra.
+   *
+   * Dictaminando solo por el desplazamiento horizontal, un desbordamiento escondido
+   * con `overflow:hidden` no produce barra, `scrollWidth` del documento no crece, y
+   * 1.4.10 salía «cumple» con cientos de píxeles de texto ocultos e inalcanzables a
+   * 320 px CSS. El criterio no habla de barras: exige que no haya pérdida de
+   * información ni de funcionalidad. Esconder lo que no cabe es peor que la barra,
+   * porque ni se ve que falte algo. */
+  const rec = (trace.recortados || []).filter(function (r) { return !r.alcanzable; });
+  if (rec.length) {
+    return [F("1.4.10", "falla", "grave", [
+      rec.length + " bloque(s) de contenido se RECORTAN" + donde + " y lo que sobra no se puede alcanzar: el desbordamiento está oculto con " +
+      "`overflow:" + rec[0].overflow + "`, así que no hay barra ni forma de desplazarlo. " +
+      rec.slice(0, 6).map(function (r) { return r.locator + " (" + r.px + " px ocultos, termina en «…" + r.muestra + "»)"; }).join(" · ") +
+      (rec.length > 6 ? " · …" : "") + ". 1.4.10 exige que no haya pérdida de información, no solo que no haya barra horizontal."
+    ], nodesOf(rec))];
+  }
   if (exceso <= 2) {
-    return [F("1.4.10", "cumple", null, ["Sin desplazamiento horizontal" + donde + " (equivale al 400 % sobre 1280 px)."])];
+    const tapado = (trace.recortados || []).filter(function (r) { return r.alcanzable; });
+    if (tapado.length) {
+      return [F("1.4.10", "revisar", null, [
+        "Sin desplazamiento horizontal" + donde + ", pero " + tapado.length + " contenedor(es) esconden contenido que no les cabe (" +
+        tapado.slice(0, 4).map(function (r) { return r.locator + ", " + r.px + " px"; }).join(" · ") +
+        "). Tienen controles dentro, así que el teclado sí arrastra el contenedor al enfocarlos; comprueba que con el ratón y a la vista también se llegue, porque no hay barra."
+      ], nodesOf(tapado))];
+    }
+    return [F("1.4.10", "cumple", null, ["Sin desplazamiento horizontal ni contenido recortado" + donde + " (equivale al 400 % sobre 1280 px)."])];
   }
   const off = trace.offenders || [];
   const todosExentos = off.length > 0 && off.every(esExento);
@@ -100,7 +125,22 @@ function informeRecorte(n, etiqueta, cambio, trace, sevFalla) {
       return [F(n, "revisar", null, ["Con " + cambio + " no se recorta ni se solapa ningún bloque de texto de los " + cob.medidos +
         " medidos, pero la página tiene " + cob.total + ": el resto NO se ha comprobado. Sube el límite para dictaminar."])];
     }
-    return [F(n, "cumple", null, ["Con " + cambio + " no se recorta ni se solapa ningún bloque de texto (" + (trace.revisados || 0) + " elementos medidos)."])];
+    /* Y «cumple» solo si el cambio SURTIÓ EFECTO.
+     *
+     * `html{font-size:200%}` no toca nada cuando los tamaños están en `px`, que es
+     * lo normal, y el criterio salía «cumple · con el texto al 200 % no se recorta
+     * ni se solapa ningún bloque» sobre una medición de efecto nulo. Ahora la fase
+     * dice por qué vía consiguió duplicarlo; si no lo consiguió por ninguna, no hay
+     * nada medido que declarar conforme. */
+    const ef = trace.efecto;
+    if (ef && ef.muestra && !ef.crecioConLaRaiz && !ef.escalados) {
+      return [F(n, "revisar", null, [
+        "No se ha podido aplicar " + cambio + " a la página: ni cambiando el tamaño de la raíz ni escalando los elementos con texto. " +
+        "No hay medición, así que el criterio queda por comprobar a mano (con el zoom de texto del navegador, no el de página)."
+      ])];
+    }
+    return [F(n, "cumple", null, ["Con " + cambio + " no se recorta ni se solapa ningún bloque de texto (" + (trace.revisados || 0) + " elementos medidos" +
+      (ef && ef.via && ef.via !== "raiz" ? "; el tamaño de la raíz no bastaba —la página declara el texto en px— y se escaló el tamaño computado de " + ef.escalados + " elemento(s), que es lo que hace el zoom de texto del navegador" : "") + ")."])];
   }
   const ev = [];
   if (rec.length) ev.push(rec.length + " bloque(s) de texto se recortan al aplicar " + cambio + " (el contenido queda oculto, sin barra de desplazamiento): " +

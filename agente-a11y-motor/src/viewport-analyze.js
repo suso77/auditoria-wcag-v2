@@ -236,7 +236,56 @@ export async function viewportAnalyze(target, opts) {
               detalle: Math.round(r.right-cw)+' px fuera' });
           }
         }
-        return { w:cw, h:de.clientHeight, scrollWidth:sw, clientWidth:cw, offenders:offenders };`);
+        /* Y el contenido RECORTADO, que es la otra mitad del criterio.
+         *
+         * Dictaminando solo por \`scrollWidth > clientWidth\`, un desbordamiento
+         * escondido con \`overflow:hidden\` no produce barra, \`scrollWidth\` no crece,
+         * y 1.4.10 salía «cumple» con 580 px de texto oculto e inalcanzable a 320 px
+         * CSS. Pero el criterio no habla de barras: habla de que no haya pérdida de
+         * información ni de funcionalidad. Un contenedor que esconde lo que no le
+         * cabe, y sin forma de desplazarlo, es pérdida de información — y es PEOR
+         * que la barra horizontal, porque ni se ve que falte algo.
+         *
+         * Se mira lo que ya se sabía mirar: contenedores cuyo contenido no cabe y
+         * que no se pueden desplazar en ninguna de las dos direcciones. */
+        var recortados=[];
+        var cand=document.body?document.body.querySelectorAll('*'):[];
+        for (var j=0;j<cand.length && recortados.length<25;j++){
+          var e2=cand[j]; if(!__pintado(e2)) continue;
+          var cs2=getComputedStyle(e2);
+          var ox=cs2.overflowX, oy=cs2.overflowY;
+          var esconde = (ox==='hidden'||ox==='clip');
+          if(!esconde) continue;
+          var exceso = e2.scrollWidth - e2.clientWidth;
+          if (exceso <= 2) continue;
+          // ¿Se puede llegar a lo que sobra? Con \`hidden\` el scroll programático
+          // existe pero no hay forma humana de usarlo; con \`clip\` ni eso.
+          /* ¿Se puede llegar a lo que sobra?
+           *
+           * Con \`overflow:hidden\` el desplazamiento por programa existe, pero eso no
+           * es una forma HUMANA de leer el texto: no hay barra ni gesto. La única vía
+           * real es el foco del teclado, que arrastra el contenedor al enfocar algo de
+           * dentro. Así que lo que decide es si hay algo enfocable ahí: con texto
+           * plano, esos píxeles no se pueden leer de ninguna manera y es pérdida de
+           * información; con controles dentro, el teclado llega y queda por comprobar
+           * si el ratón y la vista también. */
+          var conFoco = !!e2.querySelector('a[href],button,input:not([type=hidden]),select,textarea,summary,[tabindex]:not([tabindex="-1"])');
+          var scrollProgramatico = false;
+          if (ox === 'hidden') {
+            var antes = e2.scrollLeft;
+            e2.scrollLeft = exceso;
+            scrollProgramatico = e2.scrollLeft > antes + 1;
+            e2.scrollLeft = antes;
+          }
+          var alcanzable = conFoco && scrollProgramatico;
+          var r2=e2.getBoundingClientRect();
+          if (r2.width<=0||r2.height<=0) continue;
+          var txt=(e2.innerText||e2.textContent||'').replace(/[\\s\\u00a0]+/g,' ').trim();
+          if(!txt) continue;   // sin texto dentro, no hay información que perder
+          recortados.push({ locator:__loc(e2), px:Math.round(exceso), overflow:ox,
+            alcanzable: alcanzable, conFoco: conFoco, muestra: txt.slice(-60) });
+        }
+        return { w:cw, h:de.clientHeight, scrollWidth:sw, clientWidth:cw, offenders:offenders, recortados:recortados };`);
     }, null);
 
     // ── 1.4.4 Redimensionar el texto al 200 % ──
@@ -245,14 +294,74 @@ export async function viewportAnalyze(target, opts) {
       await abrir(page);
       const cobertura = await evalIn(page, "return __coberturaBloques(" + maxBloques + ");");
       const antes = await evalIn(page, "return __instantanea(" + maxBloques + ");");
-      await evalIn(page, `
+      /* El 200 % hay que APLICARLO de verdad, y comprobar que se aplicó.
+       *
+       * `html { font-size: 200% }` no toca nada cuando los tamaños están en `px`,
+       * que es lo normal. El código no lo comprobaba en ningún momento: devolvía
+       * `aplicado: true` y el criterio salía «cumple · con el texto al 200 % no se
+       * recorta ni se solapa ningún bloque». Medido: la fuente seguía en 14px antes
+       * y después, y con el texto duplicado DE VERDAD se ocultaban 116 px de una
+       * tarjeta de alto fijo. Un «cumple» sobre una medición de efecto nulo.
+       *
+       * Así que primero se prueba la vía del navegador, se comprueba en la propia
+       * página si ha surtido efecto, y si no —el caso habitual— se escala el tamaño
+       * y el interlineado COMPUTADOS de cada elemento con texto, que es lo que hace
+       * el zoom de texto de un navegador. Se guarda lo que había para devolver la
+       * página como estaba. */
+      const efecto = await evalIn(page, `
+        function conTexto(){
+          var out=[];
+          Array.prototype.forEach.call(document.querySelectorAll('body *'), function(el){
+            if(!__pintado(el)) return;
+            var propio='';
+            var k=el.childNodes||[];
+            for(var i=0;i<k.length;i++) if(k[i].nodeType===3) propio+=k[i].nodeValue||'';
+            if(!propio.replace(/[\\s\\u00a0]+/g,'').length) return;
+            out.push(el);
+          });
+          return out;
+        }
+        var muestra=conTexto();
+        var antesFS=muestra.map(function(el){ return parseFloat(getComputedStyle(el).fontSize)||0; });
+
         var s=document.createElement('style'); s.id='__a11y-resize';
         s.textContent='html { font-size: 200% !important; }';
-        document.head.appendChild(s); return true;`);
+        document.head.appendChild(s);
+        var despuesFS=muestra.map(function(el){ return parseFloat(getComputedStyle(el).fontSize)||0; });
+        var crecio=0;
+        for(var i=0;i<muestra.length;i++) if(despuesFS[i] > antesFS[i]+0.5) crecio++;
+
+        // ¿Ha servido de algo? Si no, se hace el zoom de texto a mano.
+        var via='raiz', escalados=0;
+        if (crecio < muestra.length) {
+          window.__a11yResizePrevios=[];
+          muestra.forEach(function(el, i){
+            var cs=getComputedStyle(el);
+            var fs=parseFloat(cs.fontSize)||0;
+            var lh=cs.lineHeight;
+            window.__a11yResizePrevios.push({ el: el, fs: el.style.fontSize, lh: el.style.lineHeight });
+            el.style.setProperty('font-size', (antesFS[i]*2)+'px', 'important');
+            if (lh && lh !== 'normal') {
+              var lhn=parseFloat(lh)||0;
+              if (lhn) el.style.setProperty('line-height', (lhn*2)+'px', 'important');
+            }
+            escalados++;
+          });
+          via = crecio ? 'mixta' : 'por elemento';
+        }
+        return { via: via, muestra: muestra.length, crecioConLaRaiz: crecio, escalados: escalados };`);
       await page.waitForTimeout(350);
       const despues = await evalIn(page, "return __instantanea(" + maxBloques + ");");
-      await evalIn(page, "var s=document.getElementById('__a11y-resize'); if(s) s.remove(); return true;");
-      return Object.assign({ aplicado: true, revisados: antes.length, cobertura: cobertura }, diffCajas(antes, despues));
+      await evalIn(page, `
+        var s=document.getElementById('__a11y-resize'); if(s) s.remove();
+        (window.__a11yResizePrevios||[]).forEach(function(p){
+          if(p.fs) p.el.style.setProperty('font-size', p.fs); else p.el.style.removeProperty('font-size');
+          if(p.lh) p.el.style.setProperty('line-height', p.lh); else p.el.style.removeProperty('line-height');
+        });
+        delete window.__a11yResizePrevios;
+        return true;`);
+      return Object.assign({ aplicado: true, revisados: antes.length, cobertura: cobertura, efecto: efecto },
+        diffCajas(antes, despues));
     }, { aplicado: false, motivo: "no se pudo medir el 200 %" });
 
     // ── 1.4.12 Espaciado del texto ──

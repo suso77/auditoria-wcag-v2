@@ -98,10 +98,20 @@ test("foco real: con el documento enfocado manda la medición del render", { ski
     const res = await p.evaluate(new Function("lim", MEASURE_BODY), 400);
     assert.equal(de(res, "__meta").filter((r) => /foco del sistema/i.test(r.label)).length, 0,
       "con foco no hay limitación que declarar");
-    // El fondo amarillo del enlace no está entre las propiedades que compara la
-    // medición, así que sobre el render no se ve cambio: queda a revisar. Es el
-    // veredicto honesto, y el motivo de que exista la vía estática.
-    assert.equal(por(res, "2.4.7", "a.").verdict, "revisar");
+    /* El fondo amarillo del enlace SÍ se compara ahora, y con eso el render ve el
+     * indicador sin necesidad de la vía estática.
+     *
+     * Antes no: la firma que comparaba el antes y el después solo miraba contorno,
+     * sombra y color de borde, así que un foco que pinta con `background-color`
+     * —patrón habitual, y el que usa esta página a propósito— quedaba invisible y
+     * el veredicto era `revisar`. Se añadió el canal del fondo al arreglar el
+     * fallo gordo del mismo bloque: que cualquier diferencia TEXTUAL contaba como
+     * indicador visible, y cinco indicadores transparentes salían «pasa». */
+    const enlace = por(res, "2.4.7", "a.");
+    assert.equal(enlace.verdict, "pasa", "el fondo de foco es un indicador visible: " + enlace.detail);
+    assert.match(enlace.detail, /el fondo cambia a/);
+    // El botón solo tiene `*:focus { outline: none }`: no cambia nada, y eso es
+    // duda de verdad (puede estar en `:focus-visible`), no una falla.
     assert.equal(por(res, "2.4.7", "button").verdict, "revisar");
   } finally { await b.close(); }
 });

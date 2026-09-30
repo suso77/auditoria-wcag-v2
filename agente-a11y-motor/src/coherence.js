@@ -38,7 +38,15 @@ export function normalizarHref(href, base) {
   u.hash = "";
   let p = u.pathname.replace(/\/+$/, "");
   if (!p) p = "/";
-  return (u.host + p + (u.search || "")).toLowerCase();
+  /* El HOST no distingue mayúsculas; la RUTA sí.
+   *
+   * Minusculizándolo todo, `/Servicios` y `/servicios` quedaban como el mismo
+   * destino, y 3.2.4 emitía un `falla` —«el mismo destino con nombres distintos»—
+   * sobre dos páginas que en el servidor son dos páginas diferentes y pueden
+   * llamarse cada una como quiera. En HTTP la ruta es sensible a mayúsculas, así
+   * que se respeta tal cual; lo mismo la cadena de consulta, donde un valor puede
+   * ser un identificador que las distinga. */
+  return u.host.toLowerCase() + p + (u.search || "");
 }
 
 /** Nombre comparable: sin acentos, sin puntuación de adorno, en minúsculas. */
@@ -60,8 +68,37 @@ const AYUDA = [
   { tipo: "teléfono", re: /^tel:/i },
   { tipo: "correo", re: /^mailto:/i }
 ];
-function tipoAyuda(nombre, href) {
-  for (const a of AYUDA) { if (a.re.test(href) || a.re.test(nombre)) return a.tipo; }
+/* Un `mailto:` no es por sí solo un mecanismo de ayuda.
+ *
+ * Probando el esquema contra el `href` crudo, un «Compartir por correo» dentro de
+ * un artículo se registraba como mecanismo de ayuda «correo». Y como solo se
+ * guardaba la primera aparición de cada tipo, en la ficha ganaba la del contenido
+ * y en la portada la del pie: 3.2.6 emitía un `falla` diciendo que el mecanismo
+ * «cambia de sitio» en dos páginas que tienen la misma dirección de contacto en el
+ * mismo pie.
+ *
+ * 3.2.6 habla de mecanismos de AYUDA. Un `tel:` o un `mailto:` cuentan cuando algo
+ * dice que sirven para pedir ayuda: el nombre del enlace, o el hecho de estar en
+ * la cabecera o el pie, que es donde se ponen los datos de contacto. Un `mailto:`
+ * en medio del contenido, con un nombre que habla de compartir, es otra cosa.
+ */
+const COMPARTIR_RE = /(compartir|share|env[ií]a(r)? (esto|a un amigo)|tweet|whatsapp)/i;
+function tipoAyuda(nombre, href, region) {
+  const esquema = /^(mailto:|tel:)/i.test(String(href || ""));
+  if (esquema) {
+    if (COMPARTIR_RE.test(nombre)) return null;
+    // Un mailto: «vacío» (sin destinatario) es para que lo rellene quien comparte.
+    if (/^mailto:\s*(\?|$)/i.test(String(href || ""))) return null;
+    const porNombre = AYUDA.find(function (a) { return a.tipo !== "correo" && a.tipo !== "teléfono" && a.re.test(nombre); });
+    if (porNombre) return porNombre.tipo;
+    const enSitioDeContacto = region === "pie" || region === "cabecera";
+    if (!enSitioDeContacto) return null;
+    return /^tel:/i.test(href) ? "teléfono" : "correo";
+  }
+  for (const a of AYUDA) {
+    if (a.tipo === "correo" || a.tipo === "teléfono") continue;
+    if (a.re.test(href) || a.re.test(nombre)) return a.tipo;
+  }
   return null;
 }
 
@@ -109,18 +146,35 @@ function loc(el) {
  * pie. Es lo que de verdad mide 3.2.6 —dónde está la ayuda—, mucho más estable
  * que el orden entre mecanismos distintos.
  */
+/* La región es la MÁS EXTERNA, no la primera que se encuentra subiendo.
+ *
+ * Devolviendo la primera, un `<footer><a>Contacto</a>` daba «pie» y un
+ * `<footer><nav><a>Contacto</a></nav>` daba «navegación»: la misma ubicación
+ * visual, dos regiones distintas, y 3.2.6 emitía un `falla` diciendo que el
+ * mecanismo de ayuda «cambia de sitio entre páginas» porque una de ellas envolvía
+ * los enlaces del pie en un `<nav>`. 3.2.6 habla de la ubicación relativa, no del
+ * envoltorio, así que un `nav` dentro del pie sigue siendo el pie.
+ *
+ * Se sube hasta arriba y manda el último landmark encontrado, con una excepción:
+ * `navegación` no gana nunca a `pie`, `cabecera`, `contenido` ni `lateral`, porque
+ * un `nav` casi siempre vive dentro de uno de ellos y es el contenedor el que dice
+ * dónde está la cosa en la pantalla.
+ */
 function regionDe(el) {
-  let p = el;
+  let p = el, encontrada = null;
   while (p && p.nodeType === 1) {
     const t = tagOf(p), r = (p.getAttribute("role") || "").split(/\s+/)[0];
-    if (t === "footer" || r === "contentinfo") return "pie";
-    if (t === "header" || r === "banner") return "cabecera";
-    if (t === "nav" || r === "navigation") return "navegación";
-    if (t === "main" || r === "main") return "contenido";
-    if (t === "aside" || r === "complementary") return "lateral";
+    let aqui = null;
+    if (t === "footer" || r === "contentinfo") aqui = "pie";
+    else if (t === "header" || r === "banner") aqui = "cabecera";
+    else if (t === "nav" || r === "navigation") aqui = "navegación";
+    else if (t === "main" || r === "main") aqui = "contenido";
+    else if (t === "aside" || r === "complementary") aqui = "lateral";
+    // El más externo manda, y «navegación» solo se queda si no hay nada mejor.
+    if (aqui && (encontrada === null || aqui !== "navegación")) encontrada = aqui;
     p = p.parentElement;
   }
-  return "otra";
+  return encontrada || "otra";
 }
 function nombreDe(el) {
   const al = el.getAttribute("aria-label");
@@ -171,7 +225,7 @@ export function fingerprintPage(doc, url, win) {
   // Ayuda: mecanismos reconocibles, en el orden en que aparecen.
   const ayuda = [];
   enlaces.forEach(function (e) {
-    const t = tipoAyuda(e.name, e.raw);
+    const t = tipoAyuda(e.name, e.raw, e.region);
     if (t && !ayuda.some(function (x) { return x.tipo === t; })) {
       ayuda.push({ tipo: t, name: e.name, href: e.href, locator: e.locator, region: e.region, orden: e.orden });
     }
@@ -246,11 +300,32 @@ export function analyzeNavConsistency(huellas) {
   });
   const etiqueta = function (href) { return nombres[href] ? "«" + nombres[href] + "»" : href; };
 
+  /* TODOS los pares, no cada página contra la primera.
+   *
+   * Comparando solo contra `conNav[0]`, un destino que cambia de sitio entre la
+   * página 2 y la 3 pero que no aparece en la 1 no se compara con nada: la
+   * inversión pasa desapercibida y el criterio sale `cumple` afirmando «mantiene
+   * el mismo orden relativo en las N páginas». Comprobado con tres páginas donde
+   * «Blog» va antes de «Servicios» en una y después en otra, y ninguna de las dos
+   * cosas se ve desde la primera, que no tiene Blog.
+   *
+   * 3.2.3 habla del orden relativo entre páginas, sin página privilegiada, así que
+   * se comparan todos los pares. Con muestras de quince páginas son ciento cinco
+   * comparaciones de listas cortas: nada. */
   const base = conNav[0], seqBase = seqNav(base);
   const problemas = [];
-  for (let i = 1; i < conNav.length; i++) {
-    const inv = ordenRelativo(seqBase, seqNav(conNav[i]));
-    if (inv) problemas.push({ pagina: conNav[i].url, inv: inv });
+  const vistos = {};
+  for (let i = 0; i < conNav.length; i++) {
+    for (let j = i + 1; j < conNav.length; j++) {
+      const inv = ordenRelativo(seqNav(conNav[i]), seqNav(conNav[j]));
+      if (!inv) continue;
+      // Una misma inversión aparece en varios pares: se cuenta una vez, y con las
+      // dos páginas que la demuestran.
+      const clave = inv.antes + "|" + inv.despues;
+      if (vistos[clave]) continue;
+      vistos[clave] = 1;
+      problemas.push({ pagina: conNav[j].url, contra: conNav[i].url, inv: inv });
+    }
   }
   if (!problemas.length) {
     return [F("3.2.3", "cumple", null, [
@@ -260,7 +335,7 @@ export function analyzeNavConsistency(huellas) {
   }
   return [F("3.2.3", "falla", "moderada", problemas.slice(0, 5).map(function (p) {
     return "En " + (p.pagina || "(página)") + " el orden de la navegación cambia: " + etiqueta(p.inv.despues) +
-      " aparece antes que " + etiqueta(p.inv.antes) + ", al revés que en " + (base.url || "la primera página") + ".";
+      " aparece antes que " + etiqueta(p.inv.antes) + ", al revés que en " + (p.contra || base.url || "otra página de la muestra") + ".";
   }), problemas.slice(0, 8).map(function (p) { return { locator: p.pagina || "(página)", name: "orden alterado" }; }))];
 }
 

@@ -1289,9 +1289,60 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     }
     return acc;
   }
+  /* ¿Lo que se pinta DEBAJO es de verdad lo que hemos medido?
+   *
+   * `bgBehind` sube por la ASCENDENCIA del DOM, y la ascendencia no es el orden de
+   * pintado. Un bloque `position:absolute` o una cabecera `position:fixed` con fondo
+   * transparente se dibuja ENCIMA de una foto que no es antepasada suya, así que su
+   * texto se medía contra el blanco del `body` —o, peor, contra el blanco inventado
+   * cuando no había ningún fondo opaco arriba— y el detalle afirmaba ese blanco como
+   * hecho medido. Comprobado: texto `#1a1a1a` sobre una foto `#141418` salía
+   * «pasa · ratio 17.40:1 … sobre rgb(255 255 255)» con un contraste real de 1.06:1.
+   * Una barrera total de 1.4.3 exportada como conforme.
+   *
+   * `elementsFromPoint` da la pila de pintado de verdad. Si el primero que pinta algo
+   * por debajo del elemento no es uno de sus antepasados, lo medido no vale y el
+   * criterio se queda sin dictaminar, que es la vía honesta que ya existe para los
+   * fondos con imagen.
+   *
+   * Límite, y se dice: solo funciona dentro del viewport. Para el texto que queda por
+   * debajo del pliegue no se puede comprobar sin desplazar la página en mitad de la
+   * medición, y eso movería lo que están midiendo las demás comprobaciones.
+   */
+  function fondoRealCoincide(el, win, origen) {
+    // Si el propio elemento pone un fondo opaco, lo que haya debajo da igual.
+    if (origen === el) return { ok: true };
+    const doc = el.ownerDocument;
+    if (!doc || !doc.elementsFromPoint) return { ok: true };
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return { ok: true };
+    const x = Math.min(r.left + 2, r.right - 1);
+    const y = Math.min(r.top + Math.min(4, r.height / 2), r.bottom - 1);
+    if (x < 0 || y < 0 || x >= (win.innerWidth || 0) || y >= (win.innerHeight || 0)) {
+      return { ok: true, fuera: true };   // fuera del viewport: no se afirma nada
+    }
+    let pila;
+    try { pila = doc.elementsFromPoint(x, y) || []; } catch (e) { return { ok: true }; }
+    const i = pila.indexOf(el);
+    if (i === -1) return { ok: true };     // el punto no cae en el elemento
+    for (let k = i + 1; k < pila.length; k++) {
+      const cand = pila[k];
+      const cs = win.getComputedStyle(cand);
+      const tieneImagen = cs.backgroundImage && cs.backgroundImage !== "none";
+      const b = resolverColor(cs.backgroundColor, doc);
+      if (tieneImagen || (b && b.a > 0)) {
+        if (cand.contains(el)) return { ok: true };
+        // `locatorM` está declarada más abajo en el mismo ámbito (hoisting).
+        return { ok: false, pintor: locatorM(cand),
+          fondo: tieneImagen ? String(cs.backgroundImage).slice(0, 60) : cs.backgroundColor };
+      }
+    }
+    return { ok: true };
+  }
   function bgBehind(el, win) {
     let p = el, image = false, desconocido = false; const layers = [];
     let base = { r: 255, g: 255, b: 255, a: 1 };
+    let origen = null;   // quién puso el fondo opaco con el que se mide
     while (p && p.nodeType === 1) {
       const cs = win.getComputedStyle(p);
       if (cs.backgroundImage && cs.backgroundImage !== "none") image = true;
@@ -1304,7 +1355,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         desconocido = true;
         break;
       }
-      if (b && b.a > 0) { if (b.a >= 1) { base = b; break; } layers.push(b); }
+      if (b && b.a > 0) { if (b.a >= 1) { base = b; origen = p; break; } layers.push(b); }
       p = p.parentElement;
     }
     let outc = { r: base.r, g: base.g, b: base.b, a: 1 };
@@ -1312,6 +1363,10 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     outc.image = image;
     outc.desconocido = desconocido;
     outc.opacidad = opacidadAcumulada(el, win);
+    outc.origen = origen;
+    // Sin fondo opaco en toda la ascendencia se estaba midiendo contra un blanco
+    // supuesto; eso solo vale si lo que se pinta debajo es de verdad de la página.
+    outc.real = fondoRealCoincide(el, win, origen);
     return outc;
   }
   /**
@@ -1343,6 +1398,11 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     const large = large0;
     if (bg.desconocido) return { undetermined: true, large: large, motivo: "el fondo está en una notación que esta medición no sabe leer (oklch, lab, color-mix…)" };
     if (bg.opacidad < 1) return { undetermined: true, large: large, motivo: "hay opacidad (" + bg.opacidad.toFixed(2) + ") en la cadena de antepasados: lo que se ve pintado no es este color" };
+    if (bg.real && bg.real.ok === false) {
+      return { undetermined: true, large: large,
+        motivo: "lo que se pinta detrás no es lo que dice el marcado: encima hay «" + bg.real.pintor +
+          "» (fondo " + bg.real.fondo + "), que no es antepasado de este elemento, así que el contraste no se puede calcular desde los estilos. Mídelo por píxeles o a mano" };
+    }
     if (bg.image) return { undetermined: true, large: large };
     if (fg.a != null && fg.a < 1) fg = over(fg, bg);
     return { ratio: contrastRatio(fg, bg), fg: rgbStr(fg), bg: rgbStr(bg), large: large, lc: apcaContrast(fg, bg), lcMin: apcaMin(size, weight) };
@@ -1393,6 +1453,99 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   // página. `outline-offset` no está en la lista de arriba por lo mismo: desplaza
   // un contorno, no lo dibuja.
   const NULOS = ["none", "hidden", "0", "0px", "transparent", "initial", "unset", "revert", "medium", "currentcolor"];
+
+  /* ── 2.4.7: qué es un indicador de foco que SE VE ──────────────────────────
+   *
+   * La comparación era una cadena: `outlineStyle|outlineWidth|outlineColor||
+   * boxShadow||borderColor` antes y después de enfocar, y cualquier diferencia
+   * textual contaba como indicador visible. Con eso, cinco indicadores literalmente
+   * invisibles salían los cinco «pasa · cambio visible al enfocar»:
+   *
+   *     #a:focus{ outline: 2px solid transparent }
+   *     #b:focus{ outline: 3px solid rgba(0,0,0,0) }
+   *     #c:focus{ box-shadow: 0 0 0 3px rgba(0,0,0,0) }
+   *     #d:focus{ border-color: #fff }        (sobre fondo blanco)
+   *     #e:focus{ outline: 1px solid #fff }   (sobre fondo blanco)
+   *
+   * Un cambio que no se ve no es un indicador, y declararlo conforme es lo contrario
+   * de lo que hace este motor. Así que se mira cada canal por separado: que tenga
+   * tamaño, que su color tenga alfa, y que no sea del mismo color que lo que hay
+   * detrás. De paso se recogen dos canales que la firma anterior no miraba —el fondo
+   * y la decoración del texto—, con lo que un foco que solo cambia el fondo deja de
+   * pasar desapercibido.
+   */
+  function coloresDe(s) {
+    const out = [];
+    const re = /rgba?\(([^)]+)\)/g;
+    let m;
+    while ((m = re.exec(String(s || "")))) {
+      const p = m[1].split(/[,\s/]+/).filter(Boolean).map(parseFloat);
+      out.push({ r: p[0] || 0, g: p[1] || 0, b: p[2] || 0, a: p.length > 3 ? p[3] : 1 });
+    }
+    return out;
+  }
+  function mismoColor(a, b) {
+    return a && b && a.r === b.r && a.g === b.g && a.b === b.b;
+  }
+  function aparienciaFoco(cs) {
+    return {
+      outlineStyle: cs.outlineStyle, outlineWidth: parseFloat(cs.outlineWidth) || 0, outlineColor: cs.outlineColor,
+      boxShadow: cs.boxShadow,
+      borderColor: cs.borderTopColor + "/" + cs.borderRightColor + "/" + cs.borderBottomColor + "/" + cs.borderLeftColor,
+      borderWidth: (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderRightWidth) || 0) +
+        (parseFloat(cs.borderBottomWidth) || 0) + (parseFloat(cs.borderLeftWidth) || 0),
+      background: cs.backgroundColor, backgroundImage: cs.backgroundImage,
+      color: cs.color,
+      decoracion: (cs.textDecorationLine || "") + " " + (cs.textDecorationThickness || "")
+    };
+  }
+  /** @returns {{visible:boolean, via:string, motivo:string}} */
+  function indicadorDeFoco(base, foc, el, win) {
+    if (!foc) return { visible: false, via: "", motivo: "no se pudo leer el estado con el foco puesto" };
+    // Fondo contra el que se dibuja el indicador: el del PADRE, porque el contorno
+    // se pinta justo fuera de la caja del elemento.
+    const detras = bgBehind(el.parentElement || el, win);
+    const nulos = [];
+
+    // 1) Contorno.
+    const oc = coloresDe(foc.outlineColor)[0];
+    const hayContorno = foc.outlineStyle !== "none" && foc.outlineStyle !== "hidden" && foc.outlineWidth > 0;
+    if (hayContorno) {
+      if (!oc || oc.a === 0) nulos.push("el contorno es transparente (" + foc.outlineColor + ")");
+      else if (mismoColor(oc, detras)) nulos.push("el contorno es del mismo color que el fondo de detrás (" + foc.outlineColor + ")");
+      else return { visible: true, via: "contorno", motivo: "contorno de " + foc.outlineWidth + "px en " + foc.outlineColor };
+    } else if (base && (base.outlineStyle !== foc.outlineStyle || base.outlineWidth !== foc.outlineWidth)) {
+      nulos.push("el contorno cambia pero queda sin grosor o con estilo «" + foc.outlineStyle + "»");
+    }
+
+    // 2) Sombra.
+    if (foc.boxShadow && foc.boxShadow !== "none" && (!base || foc.boxShadow !== base.boxShadow)) {
+      const conAlfa = coloresDe(foc.boxShadow).filter(function (c) { return c.a > 0 && !mismoColor(c, detras); });
+      if (conAlfa.length) return { visible: true, via: "sombra", motivo: "box-shadow visible (" + String(foc.boxShadow).slice(0, 60) + ")" };
+      nulos.push("la sombra no se ve: " + String(foc.boxShadow).slice(0, 60));
+    }
+
+    // 3) Borde.
+    if (base && foc.borderColor !== base.borderColor && foc.borderWidth > 0) {
+      const bc = coloresDe(foc.borderColor).filter(function (c) { return c.a > 0 && !mismoColor(c, detras); });
+      if (bc.length) return { visible: true, via: "borde", motivo: "el borde cambia a " + foc.borderColor.split("/")[0] };
+      nulos.push("el borde cambia a un color que no se distingue del fondo (" + foc.borderColor.split("/")[0] + ")");
+    }
+
+    // 4) Fondo y 5) texto: canales que la firma anterior no miraba.
+    if (base && (foc.background !== base.background || foc.backgroundImage !== base.backgroundImage)) {
+      const fc = coloresDe(foc.background)[0];
+      if ((foc.backgroundImage && foc.backgroundImage !== "none" && foc.backgroundImage !== base.backgroundImage) || (fc && fc.a > 0)) {
+        return { visible: true, via: "fondo", motivo: "el fondo cambia a " + foc.background };
+      }
+      nulos.push("el fondo cambia a algo que no se ve (" + foc.background + ")");
+    }
+    if (base && (foc.color !== base.color || foc.decoracion !== base.decoracion)) {
+      return { visible: true, via: "texto", motivo: "cambia el color o la decoración del texto" };
+    }
+
+    return { visible: false, via: "", motivo: nulos.length ? nulos.join("; ") : "no cambia ninguna propiedad al enfocar" };
+  }
   // Hacia ABAJO, siempre. Con `toFixed(2)`, un 4.4995 se imprimía «4.50:1 (mín
   // 4.5:1)» junto al veredicto «revisar»: una contradicción en el informe que
   // invita a que el revisor lo suba a conforme.
@@ -1713,14 +1866,12 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
           res.push({ crit: "2.1.1", label: "Enfocable con teclado", node: loc, verdict: "revisar", detail: "tabindex=\"-1\": solo foco programático, el tabulador no lo alcanza. Comprueba que haya otra forma de operarlo con teclado" });
         }
       } else {
-        const csBase = win.getComputedStyle(el);
-        const base = csBase.outlineStyle + "|" + csBase.outlineWidth + "|" + csBase.outlineColor + "||" + csBase.boxShadow + "||" + csBase.borderColor;
+        const base = aparienciaFoco(win.getComputedStyle(el));
         let focusable = false, foc = null;
         try {
           el.focus({ preventScroll: true });
           focusable = (doc.activeElement === el);
-          const c2 = win.getComputedStyle(el);
-          foc = c2.outlineStyle + "|" + c2.outlineWidth + "|" + c2.outlineColor + "||" + c2.boxShadow + "||" + c2.borderColor;
+          foc = aparienciaFoco(win.getComputedStyle(el));
           if (el.blur) el.blur();
         } catch (e) {}
         res.push(focusable
@@ -1747,11 +1898,20 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
               }
             }
           }
-          const changed = !!(foc && foc !== base);
+          const ind = indicadorDeFoco(base, foc, el, win);
+          const changed = ind.visible;
           if (docEnfocado || changed) {
-            // Con el documento enfocado la medición vale. Y si aun sin foco de
-            // sistema SÍ hubo cambio, el cambio es real: no hay por qué dudarlo.
-            res.push({ crit: "2.4.7", label: "Foco visible", node: loc, verdict: changed ? "pasa" : "revisar", detail: changed ? "cambio visible al enfocar" : "sin cambio medible (revisar a ojo / :focus-visible)" });
+            /* Y si algo cambió pero no se ve, eso es una medición CONCLUYENTE de que
+             * no hay indicador: `falla`, no `revisar`. La duda se reserva para cuando
+             * no cambia nada y puede estar en `:focus-visible` o en una hoja que no se
+             * ha podido leer. */
+            const cambioInvisible = !ind.visible && foc && JSON.stringify(foc) !== JSON.stringify(base);
+            res.push(changed
+              ? { crit: "2.4.7", label: "Foco visible", node: loc, path: ruta, verdict: "pasa", detail: "indicador visible al enfocar: " + ind.motivo }
+              : cambioInvisible
+                ? { crit: "2.4.7", label: "Foco visible", node: loc, path: ruta, verdict: "falla",
+                    detail: "al enfocar cambia el estilo pero el indicador NO se ve: " + ind.motivo + ". Tabulando hasta aquí no se sabe dónde está el foco" }
+                : { crit: "2.4.7", label: "Foco visible", node: loc, path: ruta, verdict: "revisar", detail: "sin cambio medible (revisar a ojo / :focus-visible)" });
           } else {
             const rf = reglasDeFoco(el, doc);
             hojasBloqueadas = Math.max(hojasBloqueadas, rf.hojasBloqueadas);
@@ -1908,7 +2068,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   }
 
   const FNS = [parseColor, over, lum, contrastRatio, rgbStr, apcaContrast, apcaMin,
-    animacionesPersistentes, distintivoDeEnlace, enTextoCorrido, elementosFlotantes, fraccionTapada, ratioTxt, resolverColor, ownText, opacidadAcumulada, bgBehind, contrastOf, boundaryContrastOf, isInteractiveM, locatorM, rutaM, renderedM, disabledM, managedM, textTargets,
+    animacionesPersistentes, distintivoDeEnlace, enTextoCorrido, elementosFlotantes, fraccionTapada, ratioTxt, resolverColor, ownText, opacidadAcumulada, coloresDe, mismoColor, aparienciaFoco, indicadorDeFoco, fondoRealCoincide, bgBehind, contrastOf, boundaryContrastOf, isInteractiveM, locatorM, rutaM, renderedM, disabledM, managedM, textTargets,
     pinta, sinPseudoFoco, coincideSinFoco, reglasDeFoco, runChecksReal];
   const FN_SRC = "var MANAGED_PARENT = " + JSON.stringify(MANAGED_PARENT) + ";\nvar NATIVOS = " + JSON.stringify(NATIVOS) + ";\n" +
     "var PROP_INDICADOR = " + JSON.stringify(PROP_INDICADOR) + ";\nvar NULOS = " + JSON.stringify(NULOS) + ";\n" +
@@ -2505,7 +2665,15 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     u.hash = "";
     let p = u.pathname.replace(/\/+$/, "");
     if (!p) p = "/";
-    return (u.host + p + (u.search || "")).toLowerCase();
+    /* El HOST no distingue mayúsculas; la RUTA sí.
+     *
+     * Minusculizándolo todo, `/Servicios` y `/servicios` quedaban como el mismo
+     * destino, y 3.2.4 emitía un `falla` —«el mismo destino con nombres distintos»—
+     * sobre dos páginas que en el servidor son dos páginas diferentes y pueden
+     * llamarse cada una como quiera. En HTTP la ruta es sensible a mayúsculas, así
+     * que se respeta tal cual; lo mismo la cadena de consulta, donde un valor puede
+     * ser un identificador que las distinga. */
+    return u.host.toLowerCase() + p + (u.search || "");
   }
 
   /** Nombre comparable: sin acentos, sin puntuación de adorno, en minúsculas. */
@@ -2527,8 +2695,37 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     { tipo: "teléfono", re: /^tel:/i },
     { tipo: "correo", re: /^mailto:/i }
   ];
-  function tipoAyuda(nombre, href) {
-    for (const a of AYUDA) { if (a.re.test(href) || a.re.test(nombre)) return a.tipo; }
+  /* Un `mailto:` no es por sí solo un mecanismo de ayuda.
+   *
+   * Probando el esquema contra el `href` crudo, un «Compartir por correo» dentro de
+   * un artículo se registraba como mecanismo de ayuda «correo». Y como solo se
+   * guardaba la primera aparición de cada tipo, en la ficha ganaba la del contenido
+   * y en la portada la del pie: 3.2.6 emitía un `falla` diciendo que el mecanismo
+   * «cambia de sitio» en dos páginas que tienen la misma dirección de contacto en el
+   * mismo pie.
+   *
+   * 3.2.6 habla de mecanismos de AYUDA. Un `tel:` o un `mailto:` cuentan cuando algo
+   * dice que sirven para pedir ayuda: el nombre del enlace, o el hecho de estar en
+   * la cabecera o el pie, que es donde se ponen los datos de contacto. Un `mailto:`
+   * en medio del contenido, con un nombre que habla de compartir, es otra cosa.
+   */
+  const COMPARTIR_RE = /(compartir|share|env[ií]a(r)? (esto|a un amigo)|tweet|whatsapp)/i;
+  function tipoAyuda(nombre, href, region) {
+    const esquema = /^(mailto:|tel:)/i.test(String(href || ""));
+    if (esquema) {
+      if (COMPARTIR_RE.test(nombre)) return null;
+      // Un mailto: «vacío» (sin destinatario) es para que lo rellene quien comparte.
+      if (/^mailto:\s*(\?|$)/i.test(String(href || ""))) return null;
+      const porNombre = AYUDA.find(function (a) { return a.tipo !== "correo" && a.tipo !== "teléfono" && a.re.test(nombre); });
+      if (porNombre) return porNombre.tipo;
+      const enSitioDeContacto = region === "pie" || region === "cabecera";
+      if (!enSitioDeContacto) return null;
+      return /^tel:/i.test(href) ? "teléfono" : "correo";
+    }
+    for (const a of AYUDA) {
+      if (a.tipo === "correo" || a.tipo === "teléfono") continue;
+      if (a.re.test(href) || a.re.test(nombre)) return a.tipo;
+    }
     return null;
   }
 
@@ -2576,18 +2773,35 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
    * pie. Es lo que de verdad mide 3.2.6 —dónde está la ayuda—, mucho más estable
    * que el orden entre mecanismos distintos.
    */
+  /* La región es la MÁS EXTERNA, no la primera que se encuentra subiendo.
+   *
+   * Devolviendo la primera, un `<footer><a>Contacto</a>` daba «pie» y un
+   * `<footer><nav><a>Contacto</a></nav>` daba «navegación»: la misma ubicación
+   * visual, dos regiones distintas, y 3.2.6 emitía un `falla` diciendo que el
+   * mecanismo de ayuda «cambia de sitio entre páginas» porque una de ellas envolvía
+   * los enlaces del pie en un `<nav>`. 3.2.6 habla de la ubicación relativa, no del
+   * envoltorio, así que un `nav` dentro del pie sigue siendo el pie.
+   *
+   * Se sube hasta arriba y manda el último landmark encontrado, con una excepción:
+   * `navegación` no gana nunca a `pie`, `cabecera`, `contenido` ni `lateral`, porque
+   * un `nav` casi siempre vive dentro de uno de ellos y es el contenedor el que dice
+   * dónde está la cosa en la pantalla.
+   */
   function regionDe(el) {
-    let p = el;
+    let p = el, encontrada = null;
     while (p && p.nodeType === 1) {
       const t = tagOf(p), r = (p.getAttribute("role") || "").split(/\s+/)[0];
-      if (t === "footer" || r === "contentinfo") return "pie";
-      if (t === "header" || r === "banner") return "cabecera";
-      if (t === "nav" || r === "navigation") return "navegación";
-      if (t === "main" || r === "main") return "contenido";
-      if (t === "aside" || r === "complementary") return "lateral";
+      let aqui = null;
+      if (t === "footer" || r === "contentinfo") aqui = "pie";
+      else if (t === "header" || r === "banner") aqui = "cabecera";
+      else if (t === "nav" || r === "navigation") aqui = "navegación";
+      else if (t === "main" || r === "main") aqui = "contenido";
+      else if (t === "aside" || r === "complementary") aqui = "lateral";
+      // El más externo manda, y «navegación» solo se queda si no hay nada mejor.
+      if (aqui && (encontrada === null || aqui !== "navegación")) encontrada = aqui;
       p = p.parentElement;
     }
-    return "otra";
+    return encontrada || "otra";
   }
   function nombreDe(el) {
     const al = el.getAttribute("aria-label");
@@ -2638,7 +2852,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     // Ayuda: mecanismos reconocibles, en el orden en que aparecen.
     const ayuda = [];
     enlaces.forEach(function (e) {
-      const t = tipoAyuda(e.name, e.raw);
+      const t = tipoAyuda(e.name, e.raw, e.region);
       if (t && !ayuda.some(function (x) { return x.tipo === t; })) {
         ayuda.push({ tipo: t, name: e.name, href: e.href, locator: e.locator, region: e.region, orden: e.orden });
       }
@@ -2713,11 +2927,32 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     });
     const etiqueta = function (href) { return nombres[href] ? "«" + nombres[href] + "»" : href; };
 
+    /* TODOS los pares, no cada página contra la primera.
+     *
+     * Comparando solo contra `conNav[0]`, un destino que cambia de sitio entre la
+     * página 2 y la 3 pero que no aparece en la 1 no se compara con nada: la
+     * inversión pasa desapercibida y el criterio sale `cumple` afirmando «mantiene
+     * el mismo orden relativo en las N páginas». Comprobado con tres páginas donde
+     * «Blog» va antes de «Servicios» en una y después en otra, y ninguna de las dos
+     * cosas se ve desde la primera, que no tiene Blog.
+     *
+     * 3.2.3 habla del orden relativo entre páginas, sin página privilegiada, así que
+     * se comparan todos los pares. Con muestras de quince páginas son ciento cinco
+     * comparaciones de listas cortas: nada. */
     const base = conNav[0], seqBase = seqNav(base);
     const problemas = [];
-    for (let i = 1; i < conNav.length; i++) {
-      const inv = ordenRelativo(seqBase, seqNav(conNav[i]));
-      if (inv) problemas.push({ pagina: conNav[i].url, inv: inv });
+    const vistos = {};
+    for (let i = 0; i < conNav.length; i++) {
+      for (let j = i + 1; j < conNav.length; j++) {
+        const inv = ordenRelativo(seqNav(conNav[i]), seqNav(conNav[j]));
+        if (!inv) continue;
+        // Una misma inversión aparece en varios pares: se cuenta una vez, y con las
+        // dos páginas que la demuestran.
+        const clave = inv.antes + "|" + inv.despues;
+        if (vistos[clave]) continue;
+        vistos[clave] = 1;
+        problemas.push({ pagina: conNav[j].url, contra: conNav[i].url, inv: inv });
+      }
     }
     if (!problemas.length) {
       return [F("3.2.3", "cumple", null, [
@@ -2727,7 +2962,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     }
     return [F("3.2.3", "falla", "moderada", problemas.slice(0, 5).map(function (p) {
       return "En " + (p.pagina || "(página)") + " el orden de la navegación cambia: " + etiqueta(p.inv.despues) +
-        " aparece antes que " + etiqueta(p.inv.antes) + ", al revés que en " + (base.url || "la primera página") + ".";
+        " aparece antes que " + etiqueta(p.inv.antes) + ", al revés que en " + (p.contra || base.url || "otra página de la muestra") + ".";
     }), problemas.slice(0, 8).map(function (p) { return { locator: p.pagina || "(página)", name: "orden alterado" }; }))];
   }
 
@@ -3014,8 +3249,33 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     if (!trace || trace.clientWidth == null) return [];
     const exceso = Math.round(trace.scrollWidth - trace.clientWidth);
     const donde = " a " + trace.w + "×" + trace.h + " px CSS";
+    /* El contenido RECORTADO cuenta, y cuenta antes que la barra.
+     *
+     * Dictaminando solo por el desplazamiento horizontal, un desbordamiento escondido
+     * con `overflow:hidden` no produce barra, `scrollWidth` del documento no crece, y
+     * 1.4.10 salía «cumple» con cientos de píxeles de texto ocultos e inalcanzables a
+     * 320 px CSS. El criterio no habla de barras: exige que no haya pérdida de
+     * información ni de funcionalidad. Esconder lo que no cabe es peor que la barra,
+     * porque ni se ve que falte algo. */
+    const rec = (trace.recortados || []).filter(function (r) { return !r.alcanzable; });
+    if (rec.length) {
+      return [F("1.4.10", "falla", "grave", [
+        rec.length + " bloque(s) de contenido se RECORTAN" + donde + " y lo que sobra no se puede alcanzar: el desbordamiento está oculto con " +
+        "`overflow:" + rec[0].overflow + "`, así que no hay barra ni forma de desplazarlo. " +
+        rec.slice(0, 6).map(function (r) { return r.locator + " (" + r.px + " px ocultos, termina en «…" + r.muestra + "»)"; }).join(" · ") +
+        (rec.length > 6 ? " · …" : "") + ". 1.4.10 exige que no haya pérdida de información, no solo que no haya barra horizontal."
+      ], nodesOf(rec))];
+    }
     if (exceso <= 2) {
-      return [F("1.4.10", "cumple", null, ["Sin desplazamiento horizontal" + donde + " (equivale al 400 % sobre 1280 px)."])];
+      const tapado = (trace.recortados || []).filter(function (r) { return r.alcanzable; });
+      if (tapado.length) {
+        return [F("1.4.10", "revisar", null, [
+          "Sin desplazamiento horizontal" + donde + ", pero " + tapado.length + " contenedor(es) esconden contenido que no les cabe (" +
+          tapado.slice(0, 4).map(function (r) { return r.locator + ", " + r.px + " px"; }).join(" · ") +
+          "). Tienen controles dentro, así que el teclado sí arrastra el contenedor al enfocarlos; comprueba que con el ratón y a la vista también se llegue, porque no hay barra."
+        ], nodesOf(tapado))];
+      }
+      return [F("1.4.10", "cumple", null, ["Sin desplazamiento horizontal ni contenido recortado" + donde + " (equivale al 400 % sobre 1280 px)."])];
     }
     const off = trace.offenders || [];
     const todosExentos = off.length > 0 && off.every(esExento);
@@ -3061,7 +3321,22 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         return [F(n, "revisar", null, ["Con " + cambio + " no se recorta ni se solapa ningún bloque de texto de los " + cob.medidos +
           " medidos, pero la página tiene " + cob.total + ": el resto NO se ha comprobado. Sube el límite para dictaminar."])];
       }
-      return [F(n, "cumple", null, ["Con " + cambio + " no se recorta ni se solapa ningún bloque de texto (" + (trace.revisados || 0) + " elementos medidos)."])];
+      /* Y «cumple» solo si el cambio SURTIÓ EFECTO.
+       *
+       * `html{font-size:200%}` no toca nada cuando los tamaños están en `px`, que es
+       * lo normal, y el criterio salía «cumple · con el texto al 200 % no se recorta
+       * ni se solapa ningún bloque» sobre una medición de efecto nulo. Ahora la fase
+       * dice por qué vía consiguió duplicarlo; si no lo consiguió por ninguna, no hay
+       * nada medido que declarar conforme. */
+      const ef = trace.efecto;
+      if (ef && ef.muestra && !ef.crecioConLaRaiz && !ef.escalados) {
+        return [F(n, "revisar", null, [
+          "No se ha podido aplicar " + cambio + " a la página: ni cambiando el tamaño de la raíz ni escalando los elementos con texto. " +
+          "No hay medición, así que el criterio queda por comprobar a mano (con el zoom de texto del navegador, no el de página)."
+        ])];
+      }
+      return [F(n, "cumple", null, ["Con " + cambio + " no se recorta ni se solapa ningún bloque de texto (" + (trace.revisados || 0) + " elementos medidos" +
+        (ef && ef.via && ef.via !== "raiz" ? "; el tamaño de la raíz no bastaba —la página declara el texto en px— y se escaló el tamaño computado de " + ef.escalados + " elemento(s), que es lo que hace el zoom de texto del navegador" : "") + ")."])];
     }
     const ev = [];
     if (rec.length) ev.push(rec.length + " bloque(s) de texto se recortan al aplicar " + cambio + " (el contenido queda oculto, sin barra de desplazamiento): " +
@@ -3236,16 +3511,63 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     const reached = new Set((trace.reached || []).map(key));
     const focusables = trace.focusables || [];
     const unreached = focusables.filter(function (f) { return !reached.has(key(f)); });
+    const inter = trace.interactivos || { sueltos: [], enCompuesto: [] };
+    const sueltos = inter.sueltos || [];
+    const enCompuesto = inter.enCompuesto || [];
 
     if (trace.trapped) {
-      out.push(F("2.1.2", "falla", "crítica", ["El foco queda atrapado con Tab: no se puede salir del componente solo con teclado."]));
+      out.push(F("2.1.2", "falla", "crítica", [
+        "El foco queda atrapado con Tab: no se puede salir del componente solo con teclado." +
+        (trace.atrapadoEn && trace.atrapadoEn.length
+          ? " El recorrido cicla entre " + trace.atrapadoEn.length + " control(es) —" + trace.atrapadoEn.slice(0, 6).join(" → ") +
+            "— y no vuelve a salir, con " + unreached.length + " control(es) del resto de la página sin alcanzar."
+          : "")
+      ], (trace.atrapadoEn || []).slice(0, 8).map(function (l) { return { locator: l, name: "" }; })));
     }
-    if (!focusables.length) return out;
 
-    if (!unreached.length) {
-      out.push(F("2.1.1", "cumple", null, ["Todos los controles interactivos se alcanzan con Tab (" + focusables.length + ")."]));
+    /* 2.1.1 sobre los controles INTERACTIVOS que no son enfocables.
+     *
+     * Es el fallo de libro del criterio y no se estaba mirando: el driver enumeraba
+     * lo que YA era enfocable, así que un `div role="button"` sin `tabindex` no
+     * entraba en la lista, no había nada «sin alcanzar», y el análisis emitía 2.1.1
+     * `cumple` con la frase «Todos los controles interactivos se alcanzan con Tab».
+     * Cinco barreras reales invisibles, y la afirmación hecha sin haber mirado uno.
+     *
+     * Los de un widget compuesto con su parada de tabulación (tablist, listbox…) NO
+     * son barrera: el patrón ARIA correcto es una sola parada y las flechas por
+     * dentro. Pero esta prueba no recorre las flechas, así que tampoco puede firmar
+     * que ese widget se opere con teclado: se dice, y el criterio no se cierra. */
+    if (sueltos.length) {
+      out.push(F("2.1.1", "falla", "grave", [
+        sueltos.length + " control(es) con rol de widget no pueden recibir el foco: no son alcanzables con teclado de ninguna manera (sin `tabindex`, y sin un widget compuesto que gestione el foco por ellos). " +
+        sueltos.slice(0, 6).map(function (x) { return x.locator + " (role=" + x.rol + ")"; }).join(", ") + (sueltos.length > 6 ? "…" : "")
+      ], nodesOf(sueltos)));
+    }
+
+    if (!focusables.length && !sueltos.length && !enCompuesto.length) return out;
+
+    // ¿Se ha medido la tabulación? Si la fase se cayó, lo que falta NO se ha comprobado.
+    if (trace.medida === false) {
+      out.push(F("2.1.1", "revisar", null, [
+        "La prueba de tabulación no llegó a ejecutarse (la fase falló), así que de los " + focusables.length +
+        " control(es) enfocables de la página no se sabe si se alcanzan: no es que no se alcancen. Mira los errores de la ejecución y repítela."
+      ], nodesOf(focusables)));
       return out;
     }
+
+    if (!unreached.length && !sueltos.length) {
+      if (enCompuesto.length) {
+        out.push(F("2.1.1", "cumple-parcial", null, [
+          "Todos los controles enfocables se alcanzan con Tab (" + focusables.length + "). Además hay " + enCompuesto.length +
+          " control(es) dentro de widgets compuestos (" + enCompuesto.slice(0, 3).map(function (x) { return x.compuesto; }).join(", ") +
+          ") que por diseño no son tabulables y se operan con las flechas: el patrón es el correcto, pero esta prueba no recorre las flechas, así que esa parte queda por comprobar a mano."
+        ], nodesOf(enCompuesto)));
+        return out;
+      }
+      out.push(F("2.1.1", "cumple", null, ["Todos los controles enfocables se alcanzan con Tab (" + focusables.length + "), y no hay ningún control con rol de widget que no pueda recibir el foco."]));
+      return out;
+    }
+    if (!unreached.length) return out;   // lo de `sueltos` ya se ha dicho arriba
     // No se alcanzaron todos. ¿Es una barrera o es que no terminamos de mirar?
     // Si la tabulación se cortó (trampa de foco o presupuesto agotado), lo que falta
     // NO está comprobado: pedir revisión en vez de declarar falla.
@@ -3332,13 +3654,67 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     if (!trace || !trace.submitted) return out;
     const bad = (trace.fields || []).filter(function (f) { return f.required || f.invalid; });
     if (!bad.length) return out;
-    const sinTexto = bad.filter(function (f) { return !(f.describedbyText && f.describedbyText.trim()); });
+    /* 3.3.1 pide que el error se DESCRIBA EN TEXTO, no que esté asociado por ARIA.
+     *
+     * La técnica suficiente **G83** se satisface con texto de error visible junto al
+     * campo, sin asociación programática (eso es 1.3.1 y 4.1.2, que son otros
+     * criterios y tienen sus propias filas). Mirando solo `aria-describedby`, un
+     * formulario que hace lo que manda G83 —desocultar «Error: el correo es
+     * obligatorio» al lado del campo, más un `role="alert"` con el resumen— salía con
+     * un `falla` **grave** de 3.3.1. Una barrera inventada sobre contenido conforme,
+     * que es lo que destruye la credibilidad de un informe delante de un cliente.
+     *
+     * Así que el texto cuenta venga de donde venga: de `aria-describedby`, de
+     * `aria-errormessage` o del entorno del campo (`errorCercaText`, que el driver
+     * recoge). Si no hay texto en ninguna parte, entonces sí es 3.3.1; si hay texto
+     * pero sin asociar, es 4.1.2 a revisar. */
+    const textoDe = function (f) {
+      return [f.describedbyText, f.errormessageText, f.errorCercaText]
+        .map(function (t) { return String(t || "").trim(); }).filter(Boolean).join(" ");
+    };
+    const sinTexto = bad.filter(function (f) { return !textoDe(f); });
+    const textoSinAsociar = bad.filter(function (f) {
+      return textoDe(f) && !(f.describedbyText || f.errormessageText || "").trim();
+    });
     const sinInvalid = bad.filter(function (f) { return !f.invalid; });
     const hayAlerta = (trace.fields || []).some(function (f) { return f.hasAlert; }) || trace.hasAlert;
-    if (sinTexto.length) out.push(F("3.3.1", "falla", "grave", [sinTexto.length + " campo(s) con error sin descripción en texto (aria-describedby/errormessage): " + sinTexto.slice(0, 6).map(function (f) { return f.locator; }).join(", ") + "."], nodesOf(sinTexto)));
+    /* Y «se anuncian» hay que haberlo VISTO anunciar.
+     *
+     * `hasAlert` era la simple existencia de un `[role=alert]` o `[aria-live]` en
+     * cualquier parte del documento, vacío o no, relacionado con el error o no. Con
+     * eso se emitía `3.3.1 cumple` y la evidencia «los errores se identifican en
+     * texto, exponen aria-invalid **y se anuncian**»: tres afirmaciones, y ninguna
+     * comprobada. El driver compara ahora el contenido de las regiones live antes y
+     * después del envío (`liveCambio`); mientras no conste ese cambio, el criterio no
+     * se cierra como conforme. */
+    const anuncioVisto = trace.liveCambio === true;
+
+    if (sinTexto.length) out.push(F("3.3.1", "falla", "grave", [sinTexto.length + " campo(s) con error sin ninguna descripción en texto —ni asociada (aria-describedby/errormessage) ni visible junto al campo—: " + sinTexto.slice(0, 6).map(function (f) { return f.locator; }).join(", ") + "."], nodesOf(sinTexto)));
+    if (textoSinAsociar.length) out.push(F("4.1.2", "revisar", null, [textoSinAsociar.length + " campo(s) tienen el texto del error al lado pero sin asociar por ARIA: cumple 3.3.1 (técnica G83) y deja 4.1.2 y 1.3.1 por comprobar. Elementos: " + textoSinAsociar.slice(0, 6).map(function (f) { return f.locator; }).join(", ") + "."], nodesOf(textoSinAsociar)));
     if (sinInvalid.length) out.push(F("4.1.2", "revisar", null, [sinInvalid.length + " campo(s) en error sin <code>aria-invalid=\"true\"</code>: el estado de error no se expone a la API."], nodesOf(sinInvalid)));
     if (!hayAlerta) out.push(F("4.1.3", "revisar", null, ["No se detecta un mensaje de estado (role=alert / aria-live) al enviar: revisa que el error se anuncie sin mover el foco."]));
-    if (!sinTexto.length && !sinInvalid.length && hayAlerta) out.push(F("3.3.1", "cumple", null, ["Los errores se identifican en texto, exponen aria-invalid y se anuncian."]));
+    else if (!anuncioVisto) out.push(F("4.1.3", "revisar", null, ["Hay una región de estado (role=alert / aria-live) en la página, pero su contenido no ha cambiado al enviar: que exista el contenedor no quiere decir que el error se anuncie. Compruébalo con un lector."]));
+
+    if (!sinTexto.length && !sinInvalid.length) {
+      if (anuncioVisto && !textoSinAsociar.length) {
+        out.push(F("3.3.1", "cumple", null, ["Los errores se identifican en texto asociado al campo, exponen <code>aria-invalid</code>, y el anuncio se ha visto producirse: el contenido de la región de estado cambió al enviar."]));
+      } else {
+        /* Se ha medido lo medible y falta juicio: ni falla ni conforme.
+         *
+         * Y se dice QUÉ se ha medido, que no es lo mismo que lo que pide el criterio.
+         * Lo observado es que al enviar apareció texto nuevo junto al campo; que ese
+         * texto describa el error —y no sea otra cosa que salió a la vez— lo juzga una
+         * persona leyéndolo. Escribir «el error está descrito en texto» sería afirmar
+         * el criterio a partir de un indicio. */
+        out.push(F("3.3.1", "cumple-parcial", null, [
+          (textoSinAsociar.length
+            ? "Al enviar apareció texto nuevo junto a " + textoSinAsociar.length + " campo(s) en error, sin asociar por ARIA — que es lo que admite la técnica G83. Lee ese texto y comprueba que identifica el error: «" +
+              textoDe(textoSinAsociar[0]).slice(0, 120) + "»."
+            : "Cada campo en error tiene texto de error asociado por ARIA.") +
+          (anuncioVisto ? "" : " Y no se ha podido comprobar que el error se ANUNCIE: la región de estado no cambió de contenido al enviar, o no se pudo observar.")
+        ], nodesOf(textoSinAsociar.length ? textoSinAsociar : bad)));
+      }
+    }
     return out;
   }
 
@@ -3358,11 +3734,24 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
    * @param {Array<{locator:string, uid:string, disparador:"foco"|"entrada",
    *                navego:boolean, focoMovido:boolean, contenidoCambio:boolean}>} eventos
    */
-  function analyzeContextChange(eventos, noSondados) {
+  function analyzeContextChange(eventos, noSondados, censo) {
     const out = [];
-    const cola = noSondados
+    /* Lo que NO se ha sondado sale en la evidencia y, cuando no hay nada que
+     * reprochar, también en el veredicto.
+     *
+     * El driver recorta la lista de candidatos con un tope (veinte por defecto) y
+     * antes no se lo contaba a nadie: en una página de sesenta controles se sondaban
+     * veinte y el criterio salía `pasa`, que `esConforme()` trata como conformidad.
+     * Cuarenta controles sin tocar y 3.2.1 exportado como conforme en el IRA.
+     *
+     * `cumple-parcial` es la palabra exacta para esto —la parte medida está bien, el
+     * resto no se ha mirado— y `esConforme()` ya la excluye. */
+    const fuera = (censo && censo.total > censo.sondados) ? censo.total - censo.sondados : 0;
+    const cola = (noSondados
       ? " " + noSondados + " control(es) no se pudieron sondar (la página se recargó o cambió durante la prueba): quedan sin comprobar."
-      : "";
+      : "") + (fuera
+      ? " Quedan " + fuera + " de " + censo.total + " control(es) sin sondar por el tope de la prueba (súbelo con `maxContexto`): de esos no se sabe nada."
+      : "");
     const porCrit = { foco: "3.2.1", entrada: "3.2.2" };
     ["foco", "entrada"].forEach(function (disp) {
       const crit = porCrit[disp];
@@ -3393,7 +3782,9 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         ], medios.slice(0, 8).map(function (e) { return { locator: e.locator, name: "", path: e.uid }; })));
       }
       if (!graves.length && !medios.length) {
-        out.push(F(crit, "pasa", null, [
+        // Sin nada que reprochar, el veredicto depende de si se miró TODO.
+        const completo = !fuera && !noSondados;
+        out.push(F(crit, completo ? "pasa" : "cumple-parcial", null, [
           "Se han probado " + propios.length + " control(es) y ninguno provoca navegación, salto de foco ni sustitución de contenido " + verbo + "." + cola
         ]));
       }
@@ -5500,9 +5891,24 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     const medio = suma / nucleo;
     const pctFallan = fallan / nucleo;
 
-    // El criterio es por texto, no «de media»: si una parte del texto no llega, el
-    // texto no cumple. Se tolera un 2 % por el ruido de remuestreo y compresión.
-    const verdict = pctFallan <= 0.02 ? "pasa" : "falla";
+    /* El criterio es por texto, no «de media»: si una parte del texto no llega, el
+     * texto no cumple.
+     *
+     * La tolerancia del 2 % se justificaba por «el ruido de remuestreo y compresión»,
+     * y se aplicaba a píxeles con cobertura ≥ 0.9 — el NÚCLEO del glifo, ya filtrado
+     * de antialiasing—, donde ese ruido no existe. Sobre un degradado ese 2 % son
+     * letras enteras: medido, mil píxeles de núcleo con diez ilegibles a 1.00:1 salían
+     * «pasa · todo el texto llega al mínimo» con el propio detalle imprimiendo «1.00:1
+     * en el peor punto». Una contradicción en la misma línea de evidencia.
+     *
+     * Sin tolerancia sobre el núcleo, y con una banda de duda estrecha para el caso
+     * real que la justificaba: un puñado de píxeles sueltos en el borde del glifo que
+     * el filtro de cobertura no acabó de limpiar. Ahí se pide revisión, no se absuelve:
+     * `revisar` no es conforme y el criterio no sale del informe. */
+    const pixelesQueFallan = fallan;
+    const verdict = pctFallan === 0
+      ? "pasa"
+      : (pixelesQueFallan <= 3 && pctFallan < 0.005) ? "revisar" : "falla";
     const frentePeor = alfaTexto < 1
       ? { r: fg.r * alfaTexto + peorBg.r * (1 - alfaTexto), g: fg.g * alfaTexto + peorBg.g * (1 - alfaTexto), b: fg.b * alfaTexto + peorBg.b * (1 - alfaTexto) }
       : fg;
@@ -5516,6 +5922,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       pixeles: nucleo,
       fondosDistintos: cuentas.size,
       porcentajeQueFalla: pctFallan,
+      pixelesQueFallan: pixelesQueFallan,
       minExigido: min,
       lcPeor: lc, lcMin: lcMin, grande: grande
     };
@@ -5529,7 +5936,17 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     const fondo = "rgb(" + r.peorFondo.r + " " + r.peorFondo.g + " " + r.peorFondo.b + ")";
     return "medido sobre los píxeles del fondo real (" + r.pixeles + " px de texto, " + r.fondosDistintos + " tono(s) de fondo): " +
       rango + " (mín " + r.minExigido + ":1) · APCA Lc " + r.lcPeor + " — " + fgStr + " sobre " + fondo +
-      (r.verdict === "pasa" ? " · todo el texto llega al mínimo" : " · el " + (pc < 1 ? "<1" : pc) + " % del texto no llega al mínimo");
+      /* Y la frase no puede contradecir al número que lleva al lado.
+       *
+       * «todo el texto llega al mínimo» se escribía con la tolerancia del 2 % puesta,
+       * así que aparecía junto a «1.00:1 en el peor punto». Ahora solo se dice cuando
+       * de verdad no falla ni un píxel, y el caso dudoso se nombra por lo que es. */
+      (r.verdict === "pasa"
+        ? " · todo el texto llega al mínimo"
+        : r.verdict === "revisar"
+          ? " · " + r.pixelesQueFallan + " píxel(es) sueltos por debajo del mínimo (" + (pc < 1 ? "<1" : pc) +
+            " %): puede ser el borde del glifo sin limpiar del todo, míralo a ojo"
+          : " · el " + (pc < 1 ? "<1" : pc) + " % del texto no llega al mínimo");
   }
   NS.SONDA_A = SONDA_A;
   NS.SONDA_B = SONDA_B;

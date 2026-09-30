@@ -113,9 +113,60 @@ function opacidadAcumulada(el, win) {
   }
   return acc;
 }
+/* ¿Lo que se pinta DEBAJO es de verdad lo que hemos medido?
+ *
+ * `bgBehind` sube por la ASCENDENCIA del DOM, y la ascendencia no es el orden de
+ * pintado. Un bloque `position:absolute` o una cabecera `position:fixed` con fondo
+ * transparente se dibuja ENCIMA de una foto que no es antepasada suya, así que su
+ * texto se medía contra el blanco del `body` —o, peor, contra el blanco inventado
+ * cuando no había ningún fondo opaco arriba— y el detalle afirmaba ese blanco como
+ * hecho medido. Comprobado: texto `#1a1a1a` sobre una foto `#141418` salía
+ * «pasa · ratio 17.40:1 … sobre rgb(255 255 255)» con un contraste real de 1.06:1.
+ * Una barrera total de 1.4.3 exportada como conforme.
+ *
+ * `elementsFromPoint` da la pila de pintado de verdad. Si el primero que pinta algo
+ * por debajo del elemento no es uno de sus antepasados, lo medido no vale y el
+ * criterio se queda sin dictaminar, que es la vía honesta que ya existe para los
+ * fondos con imagen.
+ *
+ * Límite, y se dice: solo funciona dentro del viewport. Para el texto que queda por
+ * debajo del pliegue no se puede comprobar sin desplazar la página en mitad de la
+ * medición, y eso movería lo que están midiendo las demás comprobaciones.
+ */
+function fondoRealCoincide(el, win, origen) {
+  // Si el propio elemento pone un fondo opaco, lo que haya debajo da igual.
+  if (origen === el) return { ok: true };
+  const doc = el.ownerDocument;
+  if (!doc || !doc.elementsFromPoint) return { ok: true };
+  const r = el.getBoundingClientRect();
+  if (!r.width || !r.height) return { ok: true };
+  const x = Math.min(r.left + 2, r.right - 1);
+  const y = Math.min(r.top + Math.min(4, r.height / 2), r.bottom - 1);
+  if (x < 0 || y < 0 || x >= (win.innerWidth || 0) || y >= (win.innerHeight || 0)) {
+    return { ok: true, fuera: true };   // fuera del viewport: no se afirma nada
+  }
+  let pila;
+  try { pila = doc.elementsFromPoint(x, y) || []; } catch (e) { return { ok: true }; }
+  const i = pila.indexOf(el);
+  if (i === -1) return { ok: true };     // el punto no cae en el elemento
+  for (let k = i + 1; k < pila.length; k++) {
+    const cand = pila[k];
+    const cs = win.getComputedStyle(cand);
+    const tieneImagen = cs.backgroundImage && cs.backgroundImage !== "none";
+    const b = resolverColor(cs.backgroundColor, doc);
+    if (tieneImagen || (b && b.a > 0)) {
+      if (cand.contains(el)) return { ok: true };
+      // `locatorM` está declarada más abajo en el mismo ámbito (hoisting).
+      return { ok: false, pintor: locatorM(cand),
+        fondo: tieneImagen ? String(cs.backgroundImage).slice(0, 60) : cs.backgroundColor };
+    }
+  }
+  return { ok: true };
+}
 function bgBehind(el, win) {
   let p = el, image = false, desconocido = false; const layers = [];
   let base = { r: 255, g: 255, b: 255, a: 1 };
+  let origen = null;   // quién puso el fondo opaco con el que se mide
   while (p && p.nodeType === 1) {
     const cs = win.getComputedStyle(p);
     if (cs.backgroundImage && cs.backgroundImage !== "none") image = true;
@@ -128,7 +179,7 @@ function bgBehind(el, win) {
       desconocido = true;
       break;
     }
-    if (b && b.a > 0) { if (b.a >= 1) { base = b; break; } layers.push(b); }
+    if (b && b.a > 0) { if (b.a >= 1) { base = b; origen = p; break; } layers.push(b); }
     p = p.parentElement;
   }
   let outc = { r: base.r, g: base.g, b: base.b, a: 1 };
@@ -136,6 +187,10 @@ function bgBehind(el, win) {
   outc.image = image;
   outc.desconocido = desconocido;
   outc.opacidad = opacidadAcumulada(el, win);
+  outc.origen = origen;
+  // Sin fondo opaco en toda la ascendencia se estaba midiendo contra un blanco
+  // supuesto; eso solo vale si lo que se pinta debajo es de verdad de la página.
+  outc.real = fondoRealCoincide(el, win, origen);
   return outc;
 }
 /**
@@ -167,6 +222,11 @@ function contrastOf(el, win) {
   const large = large0;
   if (bg.desconocido) return { undetermined: true, large: large, motivo: "el fondo está en una notación que esta medición no sabe leer (oklch, lab, color-mix…)" };
   if (bg.opacidad < 1) return { undetermined: true, large: large, motivo: "hay opacidad (" + bg.opacidad.toFixed(2) + ") en la cadena de antepasados: lo que se ve pintado no es este color" };
+  if (bg.real && bg.real.ok === false) {
+    return { undetermined: true, large: large,
+      motivo: "lo que se pinta detrás no es lo que dice el marcado: encima hay «" + bg.real.pintor +
+        "» (fondo " + bg.real.fondo + "), que no es antepasado de este elemento, así que el contraste no se puede calcular desde los estilos. Mídelo por píxeles o a mano" };
+  }
   if (bg.image) return { undetermined: true, large: large };
   if (fg.a != null && fg.a < 1) fg = over(fg, bg);
   return { ratio: contrastRatio(fg, bg), fg: rgbStr(fg), bg: rgbStr(bg), large: large, lc: apcaContrast(fg, bg), lcMin: apcaMin(size, weight) };
@@ -217,6 +277,99 @@ const PROP_INDICADOR = ["outline", "outline-width", "outline-style", "outline-co
 // página. `outline-offset` no está en la lista de arriba por lo mismo: desplaza
 // un contorno, no lo dibuja.
 const NULOS = ["none", "hidden", "0", "0px", "transparent", "initial", "unset", "revert", "medium", "currentcolor"];
+
+/* ── 2.4.7: qué es un indicador de foco que SE VE ──────────────────────────
+ *
+ * La comparación era una cadena: `outlineStyle|outlineWidth|outlineColor||
+ * boxShadow||borderColor` antes y después de enfocar, y cualquier diferencia
+ * textual contaba como indicador visible. Con eso, cinco indicadores literalmente
+ * invisibles salían los cinco «pasa · cambio visible al enfocar»:
+ *
+ *     #a:focus{ outline: 2px solid transparent }
+ *     #b:focus{ outline: 3px solid rgba(0,0,0,0) }
+ *     #c:focus{ box-shadow: 0 0 0 3px rgba(0,0,0,0) }
+ *     #d:focus{ border-color: #fff }        (sobre fondo blanco)
+ *     #e:focus{ outline: 1px solid #fff }   (sobre fondo blanco)
+ *
+ * Un cambio que no se ve no es un indicador, y declararlo conforme es lo contrario
+ * de lo que hace este motor. Así que se mira cada canal por separado: que tenga
+ * tamaño, que su color tenga alfa, y que no sea del mismo color que lo que hay
+ * detrás. De paso se recogen dos canales que la firma anterior no miraba —el fondo
+ * y la decoración del texto—, con lo que un foco que solo cambia el fondo deja de
+ * pasar desapercibido.
+ */
+function coloresDe(s) {
+  const out = [];
+  const re = /rgba?\(([^)]+)\)/g;
+  let m;
+  while ((m = re.exec(String(s || "")))) {
+    const p = m[1].split(/[,\s/]+/).filter(Boolean).map(parseFloat);
+    out.push({ r: p[0] || 0, g: p[1] || 0, b: p[2] || 0, a: p.length > 3 ? p[3] : 1 });
+  }
+  return out;
+}
+function mismoColor(a, b) {
+  return a && b && a.r === b.r && a.g === b.g && a.b === b.b;
+}
+function aparienciaFoco(cs) {
+  return {
+    outlineStyle: cs.outlineStyle, outlineWidth: parseFloat(cs.outlineWidth) || 0, outlineColor: cs.outlineColor,
+    boxShadow: cs.boxShadow,
+    borderColor: cs.borderTopColor + "/" + cs.borderRightColor + "/" + cs.borderBottomColor + "/" + cs.borderLeftColor,
+    borderWidth: (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderRightWidth) || 0) +
+      (parseFloat(cs.borderBottomWidth) || 0) + (parseFloat(cs.borderLeftWidth) || 0),
+    background: cs.backgroundColor, backgroundImage: cs.backgroundImage,
+    color: cs.color,
+    decoracion: (cs.textDecorationLine || "") + " " + (cs.textDecorationThickness || "")
+  };
+}
+/** @returns {{visible:boolean, via:string, motivo:string}} */
+function indicadorDeFoco(base, foc, el, win) {
+  if (!foc) return { visible: false, via: "", motivo: "no se pudo leer el estado con el foco puesto" };
+  // Fondo contra el que se dibuja el indicador: el del PADRE, porque el contorno
+  // se pinta justo fuera de la caja del elemento.
+  const detras = bgBehind(el.parentElement || el, win);
+  const nulos = [];
+
+  // 1) Contorno.
+  const oc = coloresDe(foc.outlineColor)[0];
+  const hayContorno = foc.outlineStyle !== "none" && foc.outlineStyle !== "hidden" && foc.outlineWidth > 0;
+  if (hayContorno) {
+    if (!oc || oc.a === 0) nulos.push("el contorno es transparente (" + foc.outlineColor + ")");
+    else if (mismoColor(oc, detras)) nulos.push("el contorno es del mismo color que el fondo de detrás (" + foc.outlineColor + ")");
+    else return { visible: true, via: "contorno", motivo: "contorno de " + foc.outlineWidth + "px en " + foc.outlineColor };
+  } else if (base && (base.outlineStyle !== foc.outlineStyle || base.outlineWidth !== foc.outlineWidth)) {
+    nulos.push("el contorno cambia pero queda sin grosor o con estilo «" + foc.outlineStyle + "»");
+  }
+
+  // 2) Sombra.
+  if (foc.boxShadow && foc.boxShadow !== "none" && (!base || foc.boxShadow !== base.boxShadow)) {
+    const conAlfa = coloresDe(foc.boxShadow).filter(function (c) { return c.a > 0 && !mismoColor(c, detras); });
+    if (conAlfa.length) return { visible: true, via: "sombra", motivo: "box-shadow visible (" + String(foc.boxShadow).slice(0, 60) + ")" };
+    nulos.push("la sombra no se ve: " + String(foc.boxShadow).slice(0, 60));
+  }
+
+  // 3) Borde.
+  if (base && foc.borderColor !== base.borderColor && foc.borderWidth > 0) {
+    const bc = coloresDe(foc.borderColor).filter(function (c) { return c.a > 0 && !mismoColor(c, detras); });
+    if (bc.length) return { visible: true, via: "borde", motivo: "el borde cambia a " + foc.borderColor.split("/")[0] };
+    nulos.push("el borde cambia a un color que no se distingue del fondo (" + foc.borderColor.split("/")[0] + ")");
+  }
+
+  // 4) Fondo y 5) texto: canales que la firma anterior no miraba.
+  if (base && (foc.background !== base.background || foc.backgroundImage !== base.backgroundImage)) {
+    const fc = coloresDe(foc.background)[0];
+    if ((foc.backgroundImage && foc.backgroundImage !== "none" && foc.backgroundImage !== base.backgroundImage) || (fc && fc.a > 0)) {
+      return { visible: true, via: "fondo", motivo: "el fondo cambia a " + foc.background };
+    }
+    nulos.push("el fondo cambia a algo que no se ve (" + foc.background + ")");
+  }
+  if (base && (foc.color !== base.color || foc.decoracion !== base.decoracion)) {
+    return { visible: true, via: "texto", motivo: "cambia el color o la decoración del texto" };
+  }
+
+  return { visible: false, via: "", motivo: nulos.length ? nulos.join("; ") : "no cambia ninguna propiedad al enfocar" };
+}
 // Hacia ABAJO, siempre. Con `toFixed(2)`, un 4.4995 se imprimía «4.50:1 (mín
 // 4.5:1)» junto al veredicto «revisar»: una contradicción en el informe que
 // invita a que el revisor lo suba a conforme.
@@ -537,14 +690,12 @@ function runChecksReal(doc, win, limit) {
         res.push({ crit: "2.1.1", label: "Enfocable con teclado", node: loc, verdict: "revisar", detail: "tabindex=\"-1\": solo foco programático, el tabulador no lo alcanza. Comprueba que haya otra forma de operarlo con teclado" });
       }
     } else {
-      const csBase = win.getComputedStyle(el);
-      const base = csBase.outlineStyle + "|" + csBase.outlineWidth + "|" + csBase.outlineColor + "||" + csBase.boxShadow + "||" + csBase.borderColor;
+      const base = aparienciaFoco(win.getComputedStyle(el));
       let focusable = false, foc = null;
       try {
         el.focus({ preventScroll: true });
         focusable = (doc.activeElement === el);
-        const c2 = win.getComputedStyle(el);
-        foc = c2.outlineStyle + "|" + c2.outlineWidth + "|" + c2.outlineColor + "||" + c2.boxShadow + "||" + c2.borderColor;
+        foc = aparienciaFoco(win.getComputedStyle(el));
         if (el.blur) el.blur();
       } catch (e) {}
       res.push(focusable
@@ -571,11 +722,20 @@ function runChecksReal(doc, win, limit) {
             }
           }
         }
-        const changed = !!(foc && foc !== base);
+        const ind = indicadorDeFoco(base, foc, el, win);
+        const changed = ind.visible;
         if (docEnfocado || changed) {
-          // Con el documento enfocado la medición vale. Y si aun sin foco de
-          // sistema SÍ hubo cambio, el cambio es real: no hay por qué dudarlo.
-          res.push({ crit: "2.4.7", label: "Foco visible", node: loc, verdict: changed ? "pasa" : "revisar", detail: changed ? "cambio visible al enfocar" : "sin cambio medible (revisar a ojo / :focus-visible)" });
+          /* Y si algo cambió pero no se ve, eso es una medición CONCLUYENTE de que
+           * no hay indicador: `falla`, no `revisar`. La duda se reserva para cuando
+           * no cambia nada y puede estar en `:focus-visible` o en una hoja que no se
+           * ha podido leer. */
+          const cambioInvisible = !ind.visible && foc && JSON.stringify(foc) !== JSON.stringify(base);
+          res.push(changed
+            ? { crit: "2.4.7", label: "Foco visible", node: loc, path: ruta, verdict: "pasa", detail: "indicador visible al enfocar: " + ind.motivo }
+            : cambioInvisible
+              ? { crit: "2.4.7", label: "Foco visible", node: loc, path: ruta, verdict: "falla",
+                  detail: "al enfocar cambia el estilo pero el indicador NO se ve: " + ind.motivo + ". Tabulando hasta aquí no se sabe dónde está el foco" }
+              : { crit: "2.4.7", label: "Foco visible", node: loc, path: ruta, verdict: "revisar", detail: "sin cambio medible (revisar a ojo / :focus-visible)" });
         } else {
           const rf = reglasDeFoco(el, doc);
           hojasBloqueadas = Math.max(hojasBloqueadas, rf.hojasBloqueadas);
@@ -732,7 +892,7 @@ function runChecksReal(doc, win, limit) {
 }
 
 const FNS = [parseColor, over, lum, contrastRatio, rgbStr, apcaContrast, apcaMin,
-  animacionesPersistentes, distintivoDeEnlace, enTextoCorrido, elementosFlotantes, fraccionTapada, ratioTxt, resolverColor, ownText, opacidadAcumulada, bgBehind, contrastOf, boundaryContrastOf, isInteractiveM, locatorM, rutaM, renderedM, disabledM, managedM, textTargets,
+  animacionesPersistentes, distintivoDeEnlace, enTextoCorrido, elementosFlotantes, fraccionTapada, ratioTxt, resolverColor, ownText, opacidadAcumulada, coloresDe, mismoColor, aparienciaFoco, indicadorDeFoco, fondoRealCoincide, bgBehind, contrastOf, boundaryContrastOf, isInteractiveM, locatorM, rutaM, renderedM, disabledM, managedM, textTargets,
   pinta, sinPseudoFoco, coincideSinFoco, reglasDeFoco, runChecksReal];
 const FN_SRC = "var MANAGED_PARENT = " + JSON.stringify(MANAGED_PARENT) + ";\nvar NATIVOS = " + JSON.stringify(NATIVOS) + ";\n" +
   "var PROP_INDICADOR = " + JSON.stringify(PROP_INDICADOR) + ";\nvar NULOS = " + JSON.stringify(NULOS) + ";\n" +

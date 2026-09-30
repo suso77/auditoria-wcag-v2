@@ -45,6 +45,77 @@ function plantillas(fichero) {
 
 const MODULOS = readdirSync(SRC).filter((f) => f.endsWith(".js"));
 
+/* Todos los tramos entre comillas invertidas de un fichero, con su línea.
+ *
+ * No basta con las plantillas que tienen nombre (`const HELPERS = \`…\``): la mayor
+ * parte del código que se inyecta va en plantillas EN LÍNEA, dentro de la propia
+ * llamada a `evalIn(page, \`…\`)`, y ahí el colapso de `\s` pasa exactamente igual.
+ * Este recorrido las coge todas. Es un análisis del TEXTO, no del valor, porque una
+ * plantilla con `${…}` dentro no se puede evaluar suelta; y para este fallo el
+ * texto basta: dentro de una plantilla, `\s` es un error y `\\s` es lo correcto.
+ */
+function tramosDePlantilla(fuente) {
+  const tramos = [];
+  let i = 0, linea = 1;
+  const n = fuente.length;
+  while (i < n) {
+    const c = fuente[i];
+    if (c === "\n") { linea++; i++; continue; }
+    // Comentarios y cadenas normales se saltan: una comilla invertida dentro de
+    // un comentario (o de una cadena) no abre ninguna plantilla.
+    if (c === "/" && fuente[i + 1] === "/") { while (i < n && fuente[i] !== "\n") i++; continue; }
+    if (c === "/" && fuente[i + 1] === "*") {
+      i += 2;
+      while (i < n && !(fuente[i] === "*" && fuente[i + 1] === "/")) { if (fuente[i] === "\n") linea++; i++; }
+      i += 2; continue;
+    }
+    if (c === '"' || c === "'") {
+      const q = c; i++;
+      while (i < n && fuente[i] !== q) { if (fuente[i] === "\\") i++; if (fuente[i] === "\n") linea++; i++; }
+      i++; continue;
+    }
+    if (c === "`") {
+      const desde = i + 1, lineaInicio = linea;
+      i++;
+      let prof = 0;
+      while (i < n) {
+        if (fuente[i] === "\\") { i += 2; continue; }
+        if (fuente[i] === "\n") linea++;
+        if (fuente[i] === "$" && fuente[i + 1] === "{") { prof++; i += 2; continue; }
+        if (prof > 0 && fuente[i] === "}") { prof--; i++; continue; }
+        if (prof === 0 && fuente[i] === "`") break;
+        i++;
+      }
+      tramos.push({ linea: lineaInicio, texto: fuente.slice(desde, i) });
+      i++; continue;
+    }
+    i++;
+  }
+  return tramos;
+}
+
+/* Las secuencias que una plantilla se come sin protestar, buscadas en el TEXTO:
+ * una barra sola delante de la letra. `\\s` (dos barras) es lo correcto y no
+ * salta; `\n`, `\t`, `\\`, `\'`, `\`` y `\${` son escapes válidos y no entran. */
+const SUELTAS = /(^|[^\\])\\([sdwbSDWB])(?![a-zA-Z])/;
+
+test("ninguna plantilla del código —con nombre o en línea— lleva una secuencia sin escapar", () => {
+  const fallos = [];
+  MODULOS.forEach((f) => {
+    const fuente = readFileSync(join(SRC, f), "utf8");
+    tramosDePlantilla(fuente).forEach((t) => {
+      t.texto.split("\n").forEach((l, k) => {
+        const m = l.match(SUELTAS);
+        if (m) {
+          fallos.push(f + ":" + (t.linea + k) + "  se escribió `\\" + m[2] +
+            "` y a la plantilla llega la letra suelta; dóblalo a `\\\\" + m[2] + "`\n      " + l.trim().slice(0, 140));
+        }
+      });
+    });
+  });
+  assert.deepEqual(fallos, [], "secuencias colapsadas en plantillas:\n  – " + fallos.join("\n  – "));
+});
+
 /* Las secuencias que un template literal se come sin protestar. `\n`, `\t`, `\\`
  * y `\'` sí son escapes válidos y no entran aquí. */
 const COLAPSADAS = [

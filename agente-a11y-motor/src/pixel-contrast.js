@@ -136,9 +136,24 @@ export function analizarPixeles(capturas, fg, opts) {
   const medio = suma / nucleo;
   const pctFallan = fallan / nucleo;
 
-  // El criterio es por texto, no «de media»: si una parte del texto no llega, el
-  // texto no cumple. Se tolera un 2 % por el ruido de remuestreo y compresión.
-  const verdict = pctFallan <= 0.02 ? "pasa" : "falla";
+  /* El criterio es por texto, no «de media»: si una parte del texto no llega, el
+   * texto no cumple.
+   *
+   * La tolerancia del 2 % se justificaba por «el ruido de remuestreo y compresión»,
+   * y se aplicaba a píxeles con cobertura ≥ 0.9 — el NÚCLEO del glifo, ya filtrado
+   * de antialiasing—, donde ese ruido no existe. Sobre un degradado ese 2 % son
+   * letras enteras: medido, mil píxeles de núcleo con diez ilegibles a 1.00:1 salían
+   * «pasa · todo el texto llega al mínimo» con el propio detalle imprimiendo «1.00:1
+   * en el peor punto». Una contradicción en la misma línea de evidencia.
+   *
+   * Sin tolerancia sobre el núcleo, y con una banda de duda estrecha para el caso
+   * real que la justificaba: un puñado de píxeles sueltos en el borde del glifo que
+   * el filtro de cobertura no acabó de limpiar. Ahí se pide revisión, no se absuelve:
+   * `revisar` no es conforme y el criterio no sale del informe. */
+  const pixelesQueFallan = fallan;
+  const verdict = pctFallan === 0
+    ? "pasa"
+    : (pixelesQueFallan <= 3 && pctFallan < 0.005) ? "revisar" : "falla";
   const frentePeor = alfaTexto < 1
     ? { r: fg.r * alfaTexto + peorBg.r * (1 - alfaTexto), g: fg.g * alfaTexto + peorBg.g * (1 - alfaTexto), b: fg.b * alfaTexto + peorBg.b * (1 - alfaTexto) }
     : fg;
@@ -152,6 +167,7 @@ export function analizarPixeles(capturas, fg, opts) {
     pixeles: nucleo,
     fondosDistintos: cuentas.size,
     porcentajeQueFalla: pctFallan,
+    pixelesQueFallan: pixelesQueFallan,
     minExigido: min,
     lcPeor: lc, lcMin: lcMin, grande: grande
   };
@@ -165,7 +181,17 @@ export function detallePixeles(r, fgStr) {
   const fondo = "rgb(" + r.peorFondo.r + " " + r.peorFondo.g + " " + r.peorFondo.b + ")";
   return "medido sobre los píxeles del fondo real (" + r.pixeles + " px de texto, " + r.fondosDistintos + " tono(s) de fondo): " +
     rango + " (mín " + r.minExigido + ":1) · APCA Lc " + r.lcPeor + " — " + fgStr + " sobre " + fondo +
-    (r.verdict === "pasa" ? " · todo el texto llega al mínimo" : " · el " + (pc < 1 ? "<1" : pc) + " % del texto no llega al mínimo");
+    /* Y la frase no puede contradecir al número que lleva al lado.
+     *
+     * «todo el texto llega al mínimo» se escribía con la tolerancia del 2 % puesta,
+     * así que aparecía junto a «1.00:1 en el peor punto». Ahora solo se dice cuando
+     * de verdad no falla ni un píxel, y el caso dudoso se nombra por lo que es. */
+    (r.verdict === "pasa"
+      ? " · todo el texto llega al mínimo"
+      : r.verdict === "revisar"
+        ? " · " + r.pixelesQueFallan + " píxel(es) sueltos por debajo del mínimo (" + (pc < 1 ? "<1" : pc) +
+          " %): puede ser el borde del glifo sin limpiar del todo, míralo a ojo"
+        : " · el " + (pc < 1 ? "<1" : pc) + " % del texto no llega al mínimo");
 }
 
 /* NODE-ONLY:START */

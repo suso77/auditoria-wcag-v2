@@ -207,7 +207,13 @@ test("la huella recoge navegación, ayuda y vías", () => {
   assert.equal(h.vias.mapaWeb, true);
   assert.equal(h.vias.navegacion, true);
   assert.deepEqual(h.ayuda.map((a) => a.tipo), ["contacto", "ayuda", "teléfono"]);
-  assert.deepEqual(h.ayuda.map((a) => a.region), ["navegación", "contenido", "pie"], "cada mecanismo sabe en qué parte de la página vive");
+  /* «Contacto» vive en un <nav> DENTRO del <header>, y la región que cuenta es la
+   * más externa: la cabecera. Antes se devolvía la primera que se encontraba
+   * subiendo —«navegación»—, y eso hacía que 3.2.6 emitiera un `falla` diciendo que
+   * el mecanismo «cambia de sitio entre páginas» cuando la única diferencia era que
+   * una página envolvía esos enlaces en un <nav> y la otra no. La ubicación
+   * relativa, que es de lo que habla el criterio, no cambia por el envoltorio. */
+  assert.deepEqual(h.ayuda.map((a) => a.region), ["cabecera", "contenido", "pie"], "cada mecanismo sabe en qué parte de la página vive");
 });
 
 test("regresión: el ancla interna no entra en la huella", () => {
@@ -282,4 +288,88 @@ test("regresión: un buscador oculto no cuenta como vía de localización", () =
 
 test("ocultoEl de coherence respeta `inert`, igual que el de page-audit", () => {
   assert.equal(huella('<html><body><div inert><input type="search"></div></body></html>', "http://s/").vias.buscador, false);
+});
+
+/* ── Regresión: cuatro fallos de los criterios de sitio ─────────────────────
+ *
+ * Los cuatro salieron de la segunda ronda de revisión del motor, y los cuatro se
+ * reprodujeron ejecutando código antes de tocar nada. Dos absolvían y dos
+ * inventaban barreras; las dos cosas hacen daño, y la segunda además delante de un
+ * cliente.
+ */
+
+test("regresión: 3.2.3 compara TODOS los pares, no cada página contra la primera", () => {
+  // «Blog» va antes de «Servicios» en una página y después en otra, y ninguna de
+  // las dos cosas se ve desde la primera, que no tiene Blog. Comparando solo contra
+  // `conNav[0]`, la inversión pasaba desapercibida y el criterio salía `cumple`
+  // afirmando «mantiene el mismo orden relativo en las 3 páginas».
+  const nav = (items) => "<header><nav>" +
+    items.map(([t, h]) => '<a href="' + h + '">' + t + "</a>").join("") + "</nav></header><main><h1>H</h1></main>";
+  const out = analyzeNavConsistency([
+    huella(nav([["Inicio", "/"], ["Servicios", "/servicios"]]), "http://s/"),
+    huella(nav([["Inicio", "/"], ["Servicios", "/servicios"], ["Blog", "/blog"]]), "http://s/servicios"),
+    huella(nav([["Inicio", "/"], ["Blog", "/blog"], ["Servicios", "/servicios"]]), "http://s/blog")
+  ]);
+  assert.deepEqual(v(out), ["3.2.3/falla"]);
+  const e = out[0].evid.join(" ");
+  assert.match(e, /«Blog» aparece antes que «Servicios»/);
+  assert.match(e, /http:\/\/s\/servicios/, "y dice contra qué página se compara, que no es la primera");
+});
+
+test("regresión: un <nav> dentro del pie sigue siendo el pie (3.2.6)", () => {
+  // La misma ubicación visual con y sin envoltorio. `regionDe` devolvía la primera
+  // región que encontraba subiendo, así que una daba «pie» y la otra «navegación», y
+  // 3.2.6 emitía un `falla` diciendo que el mecanismo «cambia de sitio».
+  const out = analyzeHelpConsistency([
+    huella('<main><h1>H</h1></main><footer><a href="/contacto">Contacto</a></footer>', "http://s/a"),
+    huella('<main><h1>H</h1></main><footer><nav><a href="/contacto">Contacto</a></nav></footer>', "http://s/b")
+  ]);
+  assert.ok(!out.some((f) => f.verdict === "falla"), JSON.stringify(v(out)));
+  // Y un cambio de verdad —del pie a la cabecera— sí falla.
+  const deVerdad = analyzeHelpConsistency([
+    huella('<main><h1>H</h1></main><footer><a href="/contacto">Contacto</a></footer>', "http://s/a"),
+    huella('<header><a href="/contacto">Contacto</a></header><main><h1>H</h1></main>', "http://s/b")
+  ]);
+  assert.ok(deVerdad.some((f) => f.c.n === "3.2.6" && f.verdict === "falla"), JSON.stringify(v(deVerdad)));
+});
+
+test("regresión: «Compartir por correo» no es un mecanismo de ayuda", () => {
+  // `tipoAyuda` probaba el esquema contra el href crudo, así que un enlace de
+  // compartir dentro de un artículo se registraba como ayuda «correo»; y como solo
+  // se guardaba la primera aparición de cada tipo, en la ficha ganaba la del
+  // contenido y en la portada la del pie → «cambia de sitio», con las dos páginas
+  // teniendo la misma dirección de contacto en el mismo pie.
+  const pie = '<footer><a href="mailto:info@s.es">Escríbenos</a></footer>';
+  const out = analyzeHelpConsistency([
+    huella("<main><h1>H</h1></main>" + pie, "http://s/"),
+    huella('<main><h1>H</h1><a href="mailto:?subject=mira%20esto">Compartir por correo</a></main>' + pie, "http://s/blog/uno")
+  ]);
+  assert.ok(!out.some((f) => f.verdict === "falla"), JSON.stringify(v(out)));
+  // El correo de contacto del pie sí cuenta: el arreglo no ciega el criterio.
+  const h = huella("<main><h1>H</h1></main>" + pie, "http://s/");
+  assert.deepEqual(h.ayuda.map((a) => a.tipo), ["correo"]);
+  assert.equal(h.ayuda[0].region, "pie");
+  // Y un mailto: en medio del contenido, sin nada que diga que es ayuda, no cuenta.
+  const suelto = huella('<main><h1>H</h1><a href="mailto:autor@s.es">autor@s.es</a></main>', "http://s/x");
+  assert.deepEqual(suelto.ayuda.map((a) => a.tipo), []);
+});
+
+test("regresión: la ruta distingue mayúsculas; el host, no (3.2.4)", () => {
+  // En HTTP `/Servicios` y `/servicios` son dos páginas, y cada una puede llamarse
+  // como quiera. Minusculizándolo todo se fundían en un destino con dos nombres y
+  // 3.2.4 emitía un `falla`.
+  assert.equal(normalizarHref("/Servicios", "http://S.ES/"), "s.es/Servicios");
+  assert.equal(normalizarHref("/servicios", "http://s.es/"), "s.es/servicios");
+  const nav = (t, h) => '<header><nav><a href="' + h + '">' + t + '</a><a href="/">Inicio</a></nav></header><main><h1>H</h1></main>';
+  const out = analyzeIdConsistency([
+    huella(nav("Servicios", "/Servicios"), "http://s/a"),
+    huella(nav("Área privada", "/servicios"), "http://s/b")
+  ]);
+  assert.ok(!out.some((f) => f.verdict === "falla"), JSON.stringify(v(out)));
+  // El mismo destino con dos nombres distintos sigue siendo falla.
+  const mismo = analyzeIdConsistency([
+    huella(nav("Servicios", "/servicios"), "http://s/a"),
+    huella(nav("Área privada", "/servicios"), "http://s/b")
+  ]);
+  assert.ok(mismo.some((f) => f.c.n === "3.2.4" && f.verdict === "falla"), JSON.stringify(v(mismo)));
 });

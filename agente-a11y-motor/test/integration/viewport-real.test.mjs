@@ -41,6 +41,17 @@ const CASOS = {
     "main{padding:1em}table{border-collapse:collapse}td{white-space:nowrap;padding:4px}"),
   // title usado como tooltip.
   "/title": BASE(`<main><h1>T</h1><p><a href="#x" title="Información adicional que solo se ve al pasar el ratón">Enlace</a></p></main>`),
+  /* Desbordamiento ESCONDIDO: no hay barra, `scrollWidth` del documento no crece,
+     y sin embargo hay texto que no se puede leer de ninguna manera a 320 px. */
+  "/recorte-oculto": BASE(`<main><h1>R</h1><div class="caja"><div class="linea">Importe total de la operación: 1.234,56 EUR antes de impuestos</div></div></main>`,
+    ".caja{overflow:hidden;max-width:100%}.caja .linea{width:900px;white-space:nowrap}"),
+  /* Tamaños en px y alto fijo: `html{font-size:200%}` no toca nada, pero con el
+     texto duplicado de verdad la tarjeta esconde más de cien píxeles. */
+  "/zoom-px": BASE(`<main><h1>Z</h1><div class="tarjeta"><p>Primera línea de la tarjeta</p><p>Segunda línea de la tarjeta</p></div></main>`,
+    ".tarjeta{height:44px;overflow:hidden}.tarjeta p{font-size:14px;line-height:20px;margin:0}"),
+  // La misma tarjeta sin alto fijo: aguanta el 200 % y no puede salir en rojo.
+  "/zoom-flexible": BASE(`<main><h1>Z</h1><div class="tarjeta"><p>Primera línea</p><p>Segunda línea</p></div></main>`,
+    ".tarjeta p{font-size:14px;line-height:1.5;margin:0}"),
   // Bloqueo de orientación por JavaScript.
   "/orientacion": BASE(`<main><h1>T</h1><p>${TEXTO}</p></main>`) .replace("</body>",
     "<script>try{screen.orientation.lock('portrait')}catch(e){}</script></body>")
@@ -155,4 +166,50 @@ test("1.4.13 real: sin emergentes, el cumple dice cuántos disparadores se recor
   assert.equal(f.verdict, "cumple");
   assert.equal(t.disparadores, 0);
   assert.match(f.evid[0], /0 disparador/);
+});
+
+
+/* ── Regresión: dos «cumple» sobre mediciones que no medían nada ─────────────
+ *
+ * Los dos se reprodujeron contra Chromium antes de tocar nada, y son de la misma
+ * familia: el criterio se dictaminaba por una señal que no es la que el criterio
+ * pide.
+ */
+
+test("regresión: 1.4.10 no pasa con contenido RECORTADO e inalcanzable a 320 px", { skip }, async () => {
+  /* Se dictaminaba solo por `scrollWidth > clientWidth`. Con el desbordamiento
+   * escondido en `overflow:hidden` no hay barra, `scrollWidth` no crece, y salía
+   * «cumple» con 580 px de texto ocultos y sin forma de llegar a ellos. El criterio
+   * no habla de barras: exige que no haya pérdida de información. */
+  const out = await viewportAnalyze({ url: base + "/recorte-oculto" }, {});
+  const f = out.findings.find((x) => x.c.n === "1.4.10");
+  assert.equal(f.verdict, "falla", "texto inalcanzable y salió «" + f.verdict + "»: " + f.evid[0]);
+  assert.equal(f.sev, "grave");
+  assert.match(f.evid[0], /se RECORTAN/);
+  assert.match(f.evid[0], /div\.caja/, "y se dice qué contenedor lo esconde");
+  assert.match(f.evid[0], /px ocultos/);
+  // La página sana no puede contagiarse del arreglo.
+  const sano = await viewportAnalyze({ url: base + "/sano" }, {});
+  assert.equal(sano.findings.find((x) => x.c.n === "1.4.10").verdict, "cumple");
+});
+
+test("regresión: 1.4.4 no pasa cuando el 200 % no llegó a aplicarse", { skip }, async () => {
+  /* `html{font-size:200%}` no toca nada cuando los tamaños están en `px`, que es lo
+   * normal, y no se comprobaba: el criterio salía «cumple · con el texto al 200 % no
+   * se recorta ni se solapa ningún bloque» sobre un efecto nulo. */
+  const out = await viewportAnalyze({ url: base + "/zoom-px" }, {});
+  const f = out.findings.find((x) => x.c.n === "1.4.4");
+  assert.equal(f.verdict, "falla", "con el texto al doble se recorta y salió «" + f.verdict + "»: " + f.evid[0]);
+  const ef = out.trazas.resize.efecto;
+  assert.ok(ef, "la fase tiene que informar del efecto real del 200 %");
+  assert.equal(ef.crecioConLaRaiz, 0, "los tamaños en px no responden al font-size de la raíz");
+  assert.ok(ef.escalados > 0, "así que se escala el tamaño computado elemento a elemento");
+});
+
+test("regresión: una página que aguanta el 200 % de verdad sigue cumpliendo", { skip }, async () => {
+  // Control: el arreglo no puede convertir en falla cualquier página.
+  const out = await viewportAnalyze({ url: base + "/zoom-flexible" }, {});
+  const f = out.findings.find((x) => x.c.n === "1.4.4");
+  assert.ok(f.verdict === "cumple" || f.verdict === "revisar",
+    "sin alto fijo no hay recorte, así que no puede salir falla: " + f.verdict + " · " + f.evid[0]);
 });

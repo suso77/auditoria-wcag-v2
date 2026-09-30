@@ -59,14 +59,75 @@ function __uid(el){
   return parts.length ? 'html > body > '+parts.join(' > ') : 'body';
 }
 function __visible(el){ if(!el) return false; var r=el.getClientRects(); if(!r.length) return false; var cs=getComputedStyle(el); return cs.visibility!=='hidden' && cs.display!=='none'; }
+function __apagado(el){
+  /* \`disabled\` se HEREDA de <fieldset disabled>, y el atributo no está en el hijo.
+     Mirando solo \`hasAttribute('disabled')\`, los campos de un fieldset deshabilitado
+     entraban en la lista de enfocables, la tabulación no los alcanzaba —porque no se
+     pueden alcanzar— y salía un 2.1.1 \`falla\` GRAVE sobre dos campos correctamente
+     deshabilitados. \`:disabled\` sí recoge la herencia. */
+  if(el.hasAttribute('disabled')) return true;
+  try { if(el.matches && el.matches(':disabled')) return true; } catch(e) {}
+  return false;
+}
 function __focusables(){
   var sel='a[href],area[href],button,input:not([type="hidden"]),select,textarea,summary,[tabindex],[contenteditable]:not([contenteditable="false"])';
   return Array.prototype.slice.call(document.querySelectorAll(sel)).filter(function(el){
-    if(el.hasAttribute('disabled')) return false;
+    if(__apagado(el)) return false;
     if(el.closest && el.closest('[inert]')) return false;
     var ti=el.getAttribute('tabindex'); if(ti!=null && parseInt(ti,10)<0) return false;
     return __visible(el);
   }).map(function(el){ return { locator: __loc(el), uid: __uid(el), name:(el.getAttribute('aria-label')||el.textContent||'').trim().replace(/\\s+/g,' ').slice(0,40) }; });
+}
+/* Controles INTERACTIVOS que no son enfocables: el 2.1.1 de libro, y el que no se
+   estaba mirando.
+   \`__focusables\` enumera lo que YA es enfocable, así que un \`div role="button"\`
+   sin \`tabindex\` no entraba en la lista, \`unreached\` salía vacío y el análisis
+   emitía 2.1.1 \`cumple\` con la frase «Todos los controles interactivos se alcanzan
+   con Tab». Cinco barreras reales invisibles, y una afirmación sobre «todos los
+   controles interactivos» hecha sin haber mirado ninguno de ellos.
+   La excepción que hay que respetar: en un widget compuesto (tablist, listbox,
+   menu, tree, grid, radiogroup, toolbar) el patrón ARIA correcto es UNA sola
+   parada de tabulación y las flechas por dentro, así que sus hijos NO deben ser
+   tabulables. Eso se distingue y no se cuenta como barrera: se dice aparte, porque
+   esta prueba no recorre las flechas. */
+function __interactivosNoEnfocables(){
+  var ROLES='button,link,checkbox,radio,switch,tab,menuitem,menuitemcheckbox,menuitemradio,option,slider,spinbutton,textbox,combobox,searchbox,treeitem';
+  var rs=ROLES.split(',');
+  var selRol=rs.map(function(r){ return '[role="'+r+'"]'; }).join(',');
+  var COMPUESTOS='[role="tablist"],[role="listbox"],[role="menu"],[role="menubar"],[role="tree"],[role="grid"],[role="treegrid"],[role="radiogroup"],[role="toolbar"]';
+  var NATIVOS={a:1,area:1,button:1,input:1,select:1,textarea:1,summary:1};
+  var sueltos=[], enCompuesto=[];
+  Array.prototype.forEach.call(document.querySelectorAll(selRol+',[onclick]'), function(el){
+    if(!__visible(el)) return;
+    if(__apagado(el)) return;
+    if(el.closest && el.closest('[inert]')) return;
+    if(el.getAttribute('aria-hidden')==='true') return;
+    var t=el.tagName.toLowerCase();
+    var ti=el.getAttribute('tabindex');
+    // Enfocable de verdad: etiqueta nativa que lo es, o tabindex >= 0.
+    var esNativo = NATIVOS[t] && !(t==='a' && !el.hasAttribute('href'));
+    if(esNativo) return;
+    if(el.isContentEditable) return;
+    if(ti!=null && parseInt(ti,10)>=0) return;
+    var rol=(el.getAttribute('role')||'').trim();
+    // \`[onclick]\` sin rol de widget es un contenedor con manejador, no un control:
+    // señalarlo produciría falsas barreras en cualquier sitio con delegación.
+    if(rs.indexOf(rol)===-1) return;
+    var ficha={ locator: __loc(el), uid: __uid(el), rol: rol,
+      name:(el.getAttribute('aria-label')||el.textContent||'').trim().replace(/\\s+/g,' ').slice(0,40) };
+    var cont = el.closest && el.closest(COMPUESTOS);
+    if(cont){
+      // ¿Tiene el widget compuesto alguna parada de tabulación? Si no, nada de
+      // dentro se puede alcanzar y sí es barrera.
+      var hayParada = !!cont.querySelector('[tabindex="0"],a[href],button,input,select,textarea') ||
+        (cont.getAttribute('tabindex')!=null && parseInt(cont.getAttribute('tabindex'),10)>=0);
+      ficha.compuesto = __loc(cont);
+      (hayParada ? enCompuesto : sueltos).push(ficha);
+    } else {
+      sueltos.push(ficha);
+    }
+  });
+  return { sueltos: sueltos.slice(0,40), enCompuesto: enCompuesto.slice(0,40) };
 }
 function __el(uid){ try { return document.querySelector(uid); } catch(e) { return null; } }
 `;
@@ -175,12 +236,26 @@ export async function dynamicAnalyze(target, opts) {
     const maxTabs = Math.min(needed, cap);
     const exhausted = maxTabs < needed; // el tope recortó lo que hacía falta
 
+    // Los controles interactivos que NO son enfocables se enumeran aparte: son el
+    // 2.1.1 que `__focusables` no puede ver, porque enumera lo que ya lo es.
+    const interactivosNoEnf = await fase("interactivos", function () {
+      return evalIn(page, "return __interactivosNoEnfocables();");
+    }, null);
+
     const reached = []; let trapped = false;
+    let atrapadoEn = null;
+    /* `tabulacionMedida` distingue «he tabulado y no llegué» de «no he tabulado».
+     * Si la fase lanza —la página se cierra, un timeout de CDP, una navegación
+     * abortada—, `reached` se queda vacío y el análisis emitía `falla` GRAVE para
+     * TODOS los enfocables: en una página con cinco controles perfectamente
+     * operables, cinco barreras graves inventadas por un error de la sonda. */
+    let tabulacionMedida = false;
     await fase("tabulación", async function () {
       armar();
       await page.evaluate(function () { var b = document.body || document.documentElement; if (b && b.focus) b.focus(); });
       let sameCount = 0, last = null;
       const seen = new Set();
+      const ciclo = [];
       for (let i = 0; i < maxTabs; i++) {
         await page.keyboard.press("Tab");
         const cur = await evalIn(page, "var el=document.activeElement; return (el && el!==document.body && el!==document.documentElement)? { locator:__loc(el), uid:__uid(el) } : null;");
@@ -192,12 +267,41 @@ export async function dynamicAnalyze(target, opts) {
           if (sameCount >= 3 && focusables.length > 1 && seen.size < focusables.length) { trapped = true; break; }
         } else sameCount = 0;
         last = k;
-        if (k && !seen.has(k)) { seen.add(k); reached.push(cur); }
+        if (k && !seen.has(k)) { seen.add(k); reached.push(cur); ciclo.length = 0; }
+        else if (k) {
+          /* Trampa CÍCLICA, que es como son las trampas de verdad.
+           *
+           * Solo se detectaba el caso degenerado: el MISMO control tres veces
+           * seguidas. Una trampa real no repite un control, cicla entre los del
+           * modal —Cerrar, Aceptar, Cerrar, Aceptar—, así que `sameCount` no subía
+           * nunca y `trapped` se quedaba en `false`. Y como `dynamic.js` es el único
+           * sitio del motor que emite 2.1.2, el criterio no se evaluaba en ninguna
+           * parte: la trampa salía reetiquetada como un 2.1.1 de los controles de
+           * fuera, que es un diagnóstico equivocado del mismo síntoma.
+           *
+           * Lo que define el ciclo: se vuelve a pisar terreno ya visitado, sin
+           * añadir ninguno nuevo, mientras quedan controles sin alcanzar. Con dos
+           * vueltas completas sin novedad, ya no es que el recorrido sea largo. */
+          ciclo.push(k);
+          const vuelta = seen.size;
+          if (vuelta > 1 && ciclo.length >= vuelta * 2 && seen.size < focusables.length) {
+            trapped = true;
+            atrapadoEn = reached.slice(-vuelta).map(function (r) { return r.locator; });
+            break;
+          }
+        }
       }
+      tabulacionMedida = true;
       desarmar();
     });
     desarmar();
-    const tabFindings = analyzeTabTrace({ focusables: focusables, reached: reached, trapped: trapped, exhausted: exhausted, tabs: maxTabs });
+    const tabFindings = analyzeTabTrace({
+      focusables: focusables, reached: reached, trapped: trapped, exhausted: exhausted, tabs: maxTabs,
+      medida: tabulacionMedida,
+      atrapadoEn: atrapadoEn,
+      // Los interactivos que no son enfocables: el 2.1.1 que nadie enumeraba.
+      interactivos: interactivosNoEnf
+    });
 
     /* 1 bis) 3.2.1 / 3.2.2: ¿enfocar o cambiar un valor mueve el suelo?
      *
@@ -208,11 +312,31 @@ export async function dynamicAnalyze(target, opts) {
      * DETECTA sin llegar a ocurrir. */
     const ctxEventos = [], noSondados = [];
     let recargasContexto = 0;
+    let ctxCenso = null;   // { total, sondados }: el tope del sondeo se dice y baja el veredicto
     await fase("cambio de contexto", async function () {
       armar();
-      const uids = await evalIn(page,
-        "return Array.prototype.slice.call(document.querySelectorAll('a[href],button,input:not([type=hidden]),select,textarea,[tabindex]'))" +
-        ".filter(function(e){ return __visible(e) && !e.disabled; }).slice(0," + (opts.maxContexto || 20) + ").map(__uid);");
+      /* El tope se DICE, y cambia el veredicto.
+       *
+       * `slice(0, 20)` recortaba la lista de candidatos dentro del navegador, así
+       * que el análisis no llegaba a saber que había más: en una página de sesenta
+       * controles sondaba veinte y emitía 3.2.1 `pasa`, que `esConforme()` da por
+       * conformidad. Cuarenta controles sin tocar y el criterio exportado como
+       * conforme. Ahora se devuelve también el total, y con él el veredicto baja a
+       * `cumple-parcial`, que es lo que significa: la parte que se miró está bien.
+       *
+       * Y los que no pueden recibir el foco quedan fuera del sondeo: `[inert]` y el
+       * `disabled` heredado de un `<fieldset disabled>` (la propiedad `.disabled`
+       * del input vale `false` ahí, así que el filtro de antes los dejaba pasar).
+       * 3.2.1 habla de componentes que PUEDEN recibir el foco; sondar uno que no
+       * puede solo produce sospechas falsas, porque `el.focus()` no mueve el foco y
+       * la sonda lo lee como «el foco salta a otro sitio». */
+      const ctxTope = opts.maxContexto == null ? 20 : opts.maxContexto;
+      const censo = await evalIn(page,
+        "var todos = Array.prototype.slice.call(document.querySelectorAll('a[href],button,input:not([type=hidden]),select,textarea,[tabindex]'))" +
+        ".filter(function(e){ return __visible(e) && !e.disabled && !e.closest('[inert]') && !(e.matches && e.matches(':disabled')); });" +
+        "return { total: todos.length, uids: todos.slice(0," + ctxTope + ").map(__uid) };");
+      const uids = (censo && censo.uids) || [];
+      ctxCenso = { total: (censo && censo.total) || uids.length, sondados: uids.length };
       const huella = "return { url: location.href, foco: document.activeElement?__uid(document.activeElement):null," +
         " contenido: (document.body?document.body.innerText:'').replace(/\\s+/g,' ').slice(0,4000).length + ':' + document.querySelectorAll('body *').length };";
 
@@ -325,7 +449,7 @@ export async function dynamicAnalyze(target, opts) {
       desarmar();
     });
     desarmar();
-    const ctxFindings = analyzeContextChange(ctxEventos, noSondados.length);
+    const ctxFindings = analyzeContextChange(ctxEventos, noSondados.length, ctxCenso);
     if (recargasContexto) avisos.push("Durante la prueba de 3.2.1/3.2.2 hubo que recargar la página " + recargasContexto + " vez/veces: algún control se la llevaba por delante al enfocarlo o al cambiarlo. El cortafuegos impidió que la navegación saliera a la red.");
 
     // 2) Disclosure / expandibles — resueltos por uid, no por índice: el DOM
@@ -394,6 +518,40 @@ export async function dynamicAnalyze(target, opts) {
           armar(); // cortafuegos de red
         }
 
+        /* Antes de enviar: foto de las regiones live y del texto que rodea a cada
+         * campo. Las dos cosas hacen falta para no afirmar lo que no se ha visto.
+         *
+         *  - Las regiones de estado: `hasAlert` era la simple EXISTENCIA de un
+         *    `[role=alert]` o `[aria-live]` en cualquier parte del documento, vacío
+         *    o no. Con eso se emitía «los errores … se anuncian». Un contenedor no
+         *    es un anuncio; lo que lo demuestra es que su contenido cambie al
+         *    enviar, y eso solo se sabe comparando antes y después.
+         *  - El texto alrededor del campo: la técnica G83 satisface 3.3.1 con texto
+         *    de error visible junto al campo, sin asociación ARIA. Mirando solo
+         *    `aria-describedby` se emitía un `falla` grave sobre formularios que
+         *    hacen exactamente lo que G83 manda. Lo que cuenta como descripción del
+         *    error es el texto que aparece DESPUÉS de enviar, así que se guarda el
+         *    de antes para quedarse solo con la diferencia. */
+        const antesDeEnviar = await evalIn(page, `
+          var f = __el(__arg); if (!f) return null;
+          function vis(el){ if(!el||!el.getClientRects||!el.getClientRects().length) return false;
+            var cs=getComputedStyle(el); return cs.visibility!=='hidden'&&cs.display!=='none'; }
+          function txt(el){ return vis(el) ? (el.innerText||el.textContent||'').replace(/[\\s\\u00a0]+/g,' ').trim() : ''; }
+          // Entorno del campo: hasta tres antepasados, sin salirse del formulario.
+          function entorno(el){
+            var partes=[], n=el.parentElement, saltos=0;
+            while(n && n!==f && saltos<3){ partes.push(txt(n)); n=n.parentElement; saltos++; }
+            return partes.join(' § ');
+          }
+          var live=Array.prototype.slice.call(document.querySelectorAll('[role=alert],[role=status],[aria-live]'))
+            .map(function(r){ return __loc(r)+'='+txt(r); }).join(' | ');
+          var campos={};
+          Array.prototype.forEach.call(f.querySelectorAll('input:not([type=hidden]),textarea,select'), function(el){
+            campos[__loc(el)]=entorno(el);
+          });
+          return { live: live, campos: campos, regiones: document.querySelectorAll('[role=alert],[role=status],[aria-live]').length };
+        `, cand.uid);
+
         const trace = await evalIn(page, `
           var f = __el(__arg.uid);
           if (!f) return null;
@@ -446,17 +604,51 @@ export async function dynamicAnalyze(target, opts) {
         await page.waitForTimeout(400);
 
         const campos = await evalIn(page, `
-          var f=__el(__arg); if(!f) return null;
+          var f=__el(__arg.uid); if(!f) return null;
+          var previo=__arg.antes||{ live:'', campos:{} };
+          function vis(el){ if(!el||!el.getClientRects||!el.getClientRects().length) return false;
+            var cs=getComputedStyle(el); return cs.visibility!=='hidden'&&cs.display!=='none'; }
+          function txt(el){ return vis(el) ? (el.innerText||el.textContent||'').replace(/[\\s\\u00a0]+/g,' ').trim() : ''; }
+          function entorno(el){
+            var partes=[], n=el.parentElement, saltos=0;
+            while(n && n!==f && saltos<3){ partes.push(txt(n)); n=n.parentElement; saltos++; }
+            return partes.join(' § ');
+          }
+          /* Lo NUEVO que hay alrededor del campo después de enviar. Se compara
+             palabra a palabra contra la foto de antes y se queda con lo añadido:
+             así el texto que ya estaba —la etiqueta, una pista de ayuda— no se
+             confunde con una descripción de error que nadie ha escrito. */
+          function nuevo(despues, antes){
+            var ya={}; String(antes||'').split(' ').forEach(function(w){ ya[w]=(ya[w]||0)+1; });
+            var res=[];
+            String(despues||'').split(' ').forEach(function(w){
+              if(ya[w]) { ya[w]--; return; }
+              res.push(w);
+            });
+            return res.join(' ').replace(/[\\s§]+/g,' ').trim();
+          }
           var fields=Array.prototype.slice.call(f.querySelectorAll('input:not([type=hidden]),textarea,select')).map(function(el){
+            var k=__loc(el);
             var d=el.getAttribute('aria-describedby'); var dt='';
             if(d){ d.split(/\\s+/).forEach(function(id){ var r=document.getElementById(id); if(r) dt+=' '+(r.textContent||''); }); }
-            var em=el.getAttribute('aria-errormessage'); if(em){ var r2=document.getElementById(em); if(r2) dt+=' '+(r2.textContent||''); }
-            return { locator:__loc(el), name:(el.getAttribute('aria-label')||el.getAttribute('name')||'').slice(0,40),
+            var emt='';
+            var em=el.getAttribute('aria-errormessage'); if(em){ var r2=document.getElementById(em); if(r2) emt+=' '+(r2.textContent||''); }
+            return { locator:k, name:(el.getAttribute('aria-label')||el.getAttribute('name')||'').slice(0,40),
                      required: el.hasAttribute('required')||el.getAttribute('aria-required')==='true',
-                     invalid: el.getAttribute('aria-invalid')==='true', describedbyText: dt.trim() };
+                     invalid: el.getAttribute('aria-invalid')==='true',
+                     describedbyText: dt.trim(),
+                     errormessageText: emt.trim(),
+                     // G83: texto de error visible junto al campo, sin asociar.
+                     errorCercaText: nuevo(entorno(el), previo.campos[k]) };
           });
-          var hasAlert=!!document.querySelector('[role=alert],[aria-live=assertive],[aria-live=polite]');
-          return { submitted:true, fields:fields, hasAlert:hasAlert };`, cand.uid);
+          var regiones=Array.prototype.slice.call(document.querySelectorAll('[role=alert],[role=status],[aria-live]'));
+          var liveAhora=regiones.map(function(r){ return __loc(r)+'='+txt(r); }).join(' | ');
+          return { submitted:true, fields:fields,
+                   hasAlert: regiones.length>0,
+                   // Que el ANUNCIO se haya producido, no que exista el contenedor.
+                   liveCambio: liveAhora !== (previo.live||''),
+                   liveAntes: (previo.live||'').slice(0,300), liveDespues: liveAhora.slice(0,300) };`,
+          { uid: cand.uid, antes: antesDeEnviar });
 
         // Deshacer lo que la prueba tocó ANTES de seguir: los valores del
         // usuario y el escuchador de submit. Sin esto, la página se devolvía con
