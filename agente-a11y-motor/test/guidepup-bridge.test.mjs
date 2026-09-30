@@ -252,3 +252,67 @@ test("regresión: un nodo SIN nombre no se queda con el nombre del vecino", asyn
   assert.equal(out.summary["barrera-confirmada"], 1);
   assert.equal(out.summary.divergente, 0);
 });
+
+/* ── Regresión: el léxico de estado se comía nombres y absolvía barreras ─────
+ *
+ * Tres fallos del mismo módulo, los tres reproducidos antes de tocar nada.
+ */
+
+test("regresión: un nombre que coincide con una palabra de estado se confirma igual", () => {
+  /* El nombre previsto se buscaba en la frase ya RECORTADA, y el recorte quita
+   * estados y posiciones —«nivel 2», «3 de 10», «marcado», «requerido»—, que no se
+   * pueden distinguir de un nombre que diga lo mismo. Un enlace llamado «Nivel 2»
+   * salía `divergente` porque el filtro se comía justo su nombre.
+   *
+   * Aquí la ambigüedad SÍ se puede resolver, porque el motor dice qué nombre espera. */
+  [["Nivel 2", "enlace, Nivel 2", "link"],
+   ["Página 3 de 10", "enlace, Página 3 de 10", "link"],
+   ["Texto marcado como leído", "encabezado, Texto marcado como leído", "heading"],
+   ["Requerido para continuar", "botón, Requerido para continuar", "button"],
+   ["Fila 4 del listado", "enlace, Fila 4 del listado", "link"]
+  ].forEach(([name, spoken, role]) => {
+    const r = compareAnnouncement({ name, role }, spoken, "nvda");
+    assert.equal(r.verdict, "confirmado", "«" + name + "» está en «" + spoken + "» y salió " + r.verdict);
+  });
+});
+
+test("regresión: las palabras de estado se recortan para los DOS lectores", () => {
+  /* Estaban solo en la lista de NVDA, y `stripReaderNoise` aplica una sola lista
+   * cuando se le pasa el lector. Con `lector: "voiceover"` —que es lo que hacen los
+   * adaptadores reales— sobrevivían, y con ese residuo un control SIN nombre dejaba
+   * de ser `barrera-confirmada` y pasaba a «divergente: el lector sí pronuncia un
+   * nombre… revisar posible falso positivo»: un 4.1.2 real degradado a sospecha de
+   * falso positivo nuestro, por una palabra que no es un nombre. */
+  [["botón, contraído", "button"], ["casilla, marcada", "checkbox"], ["enlace, visitado", "link"],
+   ["botón, pulsado", "button"], ["botón, atenuado", "button"], ["casilla, no marcada", "checkbox"]
+  ].forEach(([spoken, role]) => {
+    ["voiceover", "nvda", undefined].forEach((lector) => {
+      const r = compareAnnouncement({ name: "", role }, spoken, lector);
+      assert.equal(r.verdict, "barrera-confirmada",
+        "«" + spoken + "» con lector=" + lector + " → " + r.verdict + " (" + r.note + ")");
+    });
+  });
+});
+
+test("regresión: la deduplicación de frases no borra elementos distintos", async () => {
+  /* La clave era la frase RECORTADA, así que dos elementos cuya diferencia estaba
+   * justo en lo que el filtro borra quedaban con la misma clave y el segundo se
+   * descartaba en silencio; su nodo acababa `no-encontrado`, o sea sin verificar,
+   * por un artefacto del recorte. */
+  const frases = ["casilla, Recibir novedades, no marcada", "casilla, Recibir novedades, marcada",
+                  "enlace, Descargar informe, visitado", "enlace, Descargar informe"];
+  let i = 0;
+  const out = await verifyWithScreenReader({
+    voiceOver: { next: async () => {}, lastSpokenPhrase: async () => frases[i++] || "" },
+    steps: frases.length, sleepMs: 0
+  });
+  assert.equal(out.length, 4, "las cuatro frases son de elementos distintos: " + JSON.stringify(out.map((x) => x.spoken)));
+  // Y lo que sí es repetición literal se sigue deduplicando.
+  let j = 0;
+  const repes = ["botón, Enviar", "botón, Enviar", "botón, Enviar"];
+  const out2 = await verifyWithScreenReader({
+    voiceOver: { next: async () => {}, lastSpokenPhrase: async () => repes[j++] || "" },
+    steps: 3, sleepMs: 0
+  });
+  assert.equal(out2.length, 1, "el recorrido quieto sigue colapsando");
+});

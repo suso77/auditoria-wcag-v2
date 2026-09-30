@@ -92,6 +92,46 @@ const RUIDO_VOICEOVER = [
   /\b\d+ [ií]tems?\b/gi
 ];
 
+/* Estado y posición: lo dicen LOS DOS lectores, así que se recorta siempre.
+ *
+ * Estaban dentro de `RUIDO_NVDA`, y `stripReaderNoise` aplica una sola lista
+ * cuando se le pasa el lector. Con `lector: "voiceover"` —que es lo que hacen los
+ * adaptadores reales— esas palabras sobrevivían: VoiceOver en español también dice
+ * «contraído», «marcada» y «visitado», y con ese residuo un control SIN nombre
+ * accesible dejaba de ser `barrera-confirmada` y pasaba a «divergente: el lector sí
+ * pronuncia un nombre que el motor no previó: revisar posible falso positivo». Un
+ * 4.1.2 real degradado a sospecha de falso positivo NUESTRO, y por una palabra que
+ * no es un nombre.
+ *
+ * El criterio de reparto es simple: aquí va lo que describe el ESTADO o la POSICIÓN
+ * de un elemento, que ningún lector cuenta como nombre; en las listas por lector se
+ * queda solo la cháchara propia de cada sistema («bienvenido a macOS», «modo
+ * exploración»). Se han añadido «pulsado», «atenuado» y compañía, que no estaban en
+ * ninguna de las dos.
+ */
+const ESTADO_COMUN = [
+  /\b(no )?marcad[oa]s?\b/gi,
+  /\bparcialmente marcad[oa]\b/gi,
+  /\b(contra[ií]do|expandido|plegado|desplegado)\b/gi,
+  /\b(visitado|no visitado)\b/gi,
+  /\b(pulsado|no pulsado|presionado)\b/gi,
+  /\b(atenuado|deshabilitado|desactivado para edici[oó]n)\b/gi,
+  /\b(seleccionado|no seleccionado)\b/gi,
+  /\bsolo lectura\b/gi,
+  /\bclic?able\b/gi,
+  /\brequerido\b/gi,
+  /\bobligatorio\b/gi,
+  /\bno v[aá]lido\b/gi,
+  /\bno disponible\b/gi,
+  /\btiene men[uú] emergente\b/gi,
+  /\bnivel \d+\b/gi,
+  /\b\d+ de \d+\b/gi,
+  /\bfila \d+( columna \d+)?\b/gi,
+  /\bcolumna \d+\b/gi,
+  /\bcon \d+ elementos?\b/gi,
+  /\bcon \d+ filas? y \d+ columnas?\b/gi
+];
+
 /* Ruido de NVDA en español.
  *
  * NVDA acompaña cada elemento de su ESTADO y su POSICIÓN, y eso no es el nombre
@@ -105,19 +145,6 @@ const RUIDO_VOICEOVER = [
  */
 const RUIDO_NVDA = [
   /\bmodo (exploraci[oó]n|foco|navegaci[oó]n)\b/gi,
-  /\b(no )?marcad[oa]\b/gi,
-  /\b(contra[ií]do|expandido|plegado|desplegado)\b/gi,
-  /\b(visitado|no visitado)\b/gi,
-  /\bclic?able\b/gi,
-  /\brequerido\b/gi,
-  /\bno disponible\b/gi,
-  /\btiene men[uú] emergente\b/gi,
-  /\bnivel \d+\b/gi,
-  /\b\d+ de \d+\b/gi,
-  /\bfila \d+( columna \d+)?\b/gi,
-  /\bcolumna \d+\b/gi,
-  /\bcon \d+ elementos?\b/gi,
-  /\bcon \d+ filas? y \d+ columnas?\b/gi,
   /\bsaliendo de (la tabla|la lista|el formulario)\b/gi
 ];
 
@@ -125,12 +152,17 @@ const RUIDO = { voiceover: RUIDO_VOICEOVER, nvda: RUIDO_NVDA };
 
 /**
  * Recorta lo que dice el lector que no es el contenido de la página.
+ *
+ * El estado y la posición (`ESTADO_COMUN`) se recortan SIEMPRE: los dicen los dos
+ * lectores y ninguno los cuenta como nombre. Lo que depende del lector es su
+ * cháchara propia, y ahí sí manda el parámetro.
+ *
  * @param {string} spoken
- * @param {"voiceover"|"nvda"} [lector]  sin él se aplica el ruido de los dos.
+ * @param {"voiceover"|"nvda"} [lector]  sin él se aplica la cháchara de los dos.
  */
 export function stripReaderNoise(spoken, lector) {
   let s = String(spoken || "");
-  const listas = lector && RUIDO[lector] ? [RUIDO[lector]] : [RUIDO_VOICEOVER, RUIDO_NVDA];
+  const listas = [ESTADO_COMUN].concat(lector && RUIDO[lector] ? [RUIDO[lector]] : [RUIDO_VOICEOVER, RUIDO_NVDA]);
   listas.forEach(function (lista) { lista.forEach(function (re) { s = s.replace(re, " "); }); });
   return s.replace(/\s+/g, " ").trim();
 }

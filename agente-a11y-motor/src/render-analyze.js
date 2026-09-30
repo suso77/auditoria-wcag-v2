@@ -15,7 +15,7 @@ import { understand, analyze, setDOMParser, WCAG22 } from "./engine.js";
 import { launchOptions } from "./playwright-launch.js";
 import { MEASURE_BODY } from "./measure.browser.js";
 import { auditPageDoc } from "./page-audit.js";
-import { cuadernoDeJuicio, aplicaCuaderno } from "./cuaderno.js";
+import { cuadernoDeJuicio, aplicaCuaderno, CRITERIOS_DE_JUICIO } from "./cuaderno.js";
 
 const WIX = {};
 WCAG22.forEach(function (c) { WIX[c.n] = { t: c.t, lvl: c.lvl }; });
@@ -80,11 +80,37 @@ export async function analyzeRendered(target, opts) {
     const pageScope = (opts.pageScope != null) ? !!opts.pageScope : !!target.url;
     let pageAudit = [];
     let cuaderno = null;
+    /* Lo que falla se APUNTA, y lo que deja de comprobarse se DICE.
+     *
+     * Aquí había tres `catch` vacíos seguidos y una salida sin campo de errores —a
+     * diferencia de `viewportAnalyze`, que sí devuelve `errores`—. Si la fase del
+     * cuaderno reventaba, `cuaderno` quedaba en `null`, `aplicaCuaderno` no corría, y
+     * los criterios que el cuaderno resuelve desaparecían de `findings`: ni hallazgo,
+     * ni `revisar`, ni nota. Reproducido con un script que envuelve
+     * `document.styleSheets` para que lance —el patrón de los scripts de
+     * consentimiento y anti-bot—: de 36 criterios se pasaba a 28, y los ocho que
+     * faltaban (1.2.4, 1.2.5, 1.3.2, 1.4.5, 2.3.1, 3.3.4, 3.3.7, 3.3.8) no aparecían
+     * en ninguna parte. En un IRA, un criterio que no está es un criterio del que
+     * nadie sabe que no se comprobó, y eso es peor que un `revisar`. */
+    const errores = [];
+    const coberturasPropias = [];
     if (pageScope) {
       let docPagina = null;
-      try { docPagina = new DP().parseFromString(html, "text/html"); } catch (e) { docPagina = null; }
+      try { docPagina = new DP().parseFromString(html, "text/html"); }
+      catch (e) {
+        docPagina = null;
+        errores.push({ capa: "página", error: "no se pudo reparsear el DOM renderizado: " + ((e && e.message) || e) });
+        coberturasPropias.push({ crit: "__meta", label: "Ámbito de página sin comprobar", node: "(documento)", verdict: "revisar",
+          detail: "el DOM renderizado no se pudo volver a parsear, así que NO se han comprobado los criterios de ámbito de página (2.4.1, 2.4.2, 3.1.1, 1.3.1 estructural) ni el cuaderno de juicio. No es que cumplan: es que no se han mirado." });
+      }
       if (docPagina) {
-        try { pageAudit = auditPageDoc(docPagina); } catch (e) { pageAudit = []; }
+        try { pageAudit = auditPageDoc(docPagina); }
+        catch (e) {
+          pageAudit = [];
+          errores.push({ capa: "página", error: "auditPageDoc lanzó: " + ((e && e.message) || e) });
+          coberturasPropias.push({ crit: "__meta", label: "Ámbito de página sin comprobar", node: "(documento)", verdict: "revisar",
+            detail: "la auditoría de página falló (" + ((e && e.message) || e) + "): los criterios de ámbito de página —title, idioma, landmarks, saltar bloques— NO se han comprobado en esta ejecución." });
+        }
         /* El cuaderno de juicio, sobre el MISMO documento y con el CSS ya
          * resuelto por el navegador.
          *
@@ -94,15 +120,38 @@ export async function analyzeRendered(target, opts) {
          * 2.3.1 para saber si hay animaciones declaradas. Montándolo fuera, con
          * el HTML servido, ese criterio se quedaba corto sin decirlo. */
         if (opts.cuaderno !== false) {
+          /* El CSS es un EXTRA del cuaderno, no un requisito.
+           *
+           * Solo 2.3.1 lo necesita (para ver animaciones declaradas en hojas
+           * externas). Que no se pueda leer no es motivo para quedarse sin cuaderno
+           * entero: se monta sin CSS, se dice que 2.3.1 va corto, y los otros diez
+           * criterios siguen en el informe. Antes, un fallo al leer las hojas se
+           * llevaba los once por delante. */
+          let css = null;
           try {
-            const css = await page.evaluate(function () {
+            css = await page.evaluate(function () {
               return Array.prototype.map.call(document.styleSheets, function (s) {
                 try { return Array.prototype.map.call(s.cssRules, function (r) { return r.cssText; }).join("\n"); }
                 catch (e) { return ""; }   // hoja de otro origen: no se puede leer
               }).join("\n");
             });
-            cuaderno = cuadernoDeJuicio(docPagina, { url: target.url || null, css: css });
-          } catch (e) { cuaderno = null; }
+          } catch (e) {
+            css = null;
+            errores.push({ capa: "cuaderno", error: "no se pudieron leer las hojas de estilo: " + ((e && e.message) || e) });
+            coberturasPropias.push({ crit: "__meta", label: "CSS no legible", node: "(hojas de estilo)", verdict: "revisar",
+              detail: "las hojas de estilo de la página no se pudieron leer (" + ((e && e.message) || e) +
+                "): el cuaderno se ha montado sin ellas, así que 2.3.1 solo ha visto las animaciones declaradas en el marcado. Comprueba a mano si hay animaciones en un CSS aparte." });
+          }
+          try {
+            cuaderno = cuadernoDeJuicio(docPagina, { url: target.url || null, css: css || "" });
+          } catch (e) {
+            cuaderno = null;
+            errores.push({ capa: "cuaderno", error: "cuadernoDeJuicio lanzó: " + ((e && e.message) || e) });
+            coberturasPropias.push({ crit: "__meta", label: "Cuaderno de juicio sin montar", node: "(documento)", verdict: "revisar",
+              detail: "el cuaderno de juicio falló (" + ((e && e.message) || e) + "): los once criterios que resuelve (" +
+                CRITERIOS_DE_JUICIO.join(", ") + ") se quedan como los deja el motor, sin el expediente que dice qué mirar en cada uno. " +
+                "Ninguno está comprobado por esta vía." });
+          }
         }
       }
     }
@@ -113,7 +162,7 @@ export async function analyzeRendered(target, opts) {
     // TODAS, no la primera: la medición emite hasta tres notas de cobertura
     // (texto recortado por el límite, controles recortados, y 2.4.7 sin el foco
     // del sistema). Con `.find` la segunda y la tercera se perdían en silencio.
-    const coberturas = (measurements || []).filter(function (m) { return m.crit === "__meta"; });
+    const coberturas = coberturasPropias.concat((measurements || []).filter(function (m) { return m.crit === "__meta"; }));
 
     // 3) axe-core (opcional)
     let axe = null;
@@ -185,6 +234,9 @@ export async function analyzeRendered(target, opts) {
       measurements: measurements,
       coberturas: coberturas,
       cobertura: coberturas[0] || null,
+      // Los fallos de fase VIAJAN, como en `viewportAnalyze`. Sin esto, una capa
+      // caída era indistinguible de una capa que no encontró nada.
+      errores: errores,
       axe: axe,
       findings: findings,
       summary: {

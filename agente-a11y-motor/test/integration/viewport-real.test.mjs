@@ -116,10 +116,19 @@ test("contenido ya recortado antes del cambio → revisar, y lo dice explícitam
   assert.match(m["1.4.12"].nodes[0].locator, /card/);
 });
 
-test("atributo title como tooltip → falla 1.4.13", { skip }, async () => {
+test("regresión: el atributo title está exento de 1.4.13 y no es una falla", { skip }, async () => {
+  /* El texto normativo del criterio termina con: «Exception: The visual presentation
+   * of the additional content is controlled by the user agent and is not modified by
+   * the author». El tooltip nativo es exactamente eso, así que emitir `falla` por un
+   * `title` es acusar de algo que la propia excepción excluye — y se emitía en
+   * cualquier página con un `<abbr title>`. La información no se pierde: se dice que
+   * hay que comprobar si esa información está SOLO ahí, y a qué criterio pertenece
+   * entonces el problema. */
   const m = await ver("/title");
-  assert.equal(m["1.4.13"].verdict, "falla");
+  assert.equal(m["1.4.13"].verdict, "revisar");
   assert.match(m["1.4.13"].evid[0], /title/);
+  assert.match(m["1.4.13"].evid[0], /EXCEPCIÓN de 1\.4\.13 lo excluye/);
+  assert.match(m["1.4.13"].evid.join(" "), /1\.1\.1, 2\.5\.3 o 4\.1\.2/);
 });
 
 test("screen.orientation.lock() → falla 1.3.4", { skip }, async () => {

@@ -85,7 +85,22 @@ export function compareAnnouncement(predicted, spoken, lector) {
 
   const roleFound = spokenHasRole(spoken, predicted.role);
   const expectName = normalize(predicted.name || "");
-  const nameFound = expectName ? contienePalabras(normalize(cleaned), expectName) : null;
+  /* El nombre previsto se busca en la frase CRUDA, no en la recortada.
+   *
+   * El recorte de ruido quita estados y posiciones —«marcada», «nivel 2», «3 de
+   * 10»— y esos patrones no se pueden distinguir de un nombre que diga lo mismo.
+   * Un enlace que se llama «Nivel 2» salía `divergente` porque el filtro se comía
+   * justo su nombre; igual «Página 3 de 10», «Requerido para continuar» o «Texto
+   * marcado como leído».
+   *
+   * Aquí esa ambigüedad SÍ se puede resolver, porque el motor dice qué nombre
+   * espera: si la frase contiene esa secuencia de palabras, es contenido de la
+   * página y no ruido del lector. El recorte sigue haciendo su trabajo donde de
+   * verdad hace falta —en `residualName`, que es quien decide si un control SIN
+   * nombre previsto se queda con algo—, y ahí no hay nada que proteger. */
+  const nameFound = expectName
+    ? (contienePalabras(normalize(spoken), expectName) || contienePalabras(normalize(cleaned), expectName))
+    : null;
 
   let verdict, note;
   if (!expectName) {
@@ -130,8 +145,21 @@ export async function verifyWithScreenReader(opts) {
 
   const phrases = [];
   const seen = new Set();
+  /* La deduplicación va por la frase CRUDA, no por la recortada.
+   *
+   * La clave era `normalize(stripReaderNoise(spoken))` —y encima sin lector, o sea
+   * con los dos filtros—, así que dos elementos DISTINTOS cuya diferencia estaba
+   * justo en lo que el filtro borra quedaban con la misma clave y el segundo se
+   * descartaba en silencio. Medido: «casilla, Recibir novedades, no marcada» y
+   * «casilla, Recibir novedades, marcada» son dos casillas, y solo se recogía una;
+   * el nodo que se quedaba sin frase acababa `no-encontrado`, es decir, sin
+   * verificar, por un artefacto del recorte.
+   *
+   * El recorte sirve para COMPARAR, no para decidir si dos frases son la misma.
+   * Aquí lo que interesa es que el lector repita literalmente lo mismo, que es lo
+   * que pasa cuando el recorrido se queda quieto. */
   const anotar = function (spoken, step) {
-    const key = normalize(stripReaderNoise(spoken));
+    const key = normalize(spoken);
     if (!spoken || !key || seen.has(key)) return false;
     seen.add(key);
     phrases.push({ step: step, spoken: spoken });

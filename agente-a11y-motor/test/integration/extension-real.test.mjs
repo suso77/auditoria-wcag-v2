@@ -143,7 +143,22 @@ test("el análisis completo encuentra barreras de varias capas", { skip }, async
   assert.ok(fallan.has("4.1.2") || fallan.has("1.1.1"), "semántica: " + [...fallan]);
   assert.ok(fallan.has("1.4.3"), "medición de contraste: " + [...fallan]);
   assert.ok(fallan.has("1.4.12"), "adaptación (espaciado): " + [...fallan]);
-  assert.ok(fallan.has("1.4.13"), "title como tooltip: " + [...fallan]);
+  /* 1.4.13 ya no es `falla` por un `title`: la excepción del criterio excluye el
+   * tooltip nativo, que lo pinta el agente de usuario. Lo que se comprueba aquí es
+   * que la capa de emergentes CORRIÓ y dijo algo sobre el `title` de la página, no
+   * que acuse al criterio equivocado. La barrera de otra capa que prueba que el
+   * análisis es completo la da 1.3.4, que sí falla en esta página. */
+  /* Ojo: en la lista puede haber DOS hallazgos de 1.4.13 —el genérico del motor
+   * («lo mide la capa de adaptación») y el de la capa que de verdad lo midió—, así
+   * que hay que coger el segundo por su evidencia, no el primero que aparezca. */
+  const hovers = r.findings.filter((f) => f.c.n === "1.4.13");
+  assert.ok(hovers.length, "la capa de contenido emergente tiene que haber corrido");
+  const hover = hovers.find((f) => /title/.test(f.evid.join(" ")));
+  assert.ok(hover, "tiene que haber un hallazgo de 1.4.13 que hable del `title`: " +
+    JSON.stringify(hovers.map((f) => f.verdict + ": " + f.evid[0].slice(0, 60))));
+  assert.equal(hover.verdict, "revisar", "el `title` está exento de 1.4.13 y salió «" + hover.verdict + "»");
+  assert.ok(!hovers.some((f) => f.verdict === "falla"), "y ninguno puede ser falla por el `title`");
+  assert.ok(fallan.has("1.3.4"), "adaptación (orientación): " + [...fallan]);
   assert.equal(r.url, base);
   assert.ok(r.huella && r.huella.navs.length, "debe traer la huella para los criterios de sitio");
 });

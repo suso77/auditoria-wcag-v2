@@ -19,10 +19,20 @@ import { launchOptions } from "./playwright-launch.js";
 // 320×256 px CSS: el tamaño que exige 1.4.10 (equivale al 400 % sobre 1280×1024).
 export const REFLUJO_W = 320, REFLUJO_H = 256;
 
-// El espaciado exacto que fija 1.4.12.
+/* El espaciado EXACTO que fija 1.4.12, y solo ese.
+ *
+ * El criterio enumera cuatro valores, y el cuarto es «espaciado después de los
+ * PÁRRAFOS de al menos 2 veces el tamaño de letra». Solo párrafos. Aplicando ese
+ * margen también a `li`, `dd` y `blockquote` se provocaba un recorte que el
+ * criterio no provoca: medido, un menú de alto fijo con seis `li` no pierde nada
+ * con lo que exige 1.4.12 y perdía 126 px con lo que aplicaba el motor — un `falla`
+ * GRAVE inventado sobre contenido conforme.
+ *
+ * Es también lo que hace el bookmarklet de Text Spacing de la Guía Técnica del OAW,
+ * que es la herramienta con la que se comprueba esto a mano. */
 export const CSS_ESPACIADO =
   "*, *::before, *::after { line-height: 1.5 !important; letter-spacing: 0.12em !important; word-spacing: 0.16em !important; }" +
-  "p, li, dd, blockquote { margin-block-end: 2em !important; }";
+  "p { margin-block-end: 2em !important; }";
 
 const HELPERS = `
 function __loc(el){ if(!el||el.nodeType!==1) return null; var t=el.tagName.toLowerCase(); if(el.id) return t+'#'+el.id; var c=(el.getAttribute('class')||'').trim().split(/\\s+/).filter(Boolean)[0]; if(c) return t+'.'+c; return t; }

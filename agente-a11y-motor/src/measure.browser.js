@@ -498,6 +498,29 @@ function distintivoDeEnlace(a, win) {
   if (pinta(cs.outlineWidth) && cs.outlineStyle !== "none") return "contorno";
   if (pinta(cs.boxShadow)) return "sombra";
   if (a.querySelector && a.querySelector("img,svg,[class*=icon],[class*=icono]")) return "icono";
+  /* La técnica G183, que es SUFICIENTE para 1.4.1 y no se estaba mirando.
+   *
+   * «Using a contrast ratio of 3:1 with surrounding text and providing additional
+   * visual cues on focus for links or controls where color alone is used to identify
+   * them»: si el enlace contrasta 3:1 con el texto que lo rodea Y cambia de aspecto
+   * al recibir el foco o el puntero, el criterio se satisface. Aquí solo se miraba el
+   * estado en reposo, así que un enlace que hace exactamente eso salía como `falla`
+   * grave. Reproducido con `color:#0b5ed7` sobre texto `#111` (3.23:1) y un subrayado
+   * en `:hover, :focus`.
+   *
+   * Se comprueba con la misma maquinaria que ya existe para el foco: las reglas de
+   * las hojas de estilo (`reglasDeFoco`) dicen si hay señal adicional. */
+  if (padre) {
+    const cl = resolverColor(cs.color, a.ownerDocument);
+    const ct = resolverColor(pcs.color, a.ownerDocument);
+    if (cl && ct) {
+      const r = contrastRatio(cl, ct);
+      if (r >= 3) {
+        const rf = reglasDeFoco(a, a.ownerDocument);
+        if (rf && rf.conIndicador > 0) return "G183 (contraste " + r.toFixed(2) + ":1 con el texto de alrededor y señal adicional al foco)";
+      }
+    }
+  }
   return null;
 }
 /** ¿El <a> va DENTRO de texto corrido, o es un enlace suelto (menú, botón, tarjeta)? */
@@ -538,6 +561,14 @@ function elementosFlotantes(doc, win) {
     out.push({ el: el, rect: r, z: parseInt(cs.zIndex, 10) || 0, loc: locatorM(el) });
   }
   return out;
+}
+/* El rect de un flotante se vuelve a leer después de desplazar.
+ *
+ * Un `position:fixed` no se mueve con el scroll, pero un `sticky` sí, y el rect
+ * guardado al cargar deja de valer en cuanto la medición de 2.4.11 desplaza la página
+ * para poner el foco donde de verdad estará al tabular. */
+function refrescar(f) {
+  try { return f.el.getBoundingClientRect(); } catch (e) { return f.rect; }
 }
 /** Cuánto del rect del control queda tapado por un flotante, de 0 a 1. */
 function fraccionTapada(rc, flot) {
@@ -705,14 +736,61 @@ function runChecksReal(doc, win, limit) {
         focusables.push({ loc: loc, ti: ti, path: ruta });
         // 2.4.11: con el foco puesto, ¿lo tapa algo fijo?
         if (flotantes.length) {
+          /* El rect se lee CON la página desplazada, como cuando se tabula.
+           *
+           * El foco se ponía con `preventScroll: true` y el rect se leía en la
+           * posición de scroll de la carga, así que los controles de más abajo se
+           * medían con unas coordenadas que no son las que tendrán cuando el foco
+           * llegue a ellos: la intersección con la barra fija salía 0 y la barrera no
+           * se emitía. Medido: el último enlace de una página de 2000 px queda tapado
+           * al 100 % por la barra de cookies al tabular hasta él, y no se decía nada.
+           *
+           * Aquí sí se desplaza —es lo que hace el navegador al tabular— y después se
+           * devuelve el scroll a donde estaba, para no mover el suelo de las demás
+           * comprobaciones. */
+          const scrollX0 = win.scrollX, scrollY0 = win.scrollY;
+          try { if (el.scrollIntoView) el.scrollIntoView({ block: "nearest", inline: "nearest" }); } catch (e) {}
           const rc = el.getBoundingClientRect();
           if (rc.width > 0 && rc.height > 0) {
-            let peor = null, frac = 0;
+            /* Primero se descarta lo que NO se pinta encima, y después se elige el peor.
+             *
+             * Al revés no sirve: una marca de agua `fixed; inset:0; z-index:-1` tapa el
+             * 100 % de cualquier rectángulo, así que ganaba siempre la elección del
+             * «peor» y se llevaba por delante la comprobación de pintado —el hallazgo
+             * salía culpando a la marca incluso donde había un tapado de verdad—.
+             *
+             * Quién se pinta encima lo dice `elementFromPoint` en un punto DENTRO de
+             * la intersección, que es donde el tapado ocurriría. */
+            const tapan = [];
             flotantes.forEach(function (f) {
               if (f.el === el || f.el.contains(el)) return;   // está DENTRO del flotante: no lo tapa
-              const t = fraccionTapada(rc, f.rect);
-              if (t > frac) { frac = t; peor = f; }
+              const fr = refrescar(f);
+              const t = fraccionTapada(rc, fr);
+              if (t <= 0.02) return;
+              const ix = Math.min(Math.max(rc.left, fr.left) + 2, Math.min(rc.right, fr.right) - 1);
+              const iy = Math.min(Math.max(rc.top, fr.top) + 2, Math.min(rc.bottom, fr.bottom) - 1);
+              if (ix < 0 || iy < 0 || ix >= (win.innerWidth || 0) || iy >= (win.innerHeight || 0)) return;
+              let arriba = null;
+              try { arriba = doc.elementFromPoint(ix, iy); } catch (e) { arriba = null; }
+              // Solo cuenta si lo que se pinta ahí es el flotante (o algo suyo).
+              if (!arriba) return;
+              if (arriba !== f.el && !f.el.contains(arriba)) return;
+              tapan.push({ f: f, t: t });
             });
+            let peor = null, frac = 0;
+            tapan.forEach(function (x) { if (x.t > frac) { frac = x.t; peor = x.f; } });
+            /* Y que de verdad se pinte ENCIMA, no solo que los rectángulos se cruzen.
+             *
+             * El comentario de `elementosFlotantes` decía que se comprobaba «que de
+             * verdad se pinta por encima», y no se comprobaba: `z` se recogía y no se
+             * leía nunca. Una marca de agua `position:fixed; inset:0; z-index:-1`
+             * —que se pinta DETRÁS de todo— cruzaba su rectángulo con cualquier
+             * control y producía un 2.4.11 `falla` grave por cada uno. Medido: tres
+             * barreras graves inventadas en una página correcta, y
+             * `document.elementFromPoint` devolviendo el propio enlace.
+             *
+             * El orden de pintado real lo dice `elementFromPoint`, y es lo que hay
+             * que creer, no la aritmética de rectángulos. */
             if (peor && frac >= 0.999) {
               res.push({ crit: "2.4.11", label: "Foco no oscurecido", node: loc, path: ruta, verdict: "falla",
                 detail: "al recibir el foco queda COMPLETAMENTE tapado por «" + peor.loc + "» (" + win.getComputedStyle(peor.el).position + "): tabulando hasta aquí no se ve dónde está el foco" });
@@ -721,6 +799,9 @@ function runChecksReal(doc, win, limit) {
                 detail: "al recibir el foco queda tapado un " + Math.round(frac * 100) + " % por «" + peor.loc + "» (" + win.getComputedStyle(peor.el).position + "). El mínimo de 2.4.11 solo exige que no se oculte por completo, pero compruébalo" });
             }
           }
+          // El suelo se devuelve donde estaba: las demás comprobaciones miden sobre
+          // la misma página, y moverla por debajo sería medir otra cosa.
+          try { win.scrollTo(scrollX0, scrollY0); } catch (e) {}
         }
         const ind = indicadorDeFoco(base, foc, el, win);
         const changed = ind.visible;
@@ -812,12 +893,27 @@ function runChecksReal(doc, win, limit) {
   const soloColor = [], conDistintivo = [];
   enlacesEnTexto.forEach(function (a) {
     const d = distintivoDeEnlace(a, win);
-    (d ? conDistintivo : soloColor).push({ loc: locatorM(a), ruta: rutaM(a), texto: ownText(a).slice(0, 40), distintivo: d });
+    /* Y se mide el contraste enlace↔texto, porque la evidencia lo AFIRMABA sin
+     * mirarlo: decía «sin ningún distintivo salvo el color» también cuando el enlace
+     * tiene EXACTAMENTE el mismo color que el texto de alrededor. Medido: 1.00:1, o
+     * sea que ahí el color no distingue nada y la frase era falsa — y el caso es peor,
+     * no mejor, porque no hay ni siquiera un color del que fiarse. */
+    const pa = a.parentElement;
+    const cl = resolverColor(win.getComputedStyle(a).color, a.ownerDocument);
+    const ct = pa ? resolverColor(win.getComputedStyle(pa).color, a.ownerDocument) : null;
+    const rTxt = (cl && ct) ? contrastRatio(cl, ct) : null;
+    (d ? conDistintivo : soloColor).push({ loc: locatorM(a), ruta: rutaM(a), texto: ownText(a).slice(0, 40), distintivo: d, rTxt: rTxt });
   });
   soloColor.slice(0, 25).forEach(function (x) {
+    const niColor = x.rTxt != null && x.rTxt < 1.2;
     res.push({
       crit: "1.4.1", label: "Uso del color", node: x.loc, path: x.ruta, verdict: "falla",
-      detail: "enlace «" + x.texto + "» dentro de texto corrido sin ningún distintivo salvo el color: ni subrayado, ni grosor, ni borde, ni fondo, ni icono. Quien no distinga ese color no ve que hay un enlace"
+      detail: niColor
+        ? "enlace «" + x.texto + "» dentro de texto corrido sin NINGÚN distintivo: ni subrayado, ni grosor, ni borde, ni fondo, ni icono — y tampoco color, porque contrasta " +
+          x.rTxt.toFixed(2) + ":1 con el texto que lo rodea (o sea, es del mismo color). No hay forma de saber que es un enlace"
+        : "enlace «" + x.texto + "» dentro de texto corrido sin ningún distintivo salvo el color" +
+          (x.rTxt != null ? " (contrasta " + x.rTxt.toFixed(2) + ":1 con el texto de alrededor)" : "") +
+          ": ni subrayado, ni grosor, ni borde, ni fondo, ni icono. Quien no distinga ese color no ve que hay un enlace"
     });
   });
   if (!soloColor.length && enlacesEnTexto.length) {
@@ -892,7 +988,7 @@ function runChecksReal(doc, win, limit) {
 }
 
 const FNS = [parseColor, over, lum, contrastRatio, rgbStr, apcaContrast, apcaMin,
-  animacionesPersistentes, distintivoDeEnlace, enTextoCorrido, elementosFlotantes, fraccionTapada, ratioTxt, resolverColor, ownText, opacidadAcumulada, coloresDe, mismoColor, aparienciaFoco, indicadorDeFoco, fondoRealCoincide, bgBehind, contrastOf, boundaryContrastOf, isInteractiveM, locatorM, rutaM, renderedM, disabledM, managedM, textTargets,
+  animacionesPersistentes, distintivoDeEnlace, enTextoCorrido, elementosFlotantes, fraccionTapada, ratioTxt, refrescar, resolverColor, ownText, opacidadAcumulada, coloresDe, mismoColor, aparienciaFoco, indicadorDeFoco, fondoRealCoincide, bgBehind, contrastOf, boundaryContrastOf, isInteractiveM, locatorM, rutaM, renderedM, disabledM, managedM, textTargets,
   pinta, sinPseudoFoco, coincideSinFoco, reglasDeFoco, runChecksReal];
 const FN_SRC = "var MANAGED_PARENT = " + JSON.stringify(MANAGED_PARENT) + ";\nvar NATIVOS = " + JSON.stringify(NATIVOS) + ";\n" +
   "var PROP_INDICADOR = " + JSON.stringify(PROP_INDICADOR) + ";\nvar NULOS = " + JSON.stringify(NULOS) + ";\n" +

@@ -197,9 +197,18 @@ export function analyzeOrientation(trace) {
  * o al enfocar debe poder descartarse (Esc), poder señalarse con el puntero sin
  * que desaparezca, y persistir hasta que se retire.
  *
- * El caso más común y más claro: el atributo `title`. El tooltip nativo del
- * navegador no se puede descartar con Esc ni señalar con el ratón, y además
- * muchos lectores no lo anuncian. Es una falla de libro.
+ * El atributo `title` está EXENTO de este criterio, y esto emitía un `falla` por él.
+ *
+ * El texto normativo de 1.4.13 termina así: «Exception: The visual presentation of
+ * the additional content is controlled by the user agent and is not modified by the
+ * author». El tooltip nativo del navegador es exactamente eso — lo pinta el agente
+ * de usuario y el autor no lo toca—, así que no se puede fallar 1.4.13 por usar
+ * `title`. Se emitía `falla` moderada en cualquier página con un `<abbr title>`.
+ *
+ * Que `title` sea mala idea sigue siendo verdad, pero por otras vías: no se alcanza
+ * con teclado ni con el dedo, y el soporte en lectores es desigual. Eso aterriza en
+ * 1.1.1, 2.5.3 y 4.1.2 según el caso, no aquí. Así que se dice, y se dice donde
+ * corresponde, sin colgarle al criterio una barrera que su propia excepción excluye.
  *
  * @param {{ titles?:Array<{locator:string, texto:string, tieneNombre?:boolean}>,
  *           hovers?:Array<{locator:string, descartable?:boolean, señalable?:boolean}> }} trace
@@ -209,9 +218,15 @@ export function analyzeHoverContent(trace) {
   const out = [];
   const titles = (trace.titles || []).filter(function (t) { return t.texto && t.texto.trim(); });
   if (titles.length) {
-    out.push(F("1.4.13", "falla", "moderada", [
-      titles.length + " elemento(s) usan el atributo <code>title</code> como contenido emergente: el tooltip nativo no se puede descartar con Esc ni señalar con el puntero, y desaparece solo. " +
-      titles.slice(0, 6).map(function (t) { return t.locator + " «" + String(t.texto).slice(0, 30) + "»"; }).join(", ") + (titles.length > 6 ? "…" : "")
+    /* Y va como `revisar`, no como `falla`: la excepción del criterio lo excluye.
+     * Lo que queda por decidir no es 1.4.13, sino si esa información solo está ahí
+     * —y entonces el problema es de otro criterio—. */
+    const sinNombre = titles.filter(function (t) { return t.tieneNombre === false; });
+    out.push(F("1.4.13", "revisar", null, [
+      titles.length + " elemento(s) llevan el atributo <code>title</code>. El tooltip nativo lo pinta el navegador y el autor no lo modifica, así que la EXCEPCIÓN de 1.4.13 lo excluye: no es una barrera de este criterio. " +
+      titles.slice(0, 6).map(function (t) { return t.locator + " «" + String(t.texto).slice(0, 30) + "»"; }).join(", ") + (titles.length > 6 ? "…" : "") + ".",
+      "Lo que sí hay que comprobar: que esa información no esté SOLO en el `title`, porque no se alcanza con teclado ni con el dedo y el soporte en lectores es desigual. Si es la única vía, la barrera es de 1.1.1, 2.5.3 o 4.1.2, según lo que aporte." +
+        (sinNombre.length ? " Ojo a " + sinNombre.length + " de ellos, que además no tienen otro nombre accesible." : "")
     ], nodesOf(titles.map(function (t) { return { locator: t.locator, detalle: t.texto }; }))));
   }
   // Acepta los dos juegos de nombres: la sonda real emite `descartableConEsc` y

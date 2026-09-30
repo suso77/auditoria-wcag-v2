@@ -108,3 +108,83 @@ test("regresión: 1.4.3 no se mide contra un fondo que no es el que se pinta", {
   const n = normal.measurements.find((x) => x.crit === "1.4.3" && /p/.test(x.node));
   assert.ok(n && n.verdict !== "revisar", "el arreglo no puede dejar de medir lo medible: " + JSON.stringify(n));
 });
+
+/* ── Regresión: tres fallos más de la capa que corre en el navegador ─────────── */
+
+test("regresión: una fase caída no hace desaparecer criterios del informe", { skip }, async () => {
+  /* Había tres `catch` vacíos seguidos y una salida sin campo de errores. Si la fase
+   * del cuaderno reventaba —basta un script que envuelva `document.styleSheets` para
+   * que lance, el patrón de los scripts de consentimiento y anti-bot—, `cuaderno`
+   * quedaba en `null`, `aplicaCuaderno` no corría y OCHO criterios desaparecían de
+   * `findings`: ni hallazgo, ni `revisar`, ni nota. En un IRA, un criterio que no está
+   * es un criterio del que nadie sabe que no se comprobó. */
+  const cuerpo = '<main><h1>Página</h1><p>Texto con <a href="/x">un enlace al detalle</a>.</p>' +
+    '<form><label for="n">Nombre</label><input id="n" autocomplete="name"></form></main>';
+  const sabotaje = '<script>Object.defineProperty(document,"styleSheets",{get:function(){throw new Error("bloqueado");}});</script>';
+
+  const sano = await analyzeRendered({ html: cuerpo }, { launchOptions, pageScope: true });
+  const roto = await analyzeRendered({ html: cuerpo + sabotaje }, { launchOptions, pageScope: true });
+
+  const crits = (o) => new Set(o.findings.map((f) => f.c.n));
+  const A = crits(sano), B = crits(roto);
+  const perdidos = [...A].filter((c) => !B.has(c));
+  assert.deepEqual(perdidos, [], "ningún criterio puede desaparecer en silencio: " + JSON.stringify(perdidos));
+
+  // Y lo que falló se dice, por dos vías: el error y la nota de cobertura.
+  assert.ok(Array.isArray(roto.errores), "la salida tiene que traer `errores`, como viewportAnalyze");
+  assert.ok(roto.errores.some((e) => e.capa === "cuaderno"), JSON.stringify(roto.errores));
+  assert.ok(roto.coberturas.some((c) => /CSS no legible/.test(c.label)),
+    "y una nota de cobertura: " + JSON.stringify(roto.coberturas.map((c) => c.label)));
+  assert.match(roto.coberturas.find((c) => /CSS no legible/.test(c.label)).detail, /2\.3\.1/,
+    "diciendo qué criterio se queda corto por esto");
+});
+
+test("regresión: un enlace conforme a G183 no es una barrera de 1.4.1", { skip }, async () => {
+  /* G183 es técnica SUFICIENTE: 3:1 con el texto de alrededor más una señal visual
+   * adicional al foco o al puntero. Solo se miraba el estado en reposo, así que un
+   * enlace que hace exactamente eso salía `falla` grave. */
+  const html = `<style>
+    body{background:#fff;color:#111;font:16px/1.6 system-ui}
+    p.g183 a{color:#0b5ed7;text-decoration:none}
+    p.g183 a:hover, p.g183 a:focus{text-decoration:underline solid 2px}
+    p.igual{color:#222} p.igual a{color:#222;text-decoration:none}
+  </style><main><h1>Color</h1>
+  <p class="g183">Texto normal con <a href="/a">un enlace conforme a G183</a> dentro.</p>
+  <p class="igual">Texto con <a href="/b">un enlace del mismo color</a> dentro.</p></main>`;
+  const out = await analyzeRendered({ html }, { launchOptions });
+  const m141 = out.measurements.filter((x) => x.crit === "1.4.1");
+  assert.ok(!m141.some((x) => /G183/.test(x.node) || /conforme a G183/.test(x.detail)),
+    "el enlace de G183 no puede salir señalado: " + JSON.stringify(m141.map((x) => x.detail.slice(0, 60))));
+  assert.equal(m141.length, 1, "solo el del mismo color: " + JSON.stringify(m141.map((x) => x.detail.slice(0, 50))));
+  /* Y la evidencia deja de afirmar una comparación que no hacía: decía «sin ningún
+   * distintivo SALVO EL COLOR» también cuando el enlace es del mismo color que el
+   * texto —medido, 1.00:1—, donde el color no distingue nada y el caso es peor. */
+  assert.match(m141[0].detail, /sin NINGÚN distintivo/);
+  assert.match(m141[0].detail, /1\.00:1|mismo color/);
+});
+
+test("regresión: 2.4.11 no acusa a lo que se pinta DETRÁS, y sí ve lo que tapa", { skip }, async () => {
+  /* `elementosFlotantes` recogía el `z-index` y no lo leía nunca, así que una marca
+   * de agua `fixed; inset:0; z-index:-1` —que se pinta detrás de todo— cruzaba su
+   * rectángulo con cualquier control y producía un `falla` grave por cada uno. Y la
+   * barrera de verdad no se emitía: el foco se ponía con `preventScroll`, así que el
+   * rect de los controles de más abajo no era el que tienen al tabular hasta ellos. */
+  const html = `<style>
+    body{background:#fff;color:#111;font:16px/1.6 system-ui;margin:0}
+    .marca{position:fixed;inset:0;z-index:-1;background:#fafafa}
+    .barra{position:sticky;top:0;background:#fff}
+    .relleno{height:2000px}
+    .cookies{position:fixed;left:0;right:0;bottom:0;height:140px;background:#222;color:#fff}
+  </style><main>
+  <div class="marca"></div><h1>Foco</h1>
+  <div class="barra"><a href="/c">Enlace de la barra</a></div>
+  <div class="relleno"></div>
+  <p><a href="/ultimo">Enlace último del documento</a></p>
+  </main><div class="cookies">Usamos cookies</div>`;
+  const out = await analyzeRendered({ html }, { launchOptions });
+  const m = out.measurements.filter((x) => x.crit === "2.4.11");
+  assert.ok(!m.some((x) => /div\.marca/.test(x.detail)),
+    "nada que se pinte detrás puede tapar: " + JSON.stringify(m.map((x) => x.detail.slice(0, 70))));
+  assert.ok(m.some((x) => x.verdict === "falla" && /div\.cookies/.test(x.detail)),
+    "y la barra de cookies sí tapa el último enlace al tabular hasta él: " + JSON.stringify(m.map((x) => x.verdict + " " + x.detail.slice(0, 60))));
+});

@@ -86,10 +86,35 @@ test("pérdida grande de texto al girar → revisar", () => {
 
 /* ── 1.4.13 Contenido al recibir foco o puntero ── */
 
-test("el atributo title como tooltip → falla 1.4.13", () => {
+test("regresión: el atributo title está EXENTO de 1.4.13, y no es una falla", () => {
+  /* El texto normativo del criterio termina con: «Exception: The visual presentation
+   * of the additional content is controlled by the user agent and is not modified by
+   * the author». El tooltip nativo es exactamente eso, así que fallar 1.4.13 por un
+   * `title` es acusar de algo que la propia excepción excluye — y se emitía `falla`
+   * moderada en cualquier página con un `<abbr title>`.
+   *
+   * La información no se pierde: `title` sigue siendo mala idea porque no se alcanza
+   * con teclado ni con el dedo, pero eso aterriza en 1.1.1, 2.5.3 o 4.1.2. Se dice,
+   * y se dice dónde. */
   const out = analyzeHoverContent({ titles: [{ locator: "a.ayuda", texto: "Más información sobre el trámite" }] });
-  assert.deepEqual(v(out), ["1.4.13/falla"]);
-  assert.match(out[0].evid[0], /no se puede descartar con Esc/);
+  assert.deepEqual(v(out), ["1.4.13/revisar"]);
+  assert.match(out[0].evid[0], /EXCEPCIÓN de 1\.4\.13 lo excluye/);
+  assert.match(out[0].evid.join(" "), /1\.1\.1, 2\.5\.3 o 4\.1\.2/, "y se dice a qué criterio pertenece el problema de verdad");
+  assert.equal(out[0].sev, null, "sin gravedad: no es una barrera de este criterio");
+});
+
+test("y un title sin otro nombre accesible se señala aparte", () => {
+  const out = analyzeHoverContent({ titles: [{ locator: "button", texto: "Cerrar el aviso", tieneNombre: false }] });
+  assert.match(out[0].evid.join(" "), /no tienen otro nombre accesible/);
+});
+
+test("un emergente de verdad —CSS del autor— sí falla 1.4.13", () => {
+  // El arreglo del `title` no puede cegar el criterio donde de verdad aplica.
+  const out = analyzeHoverContent({
+    titles: [], hoverProbado: true, disparadores: 1,
+    hovers: [{ locator: "div.tooltip", descartable: false, "señalable": true }]
+  });
+  assert.ok(out.some((f) => f.c.n === "1.4.13" && f.verdict === "falla"), JSON.stringify(v(out)));
 });
 
 test("un title vacío no cuenta", () => {

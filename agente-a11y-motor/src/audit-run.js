@@ -278,6 +278,10 @@ export async function auditRun(target, opts) {
       avisos.push("axe-core no se pudo ejecutar: " + render.axe.error);
     }
 
+    // Los de la capa de RENDER también, que es la que monta el cuaderno y la
+    // auditoría de página: cuando una de esas fases se cae, sin esto el informe no
+    // decía nada y los criterios afectados simplemente no aparecían.
+    (render && render.errores || []).forEach(function (e) { errores.push(Object.assign({ capa: "render" }, e)); });
     (viewport && viewport.errores || []).forEach(function (e) { errores.push(Object.assign({ capa: "viewport" }, e)); });
     (dynamic && dynamic.errores || []).forEach(function (e) { errores.push(Object.assign({ capa: "dinámico" }, e)); });
     (dynamic && dynamic.avisos || []).forEach(function (a) { avisos.push(a); });
