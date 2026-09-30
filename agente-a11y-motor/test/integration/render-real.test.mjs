@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import { analyzeRendered } from "../../src/index.js";
 
 // Sonda de navegador. Permite PW_CHROMIUM para apuntar a un Chromium concreto (CI/nube).
@@ -218,35 +219,85 @@ test("regresión: 2.4.3 compara la tabulación con el orden VISUAL", { skip }, a
   assert.match(n.detail, /sigue el orden visual/);
 });
 
-test("regresión: el shadow DOM y los iframes se declaran sin medir", { skip }, async () => {
-  /* Todos los barridos usan `doc.querySelectorAll` sobre el documento principal, que
-   * no entra en un `shadowRoot` ni en un marco. Es una limitación conocida y no se
-   * decía en ninguna parte: ni hallazgo, ni nota, y el informe quedaba idéntico a uno
-   * de una página sin nada dentro. Que no se mida es discutible; que no se diga, no. */
+test("el shadow DOM ABIERTO se mide, y su ruta cruza la frontera", { skip }, async () => {
+  /* Todos los barridos usaban `doc.querySelectorAll`, que se detiene en la frontera de
+   * un shadow root: en un sitio hecho con componentes web eso puede ser la página
+   * entera sin medir. Ahora se entra, y la ruta lo dice con ` >> ` para que se sepa que
+   * ese selector no lo resuelve un `document.querySelector` de una pieza. */
   const shadowJS = [
-    "class T extends HTMLElement {",
+    "class Tarjeta extends HTMLElement {",
     "  connectedCallback() {",
     "    const s = this.attachShadow({ mode: 'open' });",
-    "    s.innerHTML = '<style>p{color:#eeeeee;background:#fff}</style><p>Texto del shadow</p>';",
+    "    s.innerHTML = '<style>p{color:#e8e8e8;background:#fff}button{width:12px;height:12px}</style>'",
+    "      + '<p>Texto del shadow, ilegible</p><button id=\"mini\"></button>';",
     "  }",
     "}",
-    "customElements.define('mi-tarjeta', T);"
+    "customElements.define('mi-tarjeta', Tarjeta);",
+    "class Cerrada extends HTMLElement {",
+    "  connectedCallback() { this.attachShadow({ mode: 'closed' }).innerHTML = '<p>oculto</p>'; }",
+    "}",
+    "customElements.define('mi-cerrada', Cerrada);"
   ].join("\n");
-  const html = "<main><h1>C</h1><mi-tarjeta></mi-tarjeta>" +
-    '<iframe src="about:blank" title="M" width="200" height="80"></iframe></main>' +
+  const html = "<main><h1>C</h1><p>Texto normal.</p><mi-tarjeta></mi-tarjeta><mi-cerrada></mi-cerrada></main>" +
     "<script>" + shadowJS + "</script>";
   const out = await analyzeRendered({ html }, { launchOptions });
-  const etiquetas = out.coberturas.map((c) => c.label);
-  assert.ok(etiquetas.some((l) => /Shadow DOM sin medir/.test(l)), JSON.stringify(etiquetas));
-  assert.ok(etiquetas.some((l) => /Marcos sin medir/.test(l)), JSON.stringify(etiquetas));
-  const sh = out.coberturas.find((c) => /Shadow DOM/.test(c.label));
-  assert.match(sh.detail, /NO están comprobados/);
-  assert.match(sh.detail, /mi-tarjeta/, "y se dice qué componente");
 
-  // Una página sin nada de eso no puede llevar las notas.
+  // El contraste de dentro se mide, y sale como la barrera que es.
+  const contraste = out.measurements.find((m) => m.crit === "1.4.3" && /mi-tarjeta/.test(m.node));
+  assert.ok(contraste, "el párrafo del shadow tiene que medirse: " +
+    JSON.stringify(out.measurements.filter((m) => m.crit === "1.4.3").map((m) => m.node)));
+  assert.equal(contraste.verdict, "falla");
+  assert.match(contraste.path, / >> /, "y la ruta cruza la frontera: " + contraste.path);
+  assert.match(contraste.node, /^mi-tarjeta >> p$/, "el locator dice en qué componente vive: " + contraste.node);
+
+  // El tamaño del objetivo también, y el botón NO puede salir como no enfocable:
+  // `document.activeElement` se queda en el host, y compararlo con él daba un 2.1.1
+  // «no recibe foco con Tab» sobre botones perfectamente enfocables.
+  assert.ok(out.measurements.some((m) => m.crit === "2.5.8" && /mi-tarjeta/.test(m.node)),
+    "2.5.8 dentro del shadow");
+  const foco = out.measurements.find((m) => m.crit === "2.1.1" && /mi-tarjeta/.test(m.node));
+  assert.ok(foco, "2.1.1 dentro del shadow");
+  assert.equal(foco.verdict, "pasa", "un <button> del shadow SÍ recibe el foco: " + foco.detail);
+
+  // Y lo que de verdad no se puede mirar se declara: el shadow root cerrado.
+  const etiquetas = out.coberturas.map((c) => c.label);
+  assert.ok(etiquetas.some((l) => /Shadow DOM cerrado/.test(l)), JSON.stringify(etiquetas));
+  assert.ok(!etiquetas.some((l) => /Shadow DOM sin medir/.test(l)), "el abierto ya no se declara: se mide");
+
+  // Una página sin componentes no lleva ninguna de las dos notas.
   const limpia = await analyzeRendered({ html: "<main><h1>C</h1><p>Texto normal.</p></main>" }, { launchOptions });
-  assert.ok(!limpia.coberturas.some((c) => /Shadow DOM|Marcos/.test(c.label)),
+  assert.ok(!limpia.coberturas.some((c) => /Shadow DOM|Marco/.test(c.label)),
     JSON.stringify(limpia.coberturas.map((c) => c.label)));
+});
+
+test("el contenido de un iframe se mide, sellado con su marco", { skip }, async () => {
+  /* `page.evaluate` corre en el marco principal y nada más, así que el contenido de un
+   * `<iframe>` no se medía: ni contraste, ni tamaño de objetivos, ni foco. En un sitio
+   * que mete el pago, el reproductor o el mapa en un marco, eso es la parte que más
+   * falta hace comprobar. */
+  const dentro = '<!doctype html><html lang="es"><head><meta charset="utf-8"><title>D</title>' +
+    "<style>body{background:#fff}p{color:#eeeeee}button{width:10px;height:10px}</style></head>" +
+    "<body><p>Texto del marco, ilegible</p><button>·</button></body></html>";
+  const fuera = '<!doctype html><html lang="es"><head><meta charset="utf-8"><title>T</title>' +
+    "<style>body{background:#fff;color:#111}</style></head><body><main><h1>M</h1>" +
+    '<p>Texto normal.</p><iframe src="/dentro" title="Formulario" width="320" height="160"></iframe>' +
+    "</main></body></html>";
+  const srv = createServer((q, s) => {
+    s.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    s.end(q.url.startsWith("/dentro") ? dentro : fuera);
+  });
+  await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+  try {
+    const out = await analyzeRendered({ url: "http://127.0.0.1:" + srv.address().port + "/" }, { launchOptions });
+    assert.ok(out.medicionMarcos.length, "tiene que medirse algo dentro del marco");
+    const c = out.medicionMarcos.find((m) => m.crit === "1.4.3" && m.verdict === "falla");
+    assert.ok(c, "el párrafo ilegible del marco: " + JSON.stringify(out.medicionMarcos.map((m) => m.crit + "/" + m.verdict)));
+    assert.match(c.node, /^marco http/, "sellado con el marco de donde viene: " + c.node);
+    assert.match(c.marco, /\/dentro$/);
+    // Y llega a los hallazgos, que es lo que acaba en el informe.
+    assert.ok(out.findings.some((f) => f.c.n === "1.4.3" && f.verdict === "falla" &&
+      (f.nodes || []).some((n) => /marco http/.test(n.locator || ""))), "la barrera del marco tiene que llegar al informe");
+  } finally { srv.close(); }
 });
 
 test("regresión: el cupo del contraste se gasta en lo que se mide, y la nota no miente", { skip }, async () => {
@@ -270,4 +321,43 @@ test("regresión: el cupo del contraste se gasta en lo que se mide, y la nota no
     assert.ok(dicho > 0, "la nota no puede decir que midió cero cuando midió: " + nota.node);
     assert.match(nota.detail, /se descartaron|quedan/, nota.detail);
   }
+});
+
+test("2.4.3 distingue una maquetación en columnas de un salto de verdad", { skip }, async () => {
+  /* Contar cualquier salto del foco hacia arriba como sospechoso dejaría el criterio a
+   * revisar en media web: en dos columnas, terminar la primera y volver arriba para
+   * empezar la segunda es el orden de lectura correcto. Lo que distingue los dos casos
+   * es si los dos controles comparten espacio HORIZONTAL: si no, son columnas
+   * distintas; si sí, el foco sube por donde ya había bajado. */
+  const enlaces = (n, pre) => Array.from({ length: n }, (_, i) =>
+    '<p><a href="/' + pre + i + '">' + pre + " " + i + "</a></p>").join("");
+
+  // A) Dos columnas: orden de lectura normal, no puede salir señalado.
+  const columnas = await analyzeRendered({
+    html: "<style>.cols{display:flex;gap:2em}.cols>div{width:300px}</style>" +
+      '<main><h1>O</h1><div class="cols"><div>' + enlaces(6, "izq") + "</div><div>" + enlaces(6, "der") + "</div></div></main>"
+  }, { launchOptions });
+  const a = columnas.measurements.find((m) => m.crit === "2.4.3");
+  assert.equal(a.verdict, "pasa", "dos columnas no son un fallo de orden: " + a.detail);
+  assert.match(a.detail, /de una columna a la siguiente/, "y se dice que se ha visto el cambio de columna");
+
+  // B) Un enlace del final del DOM colocado arriba, en la MISMA columna: eso sí.
+  const salto = await analyzeRendered({
+    html: "<style>.col{width:300px;position:relative;padding-top:2em}.arriba{position:absolute;top:0;left:0}</style>" +
+      '<main><h1>O</h1><div class="col">' + enlaces(8, "n") +
+      '<a href="/arriba" class="arriba">Sube del todo</a></div></main>'
+  }, { launchOptions });
+  const b = salto.measurements.find((m) => m.crit === "2.4.3");
+  assert.equal(b.verdict, "revisar", "el foco sube media pantalla por donde ya bajó: " + b.detail);
+  assert.match(b.detail, /hacia ARRIBA dentro de la misma columna/);
+  assert.match(b.detail, /sube \d+ px/, "y se dice cuánto, que es lo que permite juzgarlo");
+
+  // C) Tres píxeles de desalineación entre etiqueta y campo: es ruido, no un salto.
+  const ruido = await analyzeRendered({
+    html: "<style>.sube{position:relative;top:-3px}</style>" +
+      '<main><h1>O</h1><p><label for="a">A</label> <input id="a" class="sube"></p>' +
+      '<p><label for="b">B</label> <input id="b"></p></main>'
+  }, { launchOptions });
+  const c = ruido.measurements.find((m) => m.crit === "2.4.3");
+  assert.equal(c.verdict, "pasa", "tres píxeles no son un salto de orden: " + c.detail);
 });

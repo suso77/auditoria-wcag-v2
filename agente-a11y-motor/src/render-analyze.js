@@ -159,10 +159,48 @@ export async function analyzeRendered(target, opts) {
     // 2) Medición sobre estilos/layout reales.
     //    Vía page.evaluate (CDP): a diferencia de addScriptTag, no la bloquea la CSP.
     const measurements = await page.evaluate(new Function("lim", MEASURE_BODY), opts.measureLimit || 400);
+
+    /* Y la misma medición DENTRO de cada marco.
+     *
+     * `page.evaluate` corre en el marco principal y nada más, así que el contenido de
+     * un `<iframe>` no se medía: ni contraste, ni tamaño de objetivos, ni foco. En un
+     * sitio que mete el formulario de pago, el reproductor o el mapa en un marco, eso
+     * es la parte que más falta hace comprobar. Se mide marco a marco y los hallazgos
+     * se sellan con el marco de donde vienen, para que el informe diga dónde está la
+     * barrera y no solo que existe.
+     *
+     * Un marco de otro origen no se puede evaluar —la política del navegador lo
+     * impide, y no es un fallo nuestro— y se declara como nota de cobertura. */
+    const medicionMarcos = [];
+    if (opts.marcos !== false) {
+      const marcos = page.frames().filter(function (f) { return f !== page.mainFrame(); });
+      for (const marco of marcos.slice(0, 10)) {
+        const url = (function () { try { return marco.url(); } catch (e) { return ""; } })();
+        if (!url || url === "about:blank") continue;
+        const etiqueta = "marco " + url.slice(0, 80);
+        try {
+          const dentro = await marco.evaluate(new Function("lim", MEASURE_BODY), opts.measureLimit || 400);
+          (dentro || []).forEach(function (m) {
+            medicionMarcos.push(Object.assign({}, m, {
+              node: etiqueta + " » " + m.node,
+              path: m.path ? etiqueta + " » " + m.path : m.path,
+              marco: url
+            }));
+          });
+        } catch (e) {
+          // Otro origen, o el marco se fue a mitad: se dice, no se calla.
+          errores.push({ capa: "marco", error: "no se pudo medir " + url.slice(0, 80) + ": " + ((e && e.message) || e) });
+          coberturasPropias.push({ crit: "__meta", label: "Marco no medible", node: url.slice(0, 60), verdict: "revisar",
+            detail: "el marco « " + url.slice(0, 80) + " » no se puede medir desde aquí (lo más probable: es de otro origen y el navegador no deja entrar). " +
+              "Su contenido NO está comprobado: audítalo por su propia URL." });
+        }
+      }
+    }
     // TODAS, no la primera: la medición emite hasta tres notas de cobertura
     // (texto recortado por el límite, controles recortados, y 2.4.7 sin el foco
     // del sistema). Con `.find` la segunda y la tercera se perdían en silencio.
-    const coberturas = coberturasPropias.concat((measurements || []).filter(function (m) { return m.crit === "__meta"; }));
+    const todasLasMedidas = (measurements || []).concat(medicionMarcos);
+    const coberturas = coberturasPropias.concat(todasLasMedidas.filter(function (m) { return m.crit === "__meta"; }));
 
     // 3) axe-core (opcional)
     let axe = null;
@@ -218,7 +256,7 @@ export async function analyzeRendered(target, opts) {
     }
 
     // Hallazgos unificados (semántico + página + medición real), listos para el muestreo.
-    let findings = (analysis.findings || []).concat(pageAudit).concat(measurementFindings(measurements));
+    let findings = (analysis.findings || []).concat(pageAudit).concat(measurementFindings(todasLasMedidas));
     // El cuaderno sustituye el «requiere evaluación humana» genérico del motor
     // por lo suyo: «no aplica» donde no viene al caso, y el expediente donde sí.
     // No borra ninguna barrera real: eso lo garantiza `aplicaCuaderno`.
@@ -231,7 +269,10 @@ export async function analyzeRendered(target, opts) {
       pageScope: pageScope,
       pageAudit: pageAudit,
       cuaderno: cuaderno,
-      measurements: measurements,
+      measurements: todasLasMedidas,
+      // Las del marco principal aparte, para quien quiera separarlas.
+      medicionPrincipal: measurements || [],
+      medicionMarcos: medicionMarcos,
       coberturas: coberturas,
       cobertura: coberturas[0] || null,
       // Los fallos de fase VIAJAN, como en `viewportAnalyze`. Sin esto, una capa

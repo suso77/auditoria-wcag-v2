@@ -725,11 +725,33 @@ Las cuatro que quedaban apuntadas, reproducidas y arregladas. Tres son de la mis
 
 **Y el cupo de la medición de contraste se gastaba en lo que descartaba.** El bucle recorría los primeros `limit` elementos de la lista y se saltaba los ya medidos, los invisibles y los que no dan contraste — pero esos habían gastado cupo igual. Con seis párrafos `display:none` delante, un cupo de seis se agotaba sin medir ni uno y los seis visibles ilegibles de después no se miraban. Y la nota imprimía el cupo como si fuera lo medido: «se midió el contraste de 6 de 18» con las mediciones de verdad por debajo. Ni se detectaba la barrera ni se avisaba. Ahora el cupo se cuenta sobre lo que de verdad se mide, los descartados se dicen aparte, y los ya medidos en la primera pasada no inflan la cuenta de pendientes.
 
+## La medición entra donde antes no llegaba
+
+Las dos cosas que quedaban no eran fallos sino función que faltaba, y aquí está.
+
+### Componentes web: se mide dentro
+
+Todos los barridos usaban `doc.querySelectorAll(…)`, que se detiene en la frontera de un shadow root. En un sitio hecho con componentes eso puede ser la página entera sin medir, y hasta ahora lo único que se hacía era declararlo. `todosM(raiz, sel)` recorre el árbol entero entrando en los shadow roots **abiertos**, y con eso el contraste, el tamaño de los objetivos, el foco visible y el orden de foco del contenido de un componente se miden como el resto de la página.
+
+Dos detalles que hacían falta para que sirviera de algo. El primero, la identificación: `parentElement` es `null` en el primer hijo de un shadow root —la raíz sombra es un fragmento, no un elemento—, así que la ruta de un elemento de dentro salía como su etiqueta a secas. Ahora se salta al host y se marca el salto con ` >> `, la misma convención de Playwright, y el locator legible dice en qué componente vive: `mi-tarjeta >> p`. Sin eso, «p» no le sirve de nada a quien tiene que ir a buscarlo.
+
+El segundo apareció al probarlo, y es el tipo de cosa que justifica la regla de verificar antes de dar nada por bueno: `document.activeElement` **se queda en la frontera**. Cuando el foco está en un botón dentro de un shadow root, `document.activeElement` es el host, no el botón. En cuanto los barridos empezaron a entrar, la comprobación de 2.1.1 producía «no recibe foco con Tab» sobre botones perfectamente enfocables — una barrera grave inventada por el propio arreglo. El foco de verdad se sigue bajando por `shadowRoot.activeElement`.
+
+Lo que sigue sin medirse es lo que de verdad no se puede mirar: un shadow root **cerrado**, que desde fuera no expone nada. Eso se declara como nota de cobertura, nombrando los componentes.
+
+### Marcos: se mide cada uno
+
+`page.evaluate` corre en el marco principal y nada más. En un sitio que mete el formulario de pago, el reproductor o el mapa en un `<iframe>`, eso es justo la parte que más falta hace comprobar. Ahora `analyzeRendered` recorre `page.frames()` y ejecuta la misma medición dentro de cada marco, sellando los hallazgos con la URL de donde vienen (`marco https://… » p`) para que el informe diga dónde está la barrera y no solo que existe. Un marco de otro origen no se puede evaluar —la política del navegador lo impide, y no es un fallo nuestro— y se declara.
+
+### 2.4.3: columnas frente a saltos
+
+Las inversiones dentro de una misma línea visual ya se detectaban. Las verticales se contaban todas, y eso habría dejado el criterio a revisar en media web: en dos columnas, terminar la primera y volver arriba para empezar la segunda es el orden de lectura correcto, no un fallo. Lo que distingue los dos casos es si los dos controles comparten espacio **horizontal**: si no se solapan, están en columnas distintas y volver arriba es pasar de una a la siguiente; si se solapan, el foco sube por donde ya había bajado, y ahí sí hay algo que mirar.
+
+Y se mide cuánto sube, porque no es lo mismo un salto de tres píxeles —una etiqueta y su campo que no cuadran al píxel: ruido de alineación— que uno de media pantalla. El primero no se dice; el segundo se dice con su cifra, que es lo que permite juzgarlo. Los tres casos están en la batería de integración: dos columnas legítimas, un enlace del final del DOM colocado arriba con `position:absolute` en la misma columna, y la desalineación de tres píxeles.
+
 ### Lo que sigue pendiente
 
-- **La transcripción real de NVDA en español** — la inglesa ya está archivada (`test/fixtures/nvda-en-real.json`, capturada en Actions sobre `windows-latest`) y verifica el mecanismo y el léxico inglés. El runner de GitHub no tiene voz española («Spanish (not supported)»), así que los cinco tests del léxico español siguen escritos y saltándose.
-- **Medir DENTRO del shadow DOM y de los iframes.** Ahora se declara que no se hace, que era el fallo; hacerlo es una función nueva: un recorrido que atraviese los `shadowRoot` abiertos en todos los barridos, y auditar cada marco del mismo origen por su propia URL. Lo cerrado —shadow root cerrado, marco de otro origen— seguirá siendo una nota de cobertura, porque desde fuera no hay nada que mirar.
-- **2.4.3 entre líneas.** Las inversiones dentro de una línea visual ya se detectan; las verticales se cuentan y se dejan a juicio. Distinguir una maquetación en columnas legítima de un orden de foco que se salta media pantalla necesita más contexto del que tiene ahora la medición.
+- **La transcripción real de NVDA en español** — la inglesa ya está archivada (`test/fixtures/nvda-en-real.json`, capturada en Actions sobre `windows-latest`) y verifica el mecanismo y el léxico inglés. El runner de GitHub no tiene voz española («Spanish (not supported)»), así que los cinco tests del léxico español siguen escritos y saltándose. Es lo único que queda de la lista.
 
 ## Licencia
 

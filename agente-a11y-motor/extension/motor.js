@@ -1628,20 +1628,107 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
    * el motor. El nombre legible (`locatorM`) no identifica: dos botones sin id ni
    * clase son los dos «button», y el informe no puede decir a cuál se refiere.
    */
+  /* Recorre el árbol ENTERO, entrando en los shadow roots abiertos.
+   *
+   * Todos los barridos usaban `doc.querySelectorAll(...)`, que se detiene en la
+   * frontera de un shadow root: el contenido de un componente web no se medía, y en un
+   * sitio hecho con componentes eso puede ser la página entera. El contraste, el tamaño
+   * de los objetivos, el foco visible y el orden de foco de todo eso quedaban sin
+   * comprobar — antes sin decirlo, y desde la cuarta tanda al menos declarado.
+   *
+   * Aquí se mide de verdad. Un shadow root CERRADO sigue siendo inalcanzable (no hay
+   * nada que mirar desde fuera) y se declara aparte, como los marcos de otro origen.
+   *
+   * Ojo al selector: dentro de un shadow root no hay `body`, así que un `body *` del
+   * documento se convierte en `*` en cada raíz sombra.
+   */
+  function todosM(raiz, sel) {
+    const out = [];
+    const visto = [];
+    const selDe = function (r) {
+      if (r.nodeType === 9) return sel;                       // documento
+      return sel.replace(/\bbody\s+/g, "").replace(/^body$/, "*");
+    };
+    const visitar = function (r, prof) {
+      if (!r || !r.querySelectorAll || prof > 8) return;
+      if (visto.indexOf(r) !== -1) return;
+      visto.push(r);
+      const l = r.querySelectorAll(selDe(r));
+      for (let i = 0; i < l.length; i++) out.push(l[i]);
+      const todos = r.querySelectorAll("*");
+      for (let j = 0; j < todos.length; j++) {
+        if (todos[j].shadowRoot) visitar(todos[j].shadowRoot, prof + 1);
+      }
+    };
+    visitar(raiz, 0);
+    return out;
+  }
+  /* ¿Está enfocado este elemento, esté donde esté?
+   *
+   * `document.activeElement` se detiene en la FRONTERA: cuando el foco está en un botón
+   * dentro de un shadow root, `document.activeElement` es el HOST, no el botón. En
+   * cuanto los barridos empezaron a entrar en los shadow roots, comparar contra
+   * `doc.activeElement` producía un 2.1.1 «no recibe foco con Tab» sobre botones
+   * perfectamente enfocables — una barrera inventada por el propio arreglo, y de las
+   * graves. El foco de verdad se sigue bajando por `shadowRoot.activeElement`. */
+  function enfocadoM(doc, el) {
+    let a = doc.activeElement;
+    for (let i = 0; i < 8 && a; i++) {
+      if (a === el) return true;
+      if (!a.shadowRoot || !a.shadowRoot.activeElement) return false;
+      a = a.shadowRoot.activeElement;
+    }
+    return a === el;
+  }
+  /** Los hosts cuyo shadow root NO se puede abrir: se declaran, no se miden. */
+  function shadowCerrados(doc) {
+    // Un shadow root cerrado no expone `shadowRoot`, así que no se puede enumerar
+    // directamente. Lo que sí se ve es un elemento personalizado (con guion en el
+    // nombre) que está definido, se pinta y no tiene hijos propios ni shadowRoot
+    // accesible: el contenido está ahí y no se puede alcanzar.
+    return Array.prototype.slice.call(doc.querySelectorAll("*")).filter(function (el) {
+      const t = el.tagName.toLowerCase();
+      if (t.indexOf("-") === -1) return false;
+      if (el.shadowRoot) return false;
+      if (el.children && el.children.length) return false;
+      return !!(el.getClientRects && el.getClientRects().length);
+    });
+  }
+  /* La ruta cruza la frontera del shadow DOM, y lo dice con ` >> `.
+   *
+   * `parentElement` es `null` en el primer hijo de un shadow root —la raíz sombra es un
+   * fragmento, no un elemento—, así que la ruta de un elemento de dentro salía como su
+   * etiqueta a secas: no identificaba nada. Se salta al host y se marca el salto, con la
+   * misma convención que usa Playwright, para que quede claro que ese selector no lo
+   * resuelve un `document.querySelector` de una sola pieza. */
   function rutaM(el) {
-    const parts = [];
+    const tramos = [];
+    let parts = [];
     let n = el;
     while (n && n.nodeType === 1) {
       const t = n.tagName.toLowerCase();
       if (t === "html" || t === "body") break;
       const p = n.parentElement;
-      if (!p) { parts.unshift(t); break; }
+      if (!p) {
+        const padre = n.parentNode;
+        // ¿Es la raíz de un shadow root? Entonces se sigue por el host.
+        if (padre && padre.nodeType === 11 && padre.host) {
+          parts.unshift(t);
+          tramos.unshift(parts.join(" > "));
+          parts = [];
+          n = padre.host;
+          continue;
+        }
+        parts.unshift(t);
+        break;
+      }
       let i = 1, sib = p.firstElementChild;
       while (sib && sib !== n) { if (sib.tagName === n.tagName) i++; sib = sib.nextElementSibling; }
       parts.unshift(t + ":nth-of-type(" + i + ")");
       n = p;
     }
-    return parts.length ? "html > body > " + parts.join(" > ") : "body";
+    const base = parts.length ? "html > body > " + parts.join(" > ") : "body";
+    return tramos.length ? base + " >> " + tramos.join(" >> ") : base;
   }
   /**
    * 1.4.1 Uso del color: un enlace dentro de un párrafo distinguido SOLO por color.
@@ -1725,7 +1812,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
    */
   function elementosFlotantes(doc, win) {
     const out = [];
-    const todos = doc.querySelectorAll("body *");
+    const todos = todosM(doc, "body *");
     for (let i = 0; i < todos.length && out.length < 30; i++) {
       const el = todos[i];
       const cs = win.getComputedStyle(el);
@@ -1768,7 +1855,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
    */
   function animacionesPersistentes(doc, win, limite) {
     const out = [];
-    const todos = doc.querySelectorAll("body *");
+    const todos = todosM(doc, "body *");
     for (let i = 0; i < todos.length && out.length < (limite || 25); i++) {
       const el = todos[i];
       if (!renderedM(el, win)) continue;
@@ -1797,7 +1884,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       });
     }
     // Vídeos que arrancan solos y se repiten: se mueven más de 5 s por definición.
-    Array.prototype.forEach.call(doc.querySelectorAll("video[autoplay]"), function (v) {
+    todosM(doc, "video[autoplay]").forEach(function (v) {
       if (!renderedM(v, win)) return;
       if (!v.hasAttribute("loop")) return;
       out.push({ loc: locatorM(v), ruta: rutaM(v), motivo: "vídeo con autoplay y loop", control: v.hasAttribute("controls") });
@@ -1805,11 +1892,27 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     return out;
   }
   function locatorM(el) {
-    const tag = el.tagName.toLowerCase();
-    if (el.id) return tag + "#" + el.id;
-    const cls = (el.getAttribute("class") || "").trim().split(/\s+/).filter(Boolean)[0];
-    if (cls) return tag + "." + cls;
-    return tag;
+    const propio = function (e) {
+      const tag = e.tagName.toLowerCase();
+      if (e.id) return tag + "#" + e.id;
+      const cls = (e.getAttribute("class") || "").trim().split(/\s+/).filter(Boolean)[0];
+      if (cls) return tag + "." + cls;
+      return tag;
+    };
+    /* Y dice DENTRO DE QUÉ vive, cuando está en un shadow DOM.
+     *
+     * «p» a secas no le sirve de nada a quien tiene que ir a buscarlo: en un sitio de
+     * componentes hay veinte. Con el componente delante —«mi-tarjeta >> p»— se sabe
+     * dónde mirar, y se ve de un vistazo que la barrera está dentro de un componente. */
+    const hosts = [];
+    let n = el;
+    for (let i = 0; i < 8; i++) {
+      const raiz = n.getRootNode ? n.getRootNode() : null;
+      if (!raiz || raiz.nodeType !== 11 || !raiz.host) break;
+      hosts.unshift(propio(raiz.host));
+      n = raiz.host;
+    }
+    return hosts.length ? hosts.join(" >> ") + " >> " + propio(el) : propio(el);
   }
   // ¿Está pintado? Sin caja ni visibilidad no hay nada que medir (ni que enfocar).
   function renderedM(el, win) {
@@ -1852,7 +1955,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     // Filtrar ANTES de recortar: con `.slice(0, limit)` primero, un encabezado con
     // role= o cien divs con tabindex consumían el cupo y los controles reales se
     // quedaban fuera de la medición sin que nadie se enterase.
-    const candidatos = Array.prototype.slice.call(doc.querySelectorAll(sel)).filter(isInteractiveM);
+    const candidatos = todosM(doc, sel).filter(isInteractiveM);
     const all = candidatos.slice(0, limit);
     const truncado = candidatos.length > all.length;
     const focusables = [];
@@ -1901,7 +2004,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         let focusable = false, foc = null;
         try {
           el.focus({ preventScroll: true });
-          focusable = (doc.activeElement === el);
+          focusable = enfocadoM(doc, el);
           foc = aparienciaFoco(win.getComputedStyle(el));
           if (el.blur) el.blur();
         } catch (e) {}
@@ -2065,7 +2168,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     });
 
     /* ── 1.4.1 Uso del color: enlaces en texto distinguidos solo por color ── */
-    const enlacesEnTexto = Array.prototype.slice.call(doc.querySelectorAll("a[href]"))
+    const enlacesEnTexto = todosM(doc, "a[href]")
       .filter(function (a) { return renderedM(a, win) && ownText(a) && enTextoCorrido(a); })
       .slice(0, limit);
     const soloColor = [], conDistintivo = [];
@@ -2107,7 +2210,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     // arriba solo recorre elementos interactivos, así que un párrafo gris claro se
     // colaba sin medir —lo pillaba axe y nosotros no—. Segunda pasada sobre los
     // bloques de texto de la página.
-    const conTexto = Array.prototype.slice.call(doc.querySelectorAll("body *")).filter(function (el) { return ownText(el); });
+    const conTexto = todosM(doc, "body *").filter(function (el) { return ownText(el); });
     const textoLim = Math.min(conTexto.length, limit);
     /* El cupo se gasta en los que SE MIDEN, no en los que se descartan.
      *
@@ -2142,35 +2245,30 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         });
       }
     }
-    /* Lo que la medición NO alcanza se declara: shadow DOM e iframes.
+    /* Lo que la medición no alcanza se declara; lo que alcanza, se mide.
      *
-     * Todos los barridos usan `doc.querySelectorAll(...)` sobre el documento
-     * principal, que no entra en un `shadowRoot` ni en un marco. Eso es una
-     * limitación conocida, pero no se decía en ninguna parte: no salía hallazgo, no
-     * salía nota, y el informe quedaba idéntico a uno de una página sin nada dentro.
-     * Comprobado: un componente con shadow DOM con texto a 1.2:1 y un botón de 12×12,
-     * más un iframe del mismo origen con lo mismo, y cero mediciones y cero notas.
+     * Los barridos entran ya en los shadow roots ABIERTOS (ver `todosM`), así que el
+     * contenido de un componente web se mide como el resto de la página y sus barreras
+     * salen en el informe con su ruta cruzando la frontera («mi-tarjeta >> p»).
      *
-     * Que no se mida es discutible; que no se diga, no. Un criterio que nadie ha
-     * comprobado no puede parecerse a un criterio que cumple. */
-    const conShadow = Array.prototype.slice.call(doc.querySelectorAll("*")).filter(function (el) {
-      return el.shadowRoot && el.shadowRoot.querySelector && el.shadowRoot.querySelector("*");
-    });
-    const marcos = Array.prototype.slice.call(doc.querySelectorAll("iframe,frame")).filter(function (f) {
-      return renderedM(f, win);
-    });
-    if (conShadow.length) {
-      res.push({ crit: "__meta", label: "Shadow DOM sin medir", node: conShadow.length + " componente(s)", verdict: "revisar",
-        detail: "hay " + conShadow.length + " componente(s) con shadow DOM (" +
-          conShadow.slice(0, 5).map(function (el) { return locatorM(el); }).join(", ") + (conShadow.length > 5 ? ", …" : "") +
-          ") y esta medición no entra dentro: el contraste, el tamaño de los objetivos, el foco visible y el orden de foco de su contenido NO están comprobados. Míralos con las herramientas del navegador o por separado." });
+     * Queda declarado lo que de verdad no se puede alcanzar: un shadow root CERRADO
+     * —desde fuera no hay nada que mirar— y los marcos, que van en otro documento y los
+     * audita `analyzeRendered` uno por uno. Un criterio que nadie ha comprobado no puede
+     * parecerse a un criterio que cumple. */
+    const cerrados = shadowCerrados(doc);
+    const marcos = todosM(doc, "iframe,frame").filter(function (f) { return renderedM(f, win); });
+    if (cerrados.length) {
+      res.push({ crit: "__meta", label: "Shadow DOM cerrado", node: cerrados.length + " componente(s)", verdict: "revisar",
+        detail: "hay " + cerrados.length + " componente(s) que parecen llevar un shadow root CERRADO (" +
+          cerrados.slice(0, 5).map(function (el) { return locatorM(el); }).join(", ") + (cerrados.length > 5 ? ", …" : "") +
+          "): su contenido no se puede inspeccionar desde fuera, así que el contraste, el tamaño de los objetivos y el foco de lo que haya dentro NO están comprobados. Compruébalo con el inspector del navegador o pídeselo a quien mantenga el componente." });
     }
     if (marcos.length) {
-      res.push({ crit: "__meta", label: "Marcos sin medir", node: marcos.length + " iframe(s)", verdict: "revisar",
+      res.push({ crit: "__meta", label: "Marcos: se auditan aparte", node: marcos.length + " iframe(s)", verdict: "revisar",
         detail: "hay " + marcos.length + " marco(s) pintado(s) (" +
           marcos.slice(0, 5).map(function (f) { return locatorM(f) + (f.getAttribute("src") ? " → " + String(f.getAttribute("src")).slice(0, 60) : ""); }).join(", ") +
           (marcos.length > 5 ? ", …" : "") +
-          ") y la medición solo recorre el documento principal: su contenido NO está comprobado. Audita cada marco por su propia URL." });
+          "). Esta medición recorre un solo documento: el contenido de cada marco se mide por separado, y si alguno es de otro origen no se puede medir en absoluto." });
     }
 
     // La nota dice lo que se midió DE VERDAD, y de cuántos.
@@ -2217,14 +2315,41 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         const solape = Math.min(a.rect.bottom, b.rect.bottom) - Math.max(a.rect.top, b.rect.top);
         return solape > Math.min(a.rect.height, b.rect.height) * 0.5;
       };
-      const inversionesFila = [], inversionesVert = [];
+      /* Entre líneas se distingue una MAQUETACIÓN EN COLUMNAS de un salto de verdad.
+       *
+       * Contar cualquier salto hacia arriba como sospechoso deja el criterio a revisar
+       * en media web: en dos columnas, terminar la primera y volver arriba para empezar
+       * la segunda es el orden de lectura correcto, no un fallo. Lo que distingue los dos
+       * casos es si los dos controles comparten espacio HORIZONTAL:
+       *
+       *  - no se solapan en horizontal → están en columnas distintas, y volver arriba es
+       *    pasar de una columna a la siguiente. Orden de lectura normal.
+       *  - sí se solapan → están en la misma columna, y el foco sube por donde ya había
+       *    bajado. Ahí sí hay algo que mirar.
+       *
+       * Y se mide cuánto sube: un salto de unos píxeles es ruido de alineación (una
+       * etiqueta y su campo que no cuadran al píxel); uno de media pantalla es otra cosa,
+       * y es el que se dice con su cifra para que se pueda juzgar. */
+      const vh = win.innerHeight || 800;
+      const inversionesFila = [], inversionesVert = [], cambiosDeColumna = [];
+      const solapanEnX = function (a, b) {
+        const s = Math.min(a.rect.right, b.rect.right) - Math.max(a.rect.left, b.rect.left);
+        return s > Math.min(a.rect.width, b.rect.width) * 0.25;
+      };
       for (let i = 0; i < conRect.length - 1; i++) {
         const a = conRect[i], b = conRect[i + 1];
         if (mismaLinea(a, b)) {
           const alRevés = rtl ? (b.rect.left > a.rect.left + 2) : (b.rect.left + 2 < a.rect.left);
           if (alRevés) inversionesFila.push({ a: a, b: b });
         } else if (b.rect.top + 2 < a.rect.top) {
-          inversionesVert.push({ a: a, b: b });
+          const sube = Math.round(a.rect.top - b.rect.top);
+          if (!solapanEnX(a, b)) {
+            // Columnas distintas: es el orden de lectura, no un salto.
+            cambiosDeColumna.push({ a: a, b: b, sube: sube });
+          } else if (sube > Math.max(24, a.rect.height * 1.5)) {
+            // Misma columna y sube de verdad: eso hay que mirarlo.
+            inversionesVert.push({ a: a, b: b, sube: sube, pantallas: sube / vh });
+          }
         }
       }
       const nombra = function (f) { return f.loc + (f.texto ? " «" + f.texto + "»" : ""); };
@@ -2237,14 +2362,19 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
           inversionesFila.slice(0, 4).map(function (x) { return nombra(x.a) + " → " + nombra(x.b) + ", que está a su " + (rtl ? "derecha" : "izquierda"); }).join(" · "));
       }
       if (inversionesVert.length) {
-        problemas.push(inversionesVert.length + " salto(s) hacia arriba entre líneas (puede ser maquetación en columnas, míralo)");
+        const peorSalto = inversionesVert.reduce(function (m, x) { return x.sube > m.sube ? x : m; }, inversionesVert[0]);
+        problemas.push(inversionesVert.length + " salto(s) del foco hacia ARRIBA dentro de la misma columna, por donde ya había bajado" +
+          " (el mayor sube " + peorSalto.sube + " px" + (peorSalto.pantallas >= 0.5 ? ", más de media pantalla" : "") + ": " +
+          nombra(peorSalto.a) + " → " + nombra(peorSalto.b) + ")");
       }
       res.push({
         crit: "2.4.3", label: "Orden de foco", node: focusables.length + " controles",
         verdict: problemas.length ? "revisar" : "pasa",
         detail: (problemas.length
           ? "el orden de tabulación no sigue el orden visual: " + problemas.join("; ") + ". Secuencia de tabulación: "
-          : "la tabulación sigue el orden visual de la página (comparado línea a línea): ") + cola,
+          : "la tabulación sigue el orden visual de la página (comparado línea a línea" +
+            (cambiosDeColumna.length ? ", con " + cambiosDeColumna.length + " paso(s) de una columna a la siguiente, que es orden de lectura normal" : "") +
+            "): ") + cola,
         // Este hallazgo no es de UN elemento, así que no lleva `path`: lleva la
         // secuencia de rutas. El nombre legible se repite («a → a → a») y por sí
         // solo no deja comprobar el orden; con las rutas sí.
@@ -2264,7 +2394,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   }
 
   const FNS = [parseColor, over, lum, contrastRatio, rgbStr, apcaContrast, apcaMin,
-    animacionesPersistentes, distintivoDeEnlace, enTextoCorrido, elementosFlotantes, fraccionTapada, ratioTxt, refrescar, resolverColor, ownText, opacidadAcumulada, coloresDe, mismoColor, aparienciaFoco, indicadorDeFoco, fondoRealCoincide, bgBehind, contrastOf, boundaryContrastOf, isInteractiveM, locatorM, rutaM, renderedM, disabledM, managedM, textTargets,
+    animacionesPersistentes, distintivoDeEnlace, enTextoCorrido, elementosFlotantes, fraccionTapada, ratioTxt, refrescar, todosM, enfocadoM, shadowCerrados, resolverColor, ownText, opacidadAcumulada, coloresDe, mismoColor, aparienciaFoco, indicadorDeFoco, fondoRealCoincide, bgBehind, contrastOf, boundaryContrastOf, isInteractiveM, locatorM, rutaM, renderedM, disabledM, managedM, textTargets,
     pinta, sinPseudoFoco, coincideSinFoco, reglasDeFoco, runChecksReal];
   const FN_SRC = "var MANAGED_PARENT = " + JSON.stringify(MANAGED_PARENT) + ";\nvar NATIVOS = " + JSON.stringify(NATIVOS) + ";\n" +
     "var PROP_INDICADOR = " + JSON.stringify(PROP_INDICADOR) + ";\nvar NULOS = " + JSON.stringify(NULOS) + ";\n" +
