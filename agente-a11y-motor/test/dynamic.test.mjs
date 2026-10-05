@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { analyzeContextChange } from "../src/dynamic.js";
+import { analyzeContextChange, analyzeAutoMovement, analyzeCharKeyShortcuts, analyzeStatusMessages } from "../src/dynamic.js";
 import { esConforme } from "../src/verdicts.js";
 import { analyzeTabTrace, analyzeDisclosure, analyzeTabs, analyzeErrorState } from "../src/index.js";
 
@@ -233,4 +233,170 @@ test("regresión: el tope del sondeo de 3.2.1 sale del veredicto, no solo del te
   // Sondados todos, sí es `pasa`.
   const completo = analyzeContextChange(eventos, 0, { total: 20, sondados: 20 });
   assert.equal(completo.find((x) => x.c.n === "3.2.1").verdict, "pasa");
+});
+
+/* ── 2.2.2 a partir de lo observado, no de lo que declara el CSS ─────────── */
+
+/**
+ * La medición sobre el render lee `animationName` e `animationIterationCount`, así
+ * que ve los carruseles hechos con `@keyframes` y no ve los que mueve JavaScript.
+ * Medido en un sitio real: el carrusel de la portada no se cazó y en su lugar se
+ * acusó a un icono con `fadeInDown`, que era lo único escrito en el CSS.
+ */
+const obs = (movidos, controles, ms) => ({ ms: ms || 8000, movidos: movidos, controles: controles || [] });
+const mov = (loc, n, primero, ultimo) => ({ loc: loc, uid: loc, tipo: "attributes:class", n: n, primero: primero, ultimo: ultimo });
+
+test("2.2.2 observado: movimiento sostenido sin ningún control de pausa es falla", () => {
+  const f = analyzeAutoMovement(obs([mov("div.slide", 6, 1200, 7400)], []));
+  assert.equal(f.length, 1);
+  assert.equal(f[0].c.n, "2.2.2");
+  assert.equal(f[0].verdict, "falla");
+  assert.equal(f[0].sev, "grave");
+  assert.match(f[0].evid.join(" "), /No se ha encontrado en toda la página ningún control de pausa/);
+  assert.equal(f[0].nodes.length, 1);
+});
+
+test("2.2.2 observado: con un candidato a control de pausa es revisar, y se nombra", () => {
+  const f = analyzeAutoMovement(obs([mov("div.slide", 6, 1200, 7400)], [{ loc: "button#pausa", motivo: "Pausar el carrusel" }]));
+  assert.equal(f[0].verdict, "revisar");
+  assert.match(f[0].evid.join(" "), /button#pausa: «Pausar el carrusel»/);
+});
+
+test("2.2.2 observado: «dura más de cinco segundos» es que siga moviéndose al final, no la distancia entre cambios", () => {
+  /* Lo escribí como la distancia entre el primer y el último cambio y la sonda lo
+   * cazó: un carrusel de 1,2 s por diapositiva observado 7 s tiene su primer cambio
+   * en el 1,2 y el último en el 6,0 —4,8 s— y salía como «no llega al umbral». No es
+   * que no llegara: es que se acabó la ventana. */
+  const f = analyzeAutoMovement(obs([mov("div.slide", 5, 1200, 6000)], [], 7000));
+  assert.equal(f[0].verdict, "falla", JSON.stringify(f[0] && f[0].evid));
+  assert.match(f[0].evid.join(" "), /se mantiene más de cinco segundos/);
+});
+
+test("2.2.2 observado: lo que se mueve y PARA antes del final se deja a revisar, no a falla", () => {
+  const f = analyzeAutoMovement(obs([mov("p#p", 7, 700, 4900)], [], 8000));
+  assert.equal(f[0].verdict, "revisar");
+  assert.match(f[0].evid.join(" "), /NO llega al umbral de cinco segundos/);
+});
+
+test("2.2.2 observado: haber mirado y no ver nada se DICE, con los segundos y lo que queda fuera", () => {
+  /* Devolver lista vacía hacía que «he mirado ocho segundos y la página está quieta»
+   * y «no he mirado» quedaran idénticos en el informe. Medido contra un sitio real:
+   * 2.2.2 salió «sin determinar» en las diez páginas y lo único escrito era un icono
+   * con `fadeInDown` que vio la capa de CSS — sin forma de saber si la observación
+   * había corrido. */
+  const f = analyzeAutoMovement(obs([], [], 8000));
+  assert.equal(f.length, 1);
+  assert.equal(f[0].verdict, "cumple-parcial", "nunca `cumple`: solo se miraron esos segundos");
+  assert.equal(esConforme(f[0].verdict), false);
+  assert.match(f[0].evid[0], /Observada la página 8\.0 s SIN tocar nada/);
+  assert.match(f[0].evid[1], /dentro de un marco o un vídeo/);
+  assert.match(f[0].evid[1], /canvas/);
+});
+
+test("2.2.2 observado: si la observación NO corrió o falló, no se dice nada", () => {
+  // Aquí sí: no hay nada que contar, y un `cumple-parcial` sería afirmar que se miró.
+  assert.deepEqual(analyzeAutoMovement({ error: "no se pudo observar", movidos: [] }), []);
+  assert.deepEqual(analyzeAutoMovement(null), []);
+  assert.deepEqual(analyzeAutoMovement({ ms: 0 }), []);
+});
+
+/* ── 2.1.4 a partir de lo pulsado, no de lo que haya en el marcado ───────── */
+
+/**
+ * El detector del ámbito de página solo ve los manejadores en línea, y hoy nadie los
+ * escribe así: un `addEventListener` dentro de un bundle no está en el marcado, así
+ * que 2.1.4 salía SIN EVALUAR. Medido contra un sitio real: era uno de los siete
+ * criterios que no miraba ninguna capa, ni para bien ni para mal.
+ */
+test("2.1.4 pulsado: una tecla suelta que actúa con el foco en el cuerpo queda a revisar", () => {
+  const f = analyzeCharKeyShortcuts({ probadas: ["/", "s", "f"], activas: [{ tecla: "s", cambios: ["mueve el foco a «input#q»", "cambia qué se ve (+3 elemento(s) visibles)"] }] });
+  assert.equal(f.length, 1);
+  assert.equal(f[0].c.n, "2.1.4");
+  assert.equal(f[0].verdict, "revisar");
+  assert.match(f[0].evid[0], /«s» mueve el foco a «input#q»/);
+  // Lo que se puede concluir, y solo eso: una de las tres salidas del criterio.
+  assert.match(f[0].evid[1], /no está limitado al foco de un control/);
+  assert.match(f[0].evid[1], /se pueda desactivar o reasignar/);
+  assert.equal(f[0].nodes.length, 1);
+});
+
+test("2.1.4 pulsado: sin ninguna tecla activa es cumple-parcial, nunca cumple", () => {
+  /* `cumple` sería afirmar que no hay atajos de un carácter habiendo probado diez
+   * teclas de las que hay. `cumple-parcial` dice la verdad: lo probado está bien y el
+   * resto no se ha mirado — y `esConforme()` ya lo excluye de la conformidad. */
+  const f = analyzeCharKeyShortcuts({ probadas: ["/", "?", "s"], activas: [] });
+  assert.equal(f[0].verdict, "cumple-parcial");
+  assert.equal(esConforme(f[0].verdict), false);
+  assert.match(f[0].evid[0], /no todas/);
+  assert.match(f[0].evid[0], /no cierra el criterio por sí solo/);
+});
+
+test("2.1.4 pulsado: si la fase no corrió, no se dice nada", () => {
+  assert.deepEqual(analyzeCharKeyShortcuts(null), []);
+  assert.deepEqual(analyzeCharKeyShortcuts({ probadas: [], activas: [] }), []);
+});
+
+/* ── 4.1.3 fuera del formulario: el texto que aparece al interactuar ─────── */
+
+/**
+ * 4.1.3 ya se dictaminaba para UN caso —el error de formulario, con el envío forzado
+ * y la comparación de las regiones live—, y en un sitio sin formularios con error eso
+ * no emite nada. Medido contra un sitio real: 4.1.3 fue uno de los siete criterios de
+ * los que no se dijo ni una palabra.
+ */
+const ev = (o) => Object.assign({ locator: "button#b", name: "Filtros", textos: ["3 resultados encontrados"], uids: ["html > body > p"], liveCambio: false, focoDentro: false, regiones: 0 }, o);
+
+test("4.1.3: texto que aparece sin región live y sin mover el foco queda a revisar", () => {
+  const f = analyzeStatusMessages([ev({})]);
+  assert.equal(f.length, 1);
+  assert.equal(f[0].c.n, "4.1.3");
+  assert.equal(f[0].verdict, "revisar");
+  assert.match(f[0].evid[0], /«3 resultados encontrados»/);
+  assert.match(f[0].evid[1], /role="status"/);
+  assert.match(f[0].evid[1], /NINGUNA región de estado declarada/, "y si no hay ni una, se dice");
+  assert.equal(f[0].nodes[0].path, "html > body > p", "con selector, para poder ir a buscarlo");
+});
+
+test("4.1.3: si el cambio pasó por una región live, se cuenta como anunciado", () => {
+  const f = analyzeStatusMessages([ev({ liveCambio: true, regiones: 1 })]);
+  assert.equal(f[0].verdict, "cumple-parcial");
+  assert.equal(esConforme(f[0].verdict), false);
+  assert.match(f[0].evid[0], /ninguno queda sin anunciar/);
+  assert.match(f[0].evid[1], /lector de pantalla/);
+});
+
+test("4.1.3: si el foco se movió hasta el texto nuevo, tampoco es un mensaje desatendido", () => {
+  const f = analyzeStatusMessages([ev({ focoDentro: true })]);
+  assert.equal(f[0].verdict, "cumple-parcial");
+});
+
+test("4.1.3: no haber tenido nada que pulsar se DICE, con el censo de regiones live", () => {
+  /* Es la tercera vez que aparece el mismo defecto —antes en 2.2.2, y dejando 1.2.1 y
+   * 1.2.3 en blanco—, y aquí se vio medido: la página de vídeos del sitio real no
+   * tiene NI UN `[aria-expanded]`, así que la fase no pulsó nada, no hubo candidatos,
+   * y 4.1.3 salió en blanco. Blanco no es «comprobado». */
+  const f = analyzeStatusMessages([], { expandibles: 0, regiones: 0 });
+  assert.equal(f.length, 1);
+  assert.equal(f[0].verdict, "revisar");
+  assert.match(f[0].evid[0], /no encontró controles expandibles que pulsar/);
+  assert.match(f[0].evid[1], /NO declara ninguna región de estado/);
+
+  const conRegion = analyzeStatusMessages([], { expandibles: 0, regiones: 2 });
+  assert.match(conRegion[0].evid[1], /declara 2 región\(es\) de estado/);
+});
+
+test("4.1.3: haber pulsado y no encontrar nada es cumple-parcial, no silencio", () => {
+  const f = analyzeStatusMessages([], { expandibles: 3, regiones: 1 });
+  assert.equal(f[0].verdict, "cumple-parcial");
+  assert.equal(esConforme(f[0].verdict), false);
+  assert.match(f[0].evid[0], /Se pulsaron 3 control/);
+  assert.match(f[0].evid[1], /al filtrar, buscar, enviar un formulario o navegar/);
+});
+
+test("4.1.3: sin censo —la fase no corrió— no se dice nada", () => {
+  // Aquí el silencio sí es correcto: ni se pulsó ni se contó, así que no hay nada
+  // que afirmar sobre el criterio.
+  assert.deepEqual(analyzeStatusMessages([]), []);
+  assert.deepEqual(analyzeStatusMessages(null), []);
+  assert.deepEqual(analyzeStatusMessages([], { expandibles: null, regiones: null }), []);
 });

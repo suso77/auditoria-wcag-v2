@@ -2,3 +2,9 @@ node_modules/
 *.log
 .DS_Store
 coverage/
+
+# Salidas de auditoría: regenerables y con datos de cliente
+agente-a11y-motor/visitspain*
+agente-a11y-motor/*-barreras.csv
+agente-a11y-motor/*-seguimiento.csv
+agente-a11y-motor/*-cuaderno.txt

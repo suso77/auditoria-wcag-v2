@@ -1505,6 +1505,28 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     // Fondo contra el que se dibuja el indicador: el del PADRE, porque el contorno
     // se pinta justo fuera de la caja del elemento.
     const detras = bgBehind(el.parentElement || el, win);
+    /* ¿SABEMOS de qué color es ese fondo? Porque si no, no se puede decir que el
+     * indicador no se distinga de él.
+     *
+     * `bgBehind` sube por los antepasados buscando un color opaco y, si no encuentra
+     * ninguno, **supone blanco**. En una cabecera cuyo oscuro viene de una imagen de
+     * fondo —un sitio de turismo, vamos— un contorno de foco blanco se comparaba
+     * contra ese blanco supuesto y salía «el indicador NO se ve». Medido contra un
+     * sitio real: 82 filas de 2.4.7, las 82 con el fondo `rgb(255,255,255)`, las 82
+     * falsas, y la barrera de verdad del sitio —campos de búsqueda con
+     * `outline:none`— perdida entre ellas.
+     *
+     * Es el mismo error que arreglé en `contrastOf` con `fondoRealCoincide` y que no
+     * traje aquí. Así que la comparación por color solo se hace cuando el fondo es
+     * FIABLE: lo puso un antepasado de verdad (`origen`), sin imagen por medio, sin
+     * notación que no sepamos leer y sin que algo se pinte encima.
+     *
+     * Y cuando no es fiable, el criterio manda: 2.4.7 pide que HAYA un indicador
+     * visible, no un contraste mínimo —eso es 2.4.11 y 2.4.13—. Un contorno con
+     * grosor y con alfa es un indicador; que además se distinga del fondo, si no se
+     * puede medir, no se afirma ni en un sentido ni en el otro. */
+    const fondoFiable = !!(detras && detras.origen && !detras.image && !detras.desconocido &&
+      !(detras.real && detras.real.ok === false));
     const nulos = [];
 
     // 1) Contorno.
@@ -1512,22 +1534,24 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     const hayContorno = foc.outlineStyle !== "none" && foc.outlineStyle !== "hidden" && foc.outlineWidth > 0;
     if (hayContorno) {
       if (!oc || oc.a === 0) nulos.push("el contorno es transparente (" + foc.outlineColor + ")");
-      else if (mismoColor(oc, detras)) nulos.push("el contorno es del mismo color que el fondo de detrás (" + foc.outlineColor + ")");
-      else return { visible: true, via: "contorno", motivo: "contorno de " + foc.outlineWidth + "px en " + foc.outlineColor };
+      else if (fondoFiable && mismoColor(oc, detras)) nulos.push("el contorno es del mismo color que el fondo de detrás (" + foc.outlineColor + ")");
+      else return { visible: true, via: "contorno",
+        motivo: "contorno de " + foc.outlineWidth + "px en " + foc.outlineColor +
+          (fondoFiable ? "" : " (no se ha podido medir contra qué fondo se dibuja: comprueba a ojo que contrasta)") };
     } else if (base && (base.outlineStyle !== foc.outlineStyle || base.outlineWidth !== foc.outlineWidth)) {
       nulos.push("el contorno cambia pero queda sin grosor o con estilo «" + foc.outlineStyle + "»");
     }
 
     // 2) Sombra.
     if (foc.boxShadow && foc.boxShadow !== "none" && (!base || foc.boxShadow !== base.boxShadow)) {
-      const conAlfa = coloresDe(foc.boxShadow).filter(function (c) { return c.a > 0 && !mismoColor(c, detras); });
+      const conAlfa = coloresDe(foc.boxShadow).filter(function (c) { return c.a > 0 && !(fondoFiable && mismoColor(c, detras)); });
       if (conAlfa.length) return { visible: true, via: "sombra", motivo: "box-shadow visible (" + String(foc.boxShadow).slice(0, 60) + ")" };
       nulos.push("la sombra no se ve: " + String(foc.boxShadow).slice(0, 60));
     }
 
     // 3) Borde.
     if (base && foc.borderColor !== base.borderColor && foc.borderWidth > 0) {
-      const bc = coloresDe(foc.borderColor).filter(function (c) { return c.a > 0 && !mismoColor(c, detras); });
+      const bc = coloresDe(foc.borderColor).filter(function (c) { return c.a > 0 && !(fondoFiable && mismoColor(c, detras)); });
       if (bc.length) return { visible: true, via: "borde", motivo: "el borde cambia a " + foc.borderColor.split("/")[0] };
       nulos.push("el borde cambia a un color que no se distingue del fondo (" + foc.borderColor.split("/")[0] + ")");
     }
@@ -1821,7 +1845,38 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       if (cs.pointerEvents === "none") continue;   // decorativo: no tapa de verdad
       const r = el.getBoundingClientRect();
       if (r.width < 8 || r.height < 8) continue;
-      out.push({ el: el, rect: r, z: parseInt(cs.zIndex, 10) || 0, loc: locatorM(el) });
+      /* Cuánto OCULTA de verdad, que no es lo mismo que estar encima.
+       *
+       * 2.4.11 pide que el elemento con el foco no quede «entirely hidden». Un velo de
+       * consentimiento con `background: rgba(0,0,0,.45)` se pinta encima de toda la
+       * página y NO la oculta: la atenúa, y el foco se sigue viendo a través. Sin esta
+       * cuenta, un aviso de cookies translúcido a pantalla completa acusaría a todos los
+       * controles del sitio.
+       *
+       * Aquí había escrito que esto era lo que explicaba las 165 filas medidas en un
+       * sitio real. No lo era, y conviene que quede dicho: aquel `div#cookieConsent` era
+       * `rgba(255,255,255,.95)` —opaco de hecho— y cubría el 21 % de la ventana, no la
+       * pantalla entera. Sus barreras eran CIERTAS; lo que estaba mal era contarlas una
+       * por control en vez de una por causa, y eso se arregla al emitir el hallazgo, no
+       * aquí. Esta cuenta sigue haciendo falta, pero para el velo translúcido de verdad.
+       *
+       * La opacidad efectiva es la del color de fondo por la del elemento (y la de sus
+       * antepasados). Una imagen de fondo o un `backdrop-filter` cuentan como opacos:
+       * ahí no se puede saber qué tapan y lo prudente es suponer que tapan. */
+      const col = coloresDe(cs.backgroundColor)[0];
+      const tieneImagen = cs.backgroundImage && cs.backgroundImage !== "none";
+      const filtro = (cs.backdropFilter && cs.backdropFilter !== "none") || (cs.webkitBackdropFilter && cs.webkitBackdropFilter !== "none");
+      const alfaFondo = tieneImagen || filtro ? 1 : (col ? col.a : 0);
+      const opacidad = opacidadAcumulada(el, win);
+      /* Un VELO es un flotante que cubre (casi) toda la pantalla: un aviso de
+       * consentimiento, un modal, una cortina de carga. No es un elemento más que
+       * tape a otro — es un ESTADO de la página, y hay que decirlo una vez y en voz
+       * alta, no repetirlo por cada control que queda debajo. */
+      const vw = win.innerWidth || 1, vh = win.innerHeight || 1;
+      const cubre = (Math.min(r.right, vw) - Math.max(r.left, 0)) * (Math.min(r.bottom, vh) - Math.max(r.top, 0));
+      out.push({ el: el, rect: r, z: parseInt(cs.zIndex, 10) || 0, loc: locatorM(el),
+        opaco: alfaFondo * opacidad, position: cs.position,
+        velo: cubre > vw * vh * 0.8 });
     }
     return out;
   }
@@ -1971,6 +2026,24 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     let porCss = 0, sinRegla = 0, hojasBloqueadas = 0;
     // Lo que flota por encima, una sola vez: se consulta por cada control enfocado.
     const flotantes = elementosFlotantes(doc, win);
+    /* 2.4.11 se acumula por CAUSA y se dice al final, no una vez por control.
+     *
+     * Una barra fija al pie oculta el control enfocado de TODOS los controles que
+     * quedan por debajo del pliegue, porque el navegador los desplaza hasta el borde
+     * inferior de la ventana —ahí es donde los deja— y ahí está la barra. Medido en un
+     * sitio real: 165 filas de 2.4.11, 8 páginas, todas de un mismo `div#cookieConsent`
+     * de 150 px opaco al 95 %. La barrera es REAL, no es un falso positivo; lo falso
+     * era el recuento, y 165 filas de una sola causa entierran los otros catorce
+     * criterios que fallan en el mismo informe. Así que se cuenta la causa una vez,
+     * con cuántos controles afecta y unos cuantos de ejemplo. */
+    const oscurecidos = [];
+    function anotaOscurecido(f, tipo, locControl, t) {
+      let r = null;
+      for (let i = 0; i < oscurecidos.length; i++) if (oscurecidos[i].f === f) { r = oscurecidos[i]; break; }
+      if (!r) { r = { f: f, tapa: [], parcial: [], atenua: [], fracMax: 0, opaco: f.opaco }; oscurecidos.push(r); }
+      r[tipo].push(locControl);
+      if (t > r.fracMax) r.fracMax = t;
+    }
     all.forEach(function (el) {
       const loc = locatorM(el);
       // Se sella al final del bloque en vez de repetir `path:` en las quince
@@ -2030,9 +2103,42 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
              * devuelve el scroll a donde estaba, para no mover el suelo de las demás
              * comprobaciones. */
             const scrollX0 = win.scrollX, scrollY0 = win.scrollY;
-            try { if (el.scrollIntoView) el.scrollIntoView({ block: "nearest", inline: "nearest" }); } catch (e) {}
-            const rc = el.getBoundingClientRect();
-            if (rc.width > 0 && rc.height > 0) {
+            /* Y se mide en las DOS direcciones de tabulación, no solo bajando.
+             *
+             * La alineación «nearest» deja el control pegado al borde por el que entra:
+             * tabulando hacia abajo, al borde INFERIOR —donde está la barra de cookies—;
+             * con Mayús+Tab hacia arriba, al borde SUPERIOR, que es donde está la
+             * cabecera pegajosa, el ejemplo de manual de 2.4.11. Midiendo solo hacia
+             * abajo, una cabecera `sticky` que oculta el foco al subir se escapaba
+             * entera: comprobado con una cabecera de 120 px, un único control acusado
+             * (el que ya nacía debajo de ella) de los veinticuatro que oculta al subir.
+             * 2.4.11 no habla de la dirección: habla de recibir el foco.
+             *
+             * El control se saca de la ventana por el lado del que vendría el foco y se
+             * deja que el navegador lo traiga. Así se aplica el `scroll-padding` del
+             * sitio, que es quien de verdad decide dónde queda: una página que reserva
+             * el hueco no sale acusada, y eso no se puede simular a mano. */
+            const r0 = el.getBoundingClientRect();
+            const absTop = r0.top + win.scrollY, altoEl = r0.height;
+            /* Lo peor de las dos pasadas, por flotante: el mismo control tapado en las
+             * dos direcciones es UN hallazgo, no dos. */
+            const porFlotante = [];
+            const apunta = function (f, t, atenua) {
+              for (let i = 0; i < porFlotante.length; i++) {
+                if (porFlotante[i].f === f) {
+                  if (t > porFlotante[i].t) { porFlotante[i].t = t; porFlotante[i].atenua = atenua; }
+                  return;
+                }
+              }
+              porFlotante.push({ f: f, t: t, atenua: atenua });
+            };
+            [true, false].forEach(function (haciaAbajo) {
+              try {
+                win.scrollTo(0, haciaAbajo ? Math.max(0, absTop - (win.innerHeight || 0) - 1) : absTop + altoEl + 1);
+              } catch (e) {}
+              try { if (el.scrollIntoView) el.scrollIntoView({ block: "nearest", inline: "nearest" }); } catch (e) {}
+              const rc = el.getBoundingClientRect();
+              if (!(rc.width > 0 && rc.height > 0)) return;
               /* Primero se descarta lo que NO se pinta encima, y después se elige el peor.
                *
                * Al revés no sirve: una marca de agua `fixed; inset:0; z-index:-1` tapa el
@@ -2042,7 +2148,6 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
                *
                * Quién se pinta encima lo dice `elementFromPoint` en un punto DENTRO de
                * la intersección, que es donde el tapado ocurriría. */
-              const tapan = [];
               flotantes.forEach(function (f) {
                 if (f.el === el || f.el.contains(el)) return;   // está DENTRO del flotante: no lo tapa
                 const fr = refrescar(f);
@@ -2056,10 +2161,16 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
                 // Solo cuenta si lo que se pinta ahí es el flotante (o algo suyo).
                 if (!arriba) return;
                 if (arriba !== f.el && !f.el.contains(arriba)) return;
-                tapan.push({ f: f, t: t });
+                /* Y tiene que OCULTAR, no solo atenuar. Un velo translúcido deja ver
+                 * el foco a través; acusarlo es inventar la barrera en toda la página. */
+                if (f.velo) return;   // cubre la pantalla entera: se dice una vez, abajo
+                apunta(f, t, !!(f.opaco != null && f.opaco < 0.9));
               });
+            });
+            {
               let peor = null, frac = 0;
-              tapan.forEach(function (x) { if (x.t > frac) { frac = x.t; peor = x.f; } });
+              porFlotante.forEach(function (x) { if (!x.atenua && x.t > frac) { frac = x.t; peor = x.f; } });
+              const atenuan = porFlotante.filter(function (x) { return x.atenua; });
               /* Y que de verdad se pinte ENCIMA, no solo que los rectángulos se cruzen.
                *
                * El comentario de `elementosFlotantes` decía que se comprobaba «que de
@@ -2072,12 +2183,16 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
                *
                * El orden de pintado real lo dice `elementFromPoint`, y es lo que hay
                * que creer, no la aritmética de rectángulos. */
-              if (peor && frac >= 0.999) {
-                res.push({ crit: "2.4.11", label: "Foco no oscurecido", node: loc, path: ruta, verdict: "falla",
-                  detail: "al recibir el foco queda COMPLETAMENTE tapado por «" + peor.loc + "» (" + win.getComputedStyle(peor.el).position + "): tabulando hasta aquí no se ve dónde está el foco" });
-              } else if (peor && frac > 0.02) {
-                res.push({ crit: "2.4.11", label: "Foco no oscurecido", node: loc, path: ruta, verdict: "revisar",
-                  detail: "al recibir el foco queda tapado un " + Math.round(frac * 100) + " % por «" + peor.loc + "» (" + win.getComputedStyle(peor.el).position + "). El mínimo de 2.4.11 solo exige que no se oculte por completo, pero compruébalo" });
+              /* Aquí solo se ANOTA quién tapa a quién; el hallazgo se emite al final
+               * del barrido, agrupado por el elemento que tapa. */
+              if (peor && frac >= 0.999) anotaOscurecido(peor, "tapa", loc, frac);
+              else if (peor && frac > 0.02) anotaOscurecido(peor, "parcial", loc, frac);
+              else if (atenuan.length) {
+                // Encima hay algo translúcido. No oculta —2.4.11 pide «entirely
+                // hidden»— pero baja el contraste de todo lo que está debajo, foco
+                // incluido, y eso se dice en vez de callarlo o de acusar al criterio.
+                const peorAt = atenuan.reduce(function (m, x) { return x.t > m.t ? x : m; }, atenuan[0]);
+                anotaOscurecido(peorAt.f, "atenua", loc, peorAt.t);
               }
             }
             // El suelo se devuelve donde estaba: las demás comprobaciones miden sobre
@@ -2255,6 +2370,90 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
      * —desde fuera no hay nada que mirar— y los marcos, que van en otro documento y los
      * audita `analyzeRendered` uno por uno. Un criterio que nadie ha comprobado no puede
      * parecerse a un criterio que cumple. */
+    /* 2.4.11: un hallazgo por CAUSA, con el recuento de controles afectados.
+     *
+     * Lo que se emitía era un hallazgo por control afectado, y eso convierte un
+     * descuido de CSS en una pared de filas: medido en un sitio real, 165 filas en 8
+     * páginas, todas del mismo `div#cookieConsent`. Reproducido en local con una barra
+     * equivalente (fija al pie, 150 px, `rgba(255,255,255,.95)`): 17 de 24 enlaces
+     * acusados, uno a uno. Las barreras eran ciertas —la barra tapa de verdad el
+     * control enfocado, porque `scrollIntoView` con alineación «nearest», que es lo que
+     * hace el navegador al tabular, deja el control pegado al borde inferior, justo
+     * debajo de la barra— pero son UNA, no diecisiete: se arregla en un sitio, y
+     * contarlas por separado entierra los otros catorce criterios que fallan.
+     *
+     * Lo que sí hay que decir es cuántos controles quedan afectados, porque eso mide la
+     * gravedad, y unos cuantos por su nombre, para poder reproducirlo. */
+    oscurecidos.forEach(function (o) {
+      const f = o.f;
+      const rutaF = rutaM(f.el);
+      const rf = refrescar(f);
+      const alto = Math.round(rf.height);
+      /* ¿Por dónde reservar el hueco? Lo dice dónde está el flotante en la ventana:
+       * una barra al pie se despeja con `scroll-padding-bottom`, una cabecera pegajosa
+       * con `scroll-padding-top`. Si está a media altura no se adivina y no se dice. */
+      const vh = win.innerHeight || 0;
+      const borde = vh && rf.bottom >= vh - 2 ? "bottom" : (vh && rf.top <= 2 ? "top" : null);
+      /* ¿Está el hueco ya reservado? Si lo está, el consejo de reservarlo sobra y
+       * además suena a que no se ha mirado. Lo que queda entonces es que al final
+       * (o al principio) del documento no hay sitio donde seguir desplazando, y eso
+       * se arregla con relleno en el contenido, no con `scroll-padding`. */
+      let reservado = 0;
+      if (borde) {
+        try {
+          const sc = doc.scrollingElement || doc.documentElement;
+          reservado = parseFloat(win.getComputedStyle(sc)["scrollPadding" + (borde === "top" ? "Top" : "Bottom")]) || 0;
+        } catch (e) { reservado = 0; }
+      }
+      const unaCausa = o.tapa.length + o.parcial.length > 1
+        ? " Es UNA causa, no " + (o.tapa.length + o.parcial.length) + " barreras distintas: el navegador deja el control enfocado justo donde se pinta «" + f.loc + "»."
+        : " El navegador deja el control enfocado justo donde se pinta «" + f.loc + "».";
+      const arreglo = unaCausa + (reservado >= alto
+        ? " El hueco ya está reservado (`scroll-padding-" + borde + ": " + Math.round(reservado) + "px`), así que lo que queda es que por ese lado del documento no hay sitio donde seguir desplazando: añade relleno al contenido (`padding-" + borde + "` en el `body`) para que el " + (borde === "bottom" ? "último" : "primer") + " control pueda apartarse del elemento fijo."
+        : " Se arregla reservando el hueco —" +
+          (borde ? "`scroll-padding-" + borde + "` mayor que los " + alto + " px de alto del elemento, en el contenedor de desplazamiento (normalmente `html`)"
+                 : "`scroll-padding` en el contenedor de desplazamiento") +
+          "— o haciendo que el elemento fijo no solape al control que recibe el foco.");
+      const ejemplos = function (lista) {
+        return lista.slice(0, 5).join(", ") + (lista.length > 5 ? " y " + (lista.length - 5) + " más" : "");
+      };
+      if (o.tapa.length) {
+        res.push({ crit: "2.4.11", label: "Foco no oscurecido", node: f.loc, path: rutaF, verdict: "falla",
+          detail: "«" + f.loc + "» (" + f.position + ") tapa POR COMPLETO al control que recibe el foco: " +
+            o.tapa.length + " control(es) enfocable(s) de esta página quedan completamente ocultos al tabular hasta ellos (" +
+            ejemplos(o.tapa) + ")" +
+            (o.parcial.length ? ", y otros " + o.parcial.length + " quedan tapados en parte" : "") +
+            ". Tabulando hasta cualquiera de ellos no se ve dónde está el foco." + arreglo });
+      } else if (o.parcial.length) {
+        res.push({ crit: "2.4.11", label: "Foco no oscurecido", node: f.loc, path: rutaF, verdict: "revisar",
+          detail: "«" + f.loc + "» (" + f.position + ") tapa hasta un " + Math.round(o.fracMax * 100) + " % del control que recibe el foco en " +
+            o.parcial.length + " control(es) (" + ejemplos(o.parcial) + "). El mínimo de 2.4.11 solo exige que el control no quede oculto DEL TODO, así que esto no es todavía una barrera de este criterio, pero compruébalo: si lo que queda tapado es el propio indicador de foco, sí lo es." + arreglo });
+      } else if (o.atenua.length) {
+        res.push({ crit: "2.4.11", label: "Foco no oscurecido", node: f.loc, path: rutaF, verdict: "revisar",
+          detail: "«" + f.loc + "» (" + f.position + ", opacidad efectiva " + (o.opaco != null ? o.opaco.toFixed(2) : "?") +
+            ") se pinta sobre " + o.atenua.length + " control(es) enfocable(s) (" + ejemplos(o.atenua) +
+            ") y los atenúa sin ocultarlos: 2.4.11 exige que no queden ocultos del todo, así que no es una barrera de este criterio, pero comprueba que el indicador de foco siga distinguiéndose a través de él." });
+      }
+    });
+    /* Si la página se ha medido detrás de un VELO, eso va primero que cualquier
+     * criterio.
+     *
+     * Un aviso de cookies a pantalla completa, un modal abierto o una cortina de carga
+     * cambian lo que hay en pantalla, y todo lo medido se ha medido en ese estado, y eso
+     * hay que decirlo aunque ningún criterio concreto se queje: un contraste medido
+     * detrás de un velo opaco no es el contraste de la página. */
+    const velos = flotantes.filter(function (f) { return f.velo; });
+    if (velos.length) {
+      const v = velos.reduce(function (m, x) { return x.opaco > m.opaco ? x : m; }, velos[0]);
+      res.push({ crit: "__meta", label: "Medido detrás de un velo", node: v.loc, verdict: "revisar",
+        detail: "«" + v.loc + "» (" + v.position + ", opacidad efectiva " + (v.opaco != null ? v.opaco.toFixed(2) : "?") +
+          ") cubre la pantalla entera, así que TODO lo de esta página se ha medido con él puesto. " +
+          (v.opaco >= 0.9
+            ? "Y es opaco: lo que hay debajo no se ve, con lo que la medición de contraste, tamaño y foco de la página no vale."
+            : "Es translúcido, así que la página se ve a través y la medición sirve, pero el contraste real de todo lo de debajo es PEOR que el medido.") +
+          " Lo normal es que sea un aviso de consentimiento o un modal: acéptalo o ciérralo y vuelve a medir. Hasta entonces, esta página no está auditada en el estado en que la usa la gente." });
+    }
+
     const cerrados = shadowCerrados(doc);
     const marcos = todosM(doc, "iframe,frame").filter(function (f) { return renderedM(f, win); });
     if (cerrados.length) {
@@ -2462,1736 +2661,6 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   NS.pinta = pinta;
 })(A11Y);
 
-/* ── page-audit.js ── */
-(function (NS) {
-  const { WCAG22, enClause } = NS;
-  /**
-   * Auditoría de ÁMBITO DE PÁGINA.
-   *
-   * El motor de componente dictamina rol/nombre/estado/criterios por elemento.
-   * Hay criterios WCAG que solo tienen sentido a nivel de página completa —título,
-   * idioma, landmarks, saltar bloques, jerarquía de encabezados, ids duplicados—.
-   * Este módulo los evalúa sobre el documento renderizado (post-JS).
-   *
-   * `auditPageDoc(doc)` recibe un documento ya parseado; `auditPageHtml(html, DP)`
-   * lo parsea con el DOMParser dado (linkedom en Node, nativo en navegador).
-   */
-
-  const IX = {};
-  WCAG22.forEach(function (c) { IX[c.n] = { t: c.t, lvl: c.lvl }; });
-
-  function crit(n) { return { n: n, t: (IX[n] ? IX[n].t : n), lvl: (IX[n] ? IX[n].lvl : "A") }; }
-  function F(n, verdict, sev, evid, nodes) {
-    const f = { c: crit(n), verdict: verdict, sev: sev, evid: evid, scope: "página", en: enClause(n) };
-    if (nodes && nodes.length) f.nodes = nodes;
-    return f;
-  }
-
-  const HEADING_SEL = "h1,h2,h3,h4,h5,h6,[role=heading]";
-  const tag = function (el) { return el && el.tagName ? el.tagName.toLowerCase() : ""; };
-
-  /**
-   * ¿Está el elemento oculto para todo el mundo?
-   *
-   * Sin CSS aplicado no podemos saberlo todo, pero sí lo declarado: `hidden`,
-   * `aria-hidden="true"`, `display:none`/`visibility:hidden` en línea, `inert`, o
-   * un ancestro en esa situación. Un encabezado o un landmark oculto no cuenta:
-   * antes inflaban el número de landmarks y el salto de jerarquía.
-   */
-  function ocultoEl(el) {
-    let p = el;
-    while (p && p.nodeType === 1) {
-      if (p.hasAttribute("hidden") || p.hasAttribute("inert")) return true;
-      if (p.getAttribute("aria-hidden") === "true") return true;
-      const st = (p.getAttribute("style") || "").replace(/\s+/g, "").toLowerCase();
-      if (/display:none|visibility:hidden/.test(st)) return true;
-      if (tag(p) === "template") return true;
-      p = p.parentElement;
-    }
-    return false;
-  }
-  function visibles(list) { return Array.prototype.slice.call(list).filter(function (el) { return !ocultoEl(el); }); }
-  function loc(el) {
-    const t = tag(el);
-    if (el.id) return t + "#" + el.id;
-    const c = (el.getAttribute("class") || "").trim().split(/\s+/).filter(Boolean)[0];
-    return c ? t + "." + c : t;
-  }
-
-  /**
-   * El <title> del documento: el que está en <head>.
-   *
-   * `doc.querySelector("title")` devolvía también el <title> de un <svg> o de un
-   * <math> —que son texto alternativo del gráfico, no el título de la página—, así
-   * que una página SIN título salía «cumple». Y si había varios <title> en head y el
-   * primero estaba vacío, salía «falla» aunque el siguiente tuviera texto.
-   */
-  function tituloDocumento(doc) {
-    const todos = Array.prototype.slice.call(doc.querySelectorAll("title")).filter(function (t) {
-      let p = t.parentElement;
-      while (p) { const n = tag(p); if (n === "svg" || n === "math") return false; p = p.parentElement; }
-      return true;
-    });
-    const enHead = todos.filter(function (t) { return tag(t.parentElement) === "head"; });
-    const cand = enHead.length ? enHead : todos;
-    let texto = "";
-    for (const t of cand) { const s = (t.textContent || "").trim(); if (s) { texto = s; break; } }
-    return { texto: texto, n: cand.length };
-  }
-
-  // Conjunto (sin duplicados) de elementos que actúan como un landmark dado.
-  function landmarks(doc, role, tags) {
-    const set = new Set();
-    visibles(doc.querySelectorAll("[role=" + role + "]")).forEach(function (el) { set.add(el); });
-    (tags || []).forEach(function (t) {
-      visibles(doc.querySelectorAll(t)).forEach(function (el) {
-        // header/footer solo son banner/contentinfo si NO están dentro de contenido de sección.
-        if ((t === "header" || t === "footer") && enSeccion(el)) return;
-        // Un role explícito distinto gana sobre el rol implícito.
-        const r = (el.getAttribute("role") || "").split(/\s+/)[0];
-        if (r && r !== role) return;
-        set.add(el);
-      });
-    });
-    return Array.from(set); // ojo: slice.call sobre un Set devuelve [] (no tiene length)
-  }
-  function enSeccion(el) {
-    let p = el.parentElement;
-    while (p) { if (["article", "aside", "main", "nav", "section"].indexOf(tag(p)) !== -1) return true; p = p.parentElement; }
-    return false;
-  }
-
-  // Atributos que apuntan a un id. Faltaban la mitad: un id duplicado usado por
-  // aria-errormessage o aria-activedescendant pasaba desapercibido.
-  const IDREF_ATTRS = ["aria-labelledby", "aria-describedby", "aria-controls", "aria-owns",
-    "aria-flowto", "aria-details", "aria-errormessage", "aria-activedescendant", "headers", "list", "popovertarget"];
-
-  /* ── 1.2.x Medios: el inventario SÍ es automatizable ─────────────────────── */
-
-  /**
-   * Qué medios hay y qué pistas declaran.
-   *
-   * Los cinco criterios de 1.2 estaban enteros en el cajón de «evaluación
-   * humana», y la mitad del trabajo no lo es: que un `<video>` no declare NINGUNA
-   * pista de subtítulos es una ausencia determinable desde el marcado, igual que
-   * lo es que una imagen no tenga `alt`. Lo que exige juicio es la CALIDAD —si los
-   * subtítulos están sincronizados, si la audiodescripción cubre lo que hace
-   * falta—, y eso el veredicto lo dice en vez de fingir que lo ha mirado.
-   *
-   * Los medios incrustados de terceros (YouTube, Vimeo) se inventarían aparte: su
-   * contenido no se ve desde aquí, así que se listan para que una persona los
-   * abra, no se dictaminan.
-   */
-  const EMBEBIDOS = /(youtube\.com|youtu\.be|vimeo\.com|dailymotion|wistia|brightcove|jwplayer|spotify\.com|ivoox|soundcloud)/i;
-  function inventarioMedios(doc) {
-    const propios = [], externos = [];
-    Array.prototype.forEach.call(doc.querySelectorAll("video,audio"), function (el) {
-      if (ocultoEl(el)) return;
-      const tag = el.tagName.toLowerCase();
-      const pistas = Array.prototype.slice.call(el.querySelectorAll("track")).map(function (t) {
-        return (t.getAttribute("kind") || "subtitles").toLowerCase();
-      });
-      propios.push({
-        tag: tag, locator: loc(el),
-        subtitulos: pistas.indexOf("captions") !== -1 || pistas.indexOf("subtitles") !== -1,
-        descripciones: pistas.indexOf("descriptions") !== -1,
-        pistas: pistas,
-        autoplay: el.hasAttribute("autoplay"),
-        controles: el.hasAttribute("controls"),
-        silenciado: el.hasAttribute("muted")
-      });
-    });
-    Array.prototype.forEach.call(doc.querySelectorAll("iframe[src],embed[src],object[data]"), function (el) {
-      const src = el.getAttribute("src") || el.getAttribute("data") || "";
-      if (!EMBEBIDOS.test(src)) return;
-      if (ocultoEl(el)) return;
-      externos.push({ locator: loc(el), src: src.slice(0, 120), nombre: (el.getAttribute("title") || "").slice(0, 60) });
-    });
-    return { propios: propios, externos: externos };
-  }
-
-  /**
-   * 3.1.2 Idioma de las partes: un bloque en otro idioma sin `lang`.
-   *
-   * Detección por palabras funcionales, que son las que de verdad separan idiomas
-   * en textos cortos. No pretende ser un detector de idioma: pretende no callarse
-   * cuando un bloque largo está claramente en otro idioma que el declarado. Por
-   * eso el veredicto es `revisar` y no `falla`.
-   */
-  const FUNCIONALES = {
-    es: ["el", "la", "los", "las", "de", "que", "y", "en", "un", "una", "por", "con", "para", "del", "se", "no", "es", "al", "lo", "su"],
-    en: ["the", "of", "and", "to", "in", "a", "is", "that", "for", "it", "with", "as", "was", "on", "are", "this", "be", "by", "an", "from"],
-    fr: ["le", "la", "les", "des", "et", "est", "un", "une", "pour", "dans", "que", "qui", "par", "sur", "avec", "au", "du", "ne", "pas", "ce"],
-    pt: ["o", "os", "as", "de", "que", "e", "em", "um", "uma", "para", "com", "não", "por", "do", "da", "dos", "das", "no", "na", "se"],
-    gl: ["o", "os", "as", "do", "da", "dos", "das", "e", "en", "un", "unha", "para", "con", "non", "que", "por", "ao", "nos", "se", "é"]
-  };
-  function idiomaProbable(texto) {
-    const palabras = String(texto || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-      .split(/[^a-z]+/).filter(Boolean);
-    if (palabras.length < 25) return null;   // muy corto: no se puede afirmar nada
-    const punt = {};
-    Object.keys(FUNCIONALES).forEach(function (k) {
-      punt[k] = palabras.filter(function (w) { return FUNCIONALES[k].indexOf(w) !== -1; }).length / palabras.length;
-    });
-    const orden = Object.keys(punt).sort(function (a, b) { return punt[b] - punt[a]; });
-    // Exigir margen: sin diferencia clara entre el primero y el segundo, no se dice.
-    if (punt[orden[0]] < 0.08 || punt[orden[0]] < punt[orden[1]] * 1.6) return null;
-    return orden[0];
-  }
-
-  /* ── Lo que se puede ver en el marcado de los criterios «de interacción» ── */
-
-  /**
-   * 2.2.1 Tiempo ajustable: el temporizador que NADIE puede ajustar.
-   *
-   * `<meta http-equiv="refresh">` es el fallo determinable del criterio: recarga o
-   * redirige sola, sin aviso y sin forma de pararla. WCAG solo la admite con un
-   * retardo mayor de 20 horas (que en la práctica es «desactivada»).
-   */
-  function metaRefresh(doc) {
-    const out = [];
-    Array.prototype.forEach.call(doc.querySelectorAll('meta[http-equiv]'), function (m) {
-      if (String(m.getAttribute("http-equiv") || "").toLowerCase() !== "refresh") return;
-      const c = String(m.getAttribute("content") || "");
-      const seg = parseFloat(c);
-      out.push({ segundos: isNaN(seg) ? null : seg, contenido: c.slice(0, 80), redirige: /url\s*=/i.test(c) });
-    });
-    return out;
-  }
-
-  /**
-   * 2.1.4 Atajos de teclado de un carácter.
-   *
-   * Solo ve los manejadores EN LÍNEA: un `addEventListener` no está en el marcado.
-   * Por eso lo que sale es `revisar` con los candidatos, no un veredicto.
-   */
-  const TECLA_SUELTA = /\b(?:e|ev|evt|event)\.(?:key|which|keyCode|charCode)\s*(?:===?|==)\s*["']?[A-Za-z0-9]["']?/;
-  const CON_MODIFICADOR = /\b(?:e|ev|evt|event)\.(?:ctrlKey|metaKey|altKey|shiftKey)/;
-  function atajosDeUnaTecla(doc) {
-    const out = [];
-    const ATTR = ["onkeydown", "onkeyup", "onkeypress"];
-    Array.prototype.forEach.call(doc.querySelectorAll("[onkeydown],[onkeyup],[onkeypress]"), function (el) {
-      ATTR.forEach(function (a) {
-        const code = el.getAttribute(a);
-        if (!code) return;
-        if (TECLA_SUELTA.test(code) && !CON_MODIFICADOR.test(code)) {
-          out.push({ locator: loc(el), attr: a, code: code.replace(/\s+/g, " ").slice(0, 70) });
-        }
-      });
-    });
-    // Y los scripts en línea, que es donde suele estar de verdad.
-    Array.prototype.forEach.call(doc.querySelectorAll("script:not([src])"), function (sc) {
-      const code = String(sc.textContent || "");
-      if (/addEventListener\s*\(\s*["']key(down|press|up)["']/.test(code) && TECLA_SUELTA.test(code) && !CON_MODIFICADOR.test(code)) {
-        out.push({ locator: "script (en línea)", attr: "addEventListener", code: (TECLA_SUELTA.exec(code) || [""])[0].slice(0, 70) });
-      }
-    });
-    return out;
-  }
-
-  /**
-   * 2.5.1 / 2.5.2 / 2.5.4 / 2.5.7: candidatos de puntero, gesto y movimiento.
-   *
-   * Aquí no se dictamina nada: se localiza DÓNDE hay que mirar. Un `touchstart`,
-   * un `pointerdown`, un `devicemotion` o un `draggable` no son una barrera por sí
-   * mismos, pero son los únicos sitios donde estos cuatro criterios pueden fallar,
-   * y encontrarlos a mano en un sitio grande es lo que cuesta.
-   */
-  const SONDAS_PUNTERO = [
-    { crit: "2.5.1", etiqueta: "gestos de varios puntos o trazado", re: /\b(touchmove|gesturestart|gesturechange|pinch|swipe|hammer|interact\.js)\b/i },
-    { crit: "2.5.2", etiqueta: "acciones en la pulsación (down) en vez de en la soltada (up)", re: /\b(onmousedown|onpointerdown|ontouchstart)\b/i },
-    { crit: "2.5.4", etiqueta: "actuación por movimiento del dispositivo", re: /\b(devicemotion|deviceorientation|DeviceMotionEvent|DeviceOrientationEvent|shake)\b/i },
-    { crit: "2.5.7", etiqueta: "movimientos de arrastre", re: /\b(dragstart|ondragstart|draggable\s*=|sortable|dnd-|drag-and-drop)\b/i }
-  ];
-  function candidatosPuntero(doc) {
-    const porCrit = {};
-    const fuentes = [];
-    Array.prototype.forEach.call(doc.querySelectorAll("*"), function (el) {
-      const attrs = el.attributes || [];
-      for (let i = 0; i < attrs.length; i++) {
-        const n = attrs[i].name.toLowerCase();
-        if (n.indexOf("on") === 0 || n === "draggable") fuentes.push({ locator: loc(el), texto: n + "=" + String(attrs[i].value || "").slice(0, 40) });
-      }
-    });
-    Array.prototype.forEach.call(doc.querySelectorAll("script:not([src])"), function (sc) {
-      fuentes.push({ locator: "script (en línea)", texto: String(sc.textContent || "").slice(0, 4000) });
-    });
-    SONDAS_PUNTERO.forEach(function (sonda) {
-      const hits = fuentes.filter(function (f) { return sonda.re.test(f.texto); });
-      if (hits.length) porCrit[sonda.crit] = { etiqueta: sonda.etiqueta, hits: hits.slice(0, 6) };
-    });
-    return porCrit;
-  }
-
-  function auditPageDoc(doc) {
-    const out = [];
-    const html = doc.documentElement;
-
-    // 2.4.2 Titulada
-    const t = tituloDocumento(doc);
-    out.push(t.texto
-      ? F("2.4.2", "cumple-parcial", null, ["La página declara <title>: «" + t.texto.slice(0, 80) + "». Que sea descriptivo y único en el sitio exige juicio humano."])
-      : F("2.4.2", "falla", "grave", ["La página no tiene <title> en <head> o está vacío: se anuncia por su URL."]));
-
-    // 3.1.1 Idioma de la página. BCP-47 NO distingue mayúsculas: lang="ES" y
-    // lang="es-ES" son válidos, y antes se marcaban a revisar.
-    const lang = html ? (html.getAttribute("lang") || "").trim() : "";
-    const xmlLang = html ? (html.getAttribute("xml:lang") || "").trim() : "";
-    const efectivo = lang || xmlLang;
-    if (!efectivo) out.push(F("3.1.1", "falla", "grave", ["<html> no declara el atributo lang: el lector no sabe en qué idioma leer."]));
-    else if (!/^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i.test(efectivo)) out.push(F("3.1.1", "falla", "grave", ["<html lang=\"" + efectivo + "\"> no es una etiqueta de idioma BCP-47 válida."]));
-    else if (lang && xmlLang && lang.toLowerCase() !== xmlLang.toLowerCase()) out.push(F("3.1.1", "revisar", null, ["lang=\"" + lang + "\" y xml:lang=\"" + xmlLang + "\" no coinciden."]));
-    else out.push(F("3.1.1", "cumple", null, ["Idioma declarado: lang=\"" + efectivo + "\"."]));
-
-    // 1.3.1 Landmarks: exactamente un main; banner/contentinfo no duplicados
-    const mains = landmarks(doc, "main", ["main"]);
-    if (mains.length === 0) out.push(F("1.3.1", "revisar", null, ["No hay landmark <main>: dificulta ir directo al contenido principal."]));
-    else if (mains.length > 1) out.push(F("1.3.1", "falla", "moderada", ["Hay " + mains.length + " landmarks main: debe haber solo uno."], mains.map(function (e) { return { locator: loc(e) }; })));
-    const banners = landmarks(doc, "banner", ["header"]);
-    const infos = landmarks(doc, "contentinfo", ["footer"]);
-    if (banners.length > 1) out.push(F("1.3.1", "revisar", null, ["Hay " + banners.length + " landmarks banner: normalmente debe haber uno."], banners.map(function (e) { return { locator: loc(e) }; })));
-    if (infos.length > 1) out.push(F("1.3.1", "revisar", null, ["Hay " + infos.length + " landmarks contentinfo: normalmente debe haber uno."], infos.map(function (e) { return { locator: loc(e) }; })));
-
-    // 2.4.1 Saltar bloques. Un enlace de salto de verdad apunta a un destino que
-    // EXISTE y está al principio del documento; antes valía cualquier `a[href^='#']`
-    // de la página —incluido `href="#"` de un botón falso o un ancla del pie—.
-    const anclas = visibles(doc.querySelectorAll("a[href^='#']")).slice(0, 8);
-    const salto = anclas.find(function (a) {
-      const h = (a.getAttribute("href") || "").slice(1);
-      if (!h) return false;
-      let destino = null;
-      try { destino = doc.getElementById(h) || doc.querySelector('a[name="' + h.replace(/"/g, '\\"') + '"]'); } catch (e) {}
-      return !!destino;
-    });
-    const hayLandmarks = mains.length > 0 || visibles(doc.querySelectorAll("nav,[role=navigation]")).length > 0;
-    const headings = visibles(doc.querySelectorAll(HEADING_SEL)).map(function (h) {
-      const n = tag(h);
-      const lvl = /^h[1-6]$/.test(n) ? parseInt(n[1], 10) : parseInt(h.getAttribute("aria-level") || "2", 10);
-      return { lvl: lvl, text: (h.textContent || "").trim().slice(0, 40), el: h };
-    });
-    if (salto) out.push(F("2.4.1", "cumple-parcial", null, ["Hay un enlace de salto a un destino existente (" + salto.getAttribute("href") + "); confirma que sea visible al recibir el foco."], [{ locator: loc(salto) }]));
-    else if (hayLandmarks || headings.length) out.push(F("2.4.1", "revisar", null, ["Sin enlace de salto con destino válido; hay landmarks/encabezados como mecanismo alternativo (revisar que basten)."]));
-    else out.push(F("2.4.1", "falla", "moderada", ["No hay enlace de salto ni landmarks ni encabezados para saltar bloques repetidos."]));
-
-    // 2.4.6 / 1.3.1 Encabezados: existe h1 y sin saltos de nivel (solo los visibles)
-    if (!headings.length) {
-      out.push(F("1.3.1", "revisar", null, ["La página no tiene encabezados visibles: no hay estructura navegable por títulos."]));
-    } else {
-      const hasH1 = headings.some(function (h) { return h.lvl === 1; });
-      let skip = null, skipEl = null, prev = 0;
-      for (const h of headings) { if (prev && h.lvl > prev + 1) { skip = prev + "→" + h.lvl; skipEl = h.el; break; } prev = h.lvl; }
-      const vacios = headings.filter(function (h) { return !h.text; });
-      if (!hasH1) out.push(F("2.4.6", "revisar", null, ["No hay un encabezado de nivel 1 (h1) en la página."]));
-      if (skip) out.push(F("1.3.1", "revisar", null, ["Salto en la jerarquía de encabezados (" + skip + "): revisa que el orden de niveles sea correcto."], skipEl ? [{ locator: loc(skipEl) }] : null));
-      if (vacios.length) out.push(F("2.4.6", "falla", "moderada", [vacios.length + " encabezado(s) sin texto: anuncian un nivel vacío."], vacios.map(function (h) { return { locator: loc(h.el) }; })));
-      if (hasH1 && !skip && !vacios.length) out.push(F("2.4.6", "cumple-parcial", null, [headings.length + " encabezados con jerarquía sin saltos; la calidad del texto exige juicio."]));
-    }
-
-    // 1.3.1 / 4.1.2 IDs: duplicados usados en relaciones, y referencias colgantes
-    const idCount = {};
-    Array.prototype.forEach.call(doc.querySelectorAll("[id]"), function (el) {
-      const id = el.getAttribute("id"); if (id) idCount[id] = (idCount[id] || 0) + 1;
-    });
-    const referenced = {};
-    IDREF_ATTRS.forEach(function (attr) {
-      Array.prototype.forEach.call(doc.querySelectorAll("[" + attr + "]"), function (el) {
-        const multi = attr !== "aria-activedescendant" && attr !== "list" && attr !== "popovertarget";
-        const v = (el.getAttribute(attr) || "").trim();
-        (multi ? v.split(/\s+/) : [v]).forEach(function (id) { if (id) (referenced[id] = referenced[id] || []).push(el); });
-      });
-    });
-    Array.prototype.forEach.call(doc.querySelectorAll("label[for]"), function (el) {
-      const f = el.getAttribute("for"); if (f) (referenced[f] = referenced[f] || []).push(el);
-    });
-    const dupRef = Object.keys(idCount).filter(function (id) { return idCount[id] > 1 && referenced[id]; });
-    if (dupRef.length) out.push(F("1.3.1", "falla", "grave", ["IDs duplicados usados en relaciones ARIA/label: " + dupRef.slice(0, 8).join(", ") + " — la relación se vuelve ambigua."]));
-    const colgantes = Object.keys(referenced).filter(function (id) { return !idCount[id]; });
-    if (colgantes.length) {
-      out.push(F("4.1.2", "falla", "grave", ["Referencias a IDs que no existen: " + colgantes.slice(0, 8).join(", ") + " — el nombre, la descripción o la relación no llegan a la API de accesibilidad."],
-        colgantes.slice(0, 8).map(function (id) { return { locator: loc(referenced[id][0]), name: id }; })));
-    }
-
-    /* ── 1.2.x Medios ── */
-    const medios = inventarioMedios(doc);
-    if (medios.propios.length || medios.externos.length) {
-      const videos = medios.propios.filter(function (m) { return m.tag === "video"; });
-      const audios = medios.propios.filter(function (m) { return m.tag === "audio"; });
-      const sinSub = videos.filter(function (m) { return !m.subtitulos; });
-      const sinDesc = videos.filter(function (m) { return !m.descripciones; });
-
-      if (sinSub.length) {
-        out.push(F("1.2.2", "falla", "grave", [
-          sinSub.length + " vídeo(s) no declaran ninguna pista de subtítulos (<track kind=\"captions\">): " +
-          sinSub.slice(0, 5).map(function (m) { return m.locator; }).join(", ") +
-          ". La ausencia de pista sí es determinable; que los subtítulos existentes sean correctos, no."
-        ], sinSub.slice(0, 8).map(function (m) { return { locator: m.locator, name: "sin subtítulos" }; })));
-      } else if (videos.length) {
-        out.push(F("1.2.2", "cumple-parcial", null, [
-          "Los " + videos.length + " vídeo(s) declaran pista de subtítulos. Que estén completos, sincronizados y en el idioma correcto exige verlos."
-        ]));
-      }
-      if (sinDesc.length) {
-        out.push(F("1.2.3", "revisar", null, [
-          sinDesc.length + " vídeo(s) no declaran pista de audiodescripción (<track kind=\"descriptions\">) ni se detecta una alternativa: " +
-          sinDesc.slice(0, 5).map(function (m) { return m.locator; }).join(", ") +
-          ". 1.2.3 admite una alternativa textual equivalente, que puede estar en la página sin marcado propio: compruébalo."
-        ], sinDesc.slice(0, 8).map(function (m) { return { locator: m.locator, name: "sin audiodescripción" }; })));
-      }
-      if (audios.length) {
-        out.push(F("1.2.1", "revisar", null, [
-          audios.length + " elemento(s) de solo audio (" + audios.map(function (m) { return m.locator; }).join(", ") +
-          "): 1.2.1 exige una transcripción equivalente, que no se puede reconocer desde el marcado. Búscala en la página."
-        ], audios.slice(0, 8).map(function (m) { return { locator: m.locator, name: "solo audio" }; })));
-      }
-      if (medios.externos.length) {
-        out.push(F("1.2.2", "revisar", null, [
-          medios.externos.length + " medio(s) incrustados de terceros (" +
-          medios.externos.slice(0, 4).map(function (m) { return m.locator + " → " + m.src.replace(/^https?:\/\//, "").slice(0, 45); }).join(", ") +
-          "): su contenido no se ve desde aquí. Ábrelos y comprueba subtítulos y audiodescripción en el propio reproductor."
-        ], medios.externos.slice(0, 8).map(function (m) { return { locator: m.locator, name: m.nombre || "medio incrustado" }; })));
-      }
-
-      // 1.4.2 Control del audio: lo que suena solo y no se puede parar.
-      const suenanSolos = medios.propios.filter(function (m) { return m.autoplay && !m.silenciado; });
-      if (suenanSolos.length) {
-        const sinControl = suenanSolos.filter(function (m) { return !m.controles; });
-        out.push(sinControl.length
-          ? F("1.4.2", "falla", "grave", [
-              sinControl.length + " medio(s) con <code>autoplay</code>, sin silenciar y SIN controles: " +
-              sinControl.map(function (m) { return m.locator; }).join(", ") +
-              ". Si suena más de 3 segundos no hay forma de pararlo, que es justo lo que prohíbe 1.4.2."
-            ], sinControl.slice(0, 8).map(function (m) { return { locator: m.locator, name: "autoplay sin control" }; }))
-          : F("1.4.2", "revisar", null, [
-              suenanSolos.length + " medio(s) se reproducen solos con sonido pero ofrecen controles: comprueba que el mecanismo de parada esté al principio del orden de tabulación."
-            ], suenanSolos.slice(0, 8).map(function (m) { return { locator: m.locator, name: "autoplay con control" }; })));
-      }
-    }
-
-    /* ── 2.2.1 Tiempo ajustable ── */
-    const refrescos = metaRefresh(doc);
-    refrescos.forEach(function (r) {
-      // El único umbral que WCAG admite son 20 horas: por debajo, o se puede
-      // ajustar/parar/extender, o es una falla.
-      if (r.segundos != null && r.segundos > 72000) return;
-      out.push(F("2.2.1", "falla", "grave", [
-        "La página se " + (r.redirige ? "redirige" : "recarga") + " sola con <code>&lt;meta http-equiv=\"refresh\"&gt;</code>" +
-        (r.segundos != null ? " a los " + r.segundos + " segundos" : "") +
-        " (<code>" + r.contenido + "</code>): no hay forma de apagarlo, ajustarlo ni prorrogarlo, que es lo que exige 2.2.1."
-      ], [{ locator: "meta[http-equiv=refresh]", name: r.contenido }]));
-    });
-
-    /* ── 2.1.4 Atajos de teclado de un carácter ── */
-    const atajos = atajosDeUnaTecla(doc);
-    if (atajos.length) {
-      out.push(F("2.1.4", "revisar", null, [
-        atajos.length + " manejador(es) de teclado comparan una tecla suelta sin exigir Ctrl, Alt, Cmd ni Mayúsculas: " +
-        atajos.slice(0, 4).map(function (a) { return a.locator + " (" + a.attr + ": " + a.code + ")"; }).join(" · ") +
-        ". 2.1.4 exige poder desactivar el atajo, reasignarlo, o que solo actúe con el foco puesto en su control. Solo se ven los manejadores en línea: los de un bundle externo no se detectan desde aquí."
-      ], atajos.slice(0, 8).map(function (a) { return { locator: a.locator, name: a.attr }; })));
-    }
-
-    /* ── 2.5.1 / 2.5.2 / 2.5.4 / 2.5.7: dónde hay que mirar ── */
-    const puntero = candidatosPuntero(doc);
-    Object.keys(puntero).forEach(function (crit) {
-      const p = puntero[crit];
-      out.push(F(crit, "revisar", null, [
-        "Se detectan " + p.hits.length + " indicio(s) de " + p.etiqueta + ": " +
-        p.hits.slice(0, 4).map(function (h) { return h.locator; }).join(", ") +
-        ". El agente no dictamina este criterio; señala dónde mirar, que en un sitio grande es lo que cuesta."
-      ], p.hits.map(function (h) { return { locator: h.locator, name: "" }; })));
-    });
-
-    /* ── 3.1.2 Idioma de las partes ── */
-    const langPagina = String((html && html.getAttribute("lang")) || "").toLowerCase().split("-")[0];
-    if (langPagina) {
-      const sospechosos = [];
-      const bloques = doc.querySelectorAll("p,li,blockquote,td,dd,figcaption,h1,h2,h3,h4,h5,h6");
-      for (let i = 0; i < bloques.length && sospechosos.length < 12; i++) {
-        const el = bloques[i];
-        if (ocultoEl(el)) continue;
-        // Si el propio bloque o un antepasado ya declara idioma, está resuelto.
-        let p = el, declarado = null;
-        while (p && p.nodeType === 1) { const l = p.getAttribute("lang"); if (l) { declarado = l.toLowerCase().split("-")[0]; break; } p = p.parentElement; }
-        if (declarado && declarado !== langPagina) continue;
-        const txt = (el.textContent || "").replace(/\s+/g, " ").trim();
-        const idioma = idiomaProbable(txt);
-        if (idioma && idioma !== langPagina) {
-          sospechosos.push({ locator: loc(el), idioma: idioma, texto: txt.slice(0, 60) });
-        }
-      }
-      if (sospechosos.length) {
-        out.push(F("3.1.2", "revisar", null, [
-          sospechosos.length + " bloque(s) parecen estar en un idioma distinto del declarado (<code>lang=\"" + langPagina + "\"</code>) y no lo marcan: " +
-          sospechosos.slice(0, 4).map(function (x) { return x.locator + " (¿" + x.idioma + "?) «" + x.texto + "»"; }).join(" · ") +
-          ". La detección es por palabras funcionales y puede equivocarse con textos técnicos o con citas: confírmalo antes de anotarlo."
-        ], sospechosos.slice(0, 8).map(function (x) { return { locator: x.locator, name: x.idioma }; })));
-      }
-    }
-
-    return out;
-  }
-
-  function auditPageHtml(html, DP) {
-    const P = DP || (typeof DOMParser !== "undefined" ? DOMParser : null);
-    if (!P) throw new Error("auditPageHtml necesita un DOMParser (pásalo como 2.º argumento en Node)");
-    const doc = new P().parseFromString(String(html || ""), "text/html");
-    return auditPageDoc(doc);
-  }
-
-  // Resumen de veredictos de página.
-  function pageSummary(findings) {
-    const s = { falla: 0, revisar: 0, humano: 0, "cumple-parcial": 0, cumple: 0 };
-    findings.forEach(function (f) { if (s[f.verdict] != null) s[f.verdict]++; });
-    return s;
-  }
-  NS.auditPageDoc = auditPageDoc;
-  NS.auditPageHtml = auditPageHtml;
-  NS.pageSummary = pageSummary;
-})(A11Y);
-
-/* ── coherence.js ── */
-(function (NS) {
-  const { WCAG22, enClause } = NS;
-  /**
-   * Coherencia entre páginas de la muestra.
-   *
-   * Cuatro criterios que el motor daba por «evaluación humana» y que en cuanto hay
-   * una muestra son deterministas: no hablan de juicio, hablan de comparar páginas
-   * entre sí. Lo que hace falta es mirar más de una a la vez, y el muestreo ya está.
-   *
-   *   3.2.3 Navegación coherente     (AA) — el mismo orden relativo en cada página
-   *   3.2.4 Identificación coherente (AA) — la misma función, el mismo nombre
-   *   3.2.6 Ayuda coherente          (A)  — la ayuda, en el mismo sitio relativo
-   *   2.4.5 Múltiples vías           (AA) — más de una forma de localizar una página
-   *
-   * `fingerprintPage(doc)` saca la huella de un documento ya renderizado; es pura y
-   * corre igual en Node (linkedom) que en el navegador. `analyzeCoherence(huellas)`
-   * compara las huellas y emite los veredictos. Ninguna de las dos toca la red.
-   */
-
-  const IX = {};
-  WCAG22.forEach(function (c) { IX[c.n] = { t: c.t, lvl: c.lvl }; });
-  function crit(n) { return { n: n, t: (IX[n] ? IX[n].t : n), lvl: (IX[n] ? IX[n].lvl : "AA") }; }
-  function F(n, verdict, sev, evid, nodes) {
-    const f = { c: crit(n), verdict: verdict, sev: sev, evid: evid, scope: "sitio", origen: "coherencia", en: enClause(n) };
-    if (nodes && nodes.length) f.nodes = nodes;
-    return f;
-  }
-
-  /* ── Normalización ───────────────────────────────────────────────────────── */
-
-  /** Destino canónico de un enlace: es la IDENTIDAD de «misma función». */
-  function normalizarHref(href, base) {
-    const h = String(href || "").trim();
-    if (!h) return null;
-    if (/^(mailto:|tel:|javascript:)/i.test(h)) return h.toLowerCase().replace(/\s+/g, "");
-    if (h === "#" || h.charAt(0) === "#") return null; // ancla interna: no identifica una página
-    let u;
-    try { u = new URL(h, base || "http://local/"); } catch (e) { return h.toLowerCase(); }
-    u.hash = "";
-    let p = u.pathname.replace(/\/+$/, "");
-    if (!p) p = "/";
-    /* El HOST no distingue mayúsculas; la RUTA sí.
-     *
-     * Minusculizándolo todo, `/Servicios` y `/servicios` quedaban como el mismo
-     * destino, y 3.2.4 emitía un `falla` —«el mismo destino con nombres distintos»—
-     * sobre dos páginas que en el servidor son dos páginas diferentes y pueden
-     * llamarse cada una como quiera. En HTTP la ruta es sensible a mayúsculas, así
-     * que se respeta tal cual; lo mismo la cadena de consulta, donde un valor puede
-     * ser un identificador que las distinga. */
-    return u.host.toLowerCase() + p + (u.search || "");
-  }
-
-  /** Nombre comparable: sin acentos, sin puntuación de adorno, en minúsculas. */
-  function normalizarNombre(s) {
-    return String(s || "")
-      .normalize("NFD").replace(/[̀-ͯ]/g, "")
-      .toLowerCase()
-      .replace(/[«»"'`´¡!¿?.,;:()\[\]|–—-]+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-  }
-
-  // Mecanismos de ayuda que reconoce 3.2.6.
-  const AYUDA = [
-    { tipo: "contacto", re: /(^|\b)(contacto|contactar|contact|cont[aá]ctanos)\b/i },
-    { tipo: "ayuda", re: /(^|\b)(ayuda|help|soporte|support|asistencia)\b/i },
-    { tipo: "faq", re: /(^|\b)(faq|preguntas frecuentes|dudas)\b/i },
-    { tipo: "chat", re: /(^|\b)(chat|chatbot|habla con)\b/i },
-    { tipo: "teléfono", re: /^tel:/i },
-    { tipo: "correo", re: /^mailto:/i }
-  ];
-  /* Un `mailto:` no es por sí solo un mecanismo de ayuda.
-   *
-   * Probando el esquema contra el `href` crudo, un «Compartir por correo» dentro de
-   * un artículo se registraba como mecanismo de ayuda «correo». Y como solo se
-   * guardaba la primera aparición de cada tipo, en la ficha ganaba la del contenido
-   * y en la portada la del pie: 3.2.6 emitía un `falla` diciendo que el mecanismo
-   * «cambia de sitio» en dos páginas que tienen la misma dirección de contacto en el
-   * mismo pie.
-   *
-   * 3.2.6 habla de mecanismos de AYUDA. Un `tel:` o un `mailto:` cuentan cuando algo
-   * dice que sirven para pedir ayuda: el nombre del enlace, o el hecho de estar en
-   * la cabecera o el pie, que es donde se ponen los datos de contacto. Un `mailto:`
-   * en medio del contenido, con un nombre que habla de compartir, es otra cosa.
-   */
-  const COMPARTIR_RE = /(compartir|share|env[ií]a(r)? (esto|a un amigo)|tweet|whatsapp)/i;
-  function tipoAyuda(nombre, href, region) {
-    const esquema = /^(mailto:|tel:)/i.test(String(href || ""));
-    if (esquema) {
-      if (COMPARTIR_RE.test(nombre)) return null;
-      // Un mailto: «vacío» (sin destinatario) es para que lo rellene quien comparte.
-      if (/^mailto:\s*(\?|$)/i.test(String(href || ""))) return null;
-      const porNombre = AYUDA.find(function (a) { return a.tipo !== "correo" && a.tipo !== "teléfono" && a.re.test(nombre); });
-      if (porNombre) return porNombre.tipo;
-      const enSitioDeContacto = region === "pie" || region === "cabecera";
-      if (!enSitioDeContacto) return null;
-      return /^tel:/i.test(href) ? "teléfono" : "correo";
-    }
-    for (const a of AYUDA) {
-      if (a.tipo === "correo" || a.tipo === "teléfono") continue;
-      if (a.re.test(href) || a.re.test(nombre)) return a.tipo;
-    }
-    return null;
-  }
-
-  const MAPA_RE = /(mapa (del sitio|web)|sitemap|[ií]ndice del sitio)/i;
-  const INDICE_RE = /(^|\b)([ií]ndice|a-z|directorio|listado alfab[eé]tico)\b/i;
-
-  /* ── Huella de una página ────────────────────────────────────────────────── */
-
-  function tagOf(el) { return (el && el.tagName) ? el.tagName.toLowerCase() : ""; }
-  /**
-   * ¿Oculto? Con `win` se usa getComputedStyle y se ve la verdad del render; sin
-   * él solo se puede mirar lo declarado en el marcado.
-   *
-   * La diferencia importa aquí más que en otros sitios: casi todos los sitios
-   * llevan un menú móvil duplicado que el CSS oculta en escritorio. Si se cuela en
-   * la huella, la secuencia de navegación sale duplicada y 3.2.3 se inventa
-   * cambios de orden que no existen.
-   */
-  function ocultoEl(el, win) {
-    let p = el;
-    while (p && p.nodeType === 1) {
-      // `inert` también saca el contenido del árbol de accesibilidad: sin él, esta
-      // copia de la función y la de page-audit.js daban respuestas distintas sobre
-      // el mismo elemento.
-      if (p.hasAttribute("hidden") || p.hasAttribute("inert") || p.getAttribute("aria-hidden") === "true") return true;
-      if (win) {
-        const cs = win.getComputedStyle(p);
-        if (cs.display === "none" || cs.visibility === "hidden") return true;
-      } else {
-        const st = (p.getAttribute("style") || "").replace(/\s+/g, "").toLowerCase();
-        if (st.indexOf("display:none") !== -1 || st.indexOf("visibility:hidden") !== -1) return true;
-      }
-      p = p.parentElement;
-    }
-    return false;
-  }
-  function loc(el) {
-    const t = tagOf(el);
-    if (el.id) return t + "#" + el.id;
-    const c = (el.getAttribute("class") || "").trim().split(/\s+/).filter(Boolean)[0];
-    return c ? t + "." + c : t;
-  }
-  /**
-   * Región de la página donde vive un elemento: cabecera, navegación, contenido o
-   * pie. Es lo que de verdad mide 3.2.6 —dónde está la ayuda—, mucho más estable
-   * que el orden entre mecanismos distintos.
-   */
-  /* La región es la MÁS EXTERNA, no la primera que se encuentra subiendo.
-   *
-   * Devolviendo la primera, un `<footer><a>Contacto</a>` daba «pie» y un
-   * `<footer><nav><a>Contacto</a></nav>` daba «navegación»: la misma ubicación
-   * visual, dos regiones distintas, y 3.2.6 emitía un `falla` diciendo que el
-   * mecanismo de ayuda «cambia de sitio entre páginas» porque una de ellas envolvía
-   * los enlaces del pie en un `<nav>`. 3.2.6 habla de la ubicación relativa, no del
-   * envoltorio, así que un `nav` dentro del pie sigue siendo el pie.
-   *
-   * Se sube hasta arriba y manda el último landmark encontrado, con una excepción:
-   * `navegación` no gana nunca a `pie`, `cabecera`, `contenido` ni `lateral`, porque
-   * un `nav` casi siempre vive dentro de uno de ellos y es el contenedor el que dice
-   * dónde está la cosa en la pantalla.
-   */
-  function regionDe(el) {
-    let p = el, encontrada = null;
-    while (p && p.nodeType === 1) {
-      const t = tagOf(p), r = (p.getAttribute("role") || "").split(/\s+/)[0];
-      let aqui = null;
-      if (t === "footer" || r === "contentinfo") aqui = "pie";
-      else if (t === "header" || r === "banner") aqui = "cabecera";
-      else if (t === "nav" || r === "navigation") aqui = "navegación";
-      else if (t === "main" || r === "main") aqui = "contenido";
-      else if (t === "aside" || r === "complementary") aqui = "lateral";
-      // El más externo manda, y «navegación» solo se queda si no hay nada mejor.
-      if (aqui && (encontrada === null || aqui !== "navegación")) encontrada = aqui;
-      p = p.parentElement;
-    }
-    return encontrada || "otra";
-  }
-  function nombreDe(el) {
-    const al = el.getAttribute("aria-label");
-    if (al && al.trim()) return al.trim();
-    const t = (el.textContent || "").replace(/\s+/g, " ").trim();
-    if (t) return t;
-    const img = el.querySelector && el.querySelector("img[alt]");
-    if (img) { const a = (img.getAttribute("alt") || "").trim(); if (a) return a; }
-    const ti = el.getAttribute("title");
-    return ti ? ti.trim() : "";
-  }
-
-  /**
-   * Huella comparable de una página: sus enlaces de navegación en orden, los
-   * mecanismos de ayuda y las vías de localización.
-   *
-   * @param {Document} doc  documento ya renderizado (post-JS)
-   * @param {string} [url]  URL de la página, para resolver los enlaces relativos
-   * @param {Window} [win]  ventana real, para descartar lo oculto por CSS
-   */
-  function fingerprintPage(doc, url, win) {
-    const visibles = function (sel) {
-      return Array.prototype.slice.call(doc.querySelectorAll(sel)).filter(function (el) { return !ocultoEl(el, win); });
-    };
-
-    // Navegación: los enlaces dentro de landmarks de navegación, EN ORDEN de DOM.
-    const navs = [];
-    visibles("nav,[role=navigation]").forEach(function (nav) {
-      const items = [];
-      Array.prototype.slice.call(nav.querySelectorAll("a[href]")).forEach(function (a) {
-        if (ocultoEl(a, win)) return;
-        const href = normalizarHref(a.getAttribute("href"), url);
-        if (!href) return;
-        items.push({ href: href, name: nombreDe(a), locator: loc(a) });
-      });
-      if (items.length) navs.push({ locator: loc(nav), label: nombreDe(nav) || (nav.getAttribute("aria-label") || ""), items: items });
-    });
-
-    // Todos los enlaces de la página, en orden: identidad para 3.2.4 y 3.2.6.
-    const enlaces = [];
-    visibles("a[href]").forEach(function (a, i) {
-      const raw = a.getAttribute("href");
-      const href = normalizarHref(raw, url);
-      if (!href) return;
-      enlaces.push({ href: href, raw: raw, name: nombreDe(a), locator: loc(a), region: regionDe(a), orden: enlaces.length });
-    });
-
-    // Ayuda: mecanismos reconocibles, en el orden en que aparecen.
-    const ayuda = [];
-    enlaces.forEach(function (e) {
-      const t = tipoAyuda(e.name, e.raw, e.region);
-      if (t && !ayuda.some(function (x) { return x.tipo === t; })) {
-        ayuda.push({ tipo: t, name: e.name, href: e.href, locator: e.locator, region: e.region, orden: e.orden });
-      }
-    });
-
-    // Vías de localización (2.4.5).
-    // OJO: visible, como el resto de la huella. Sin el filtro, un buscador dentro
-    // de un menú móvil con `display:none` contaba como vía de localización y
-    // empujaba 2.4.5 a «cumple» con algo que el usuario no puede usar.
-    const buscador = Array.prototype.slice.call(doc.querySelectorAll('input[type=search],[role=search]'))
-      .some(function (el) { return !ocultoEl(el, win); }) ||
-      Array.prototype.slice.call(doc.querySelectorAll("form")).some(function (f) {
-        if (ocultoEl(f, win)) return false;
-        return /buscar|search|busqueda|búsqueda/i.test((f.getAttribute("action") || "") + " " + (f.id || "") + " " + (f.className || "") + " " + (f.getAttribute("role") || ""));
-      });
-    const mapaWeb = enlaces.some(function (e) { return MAPA_RE.test(e.name) || MAPA_RE.test(e.href); });
-    const indice = enlaces.some(function (e) { return INDICE_RE.test(e.name); });
-    const navegacion = navs.some(function (n) { return n.items.length >= 3; });
-
-    return {
-      url: url || null,
-      navs: navs,
-      enlaces: enlaces,
-      ayuda: ayuda,
-      vias: { buscador: buscador, mapaWeb: mapaWeb, indice: indice, navegacion: navegacion }
-    };
-  }
-
-  /* ── Comparación ─────────────────────────────────────────────────────────── */
-
-  /**
-   * ¿Conservan las dos secuencias el mismo orden relativo en lo que comparten?
-   * Devuelve `null` si sí, o la primera pareja invertida si no.
-   */
-  function ordenRelativo(a, b) {
-    const setB = new Set(b);
-    const comunes = a.filter(function (x) { return setB.has(x); });
-    const posB = {};
-    b.forEach(function (x, i) { if (posB[x] == null) posB[x] = i; });
-    for (let i = 1; i < comunes.length; i++) {
-      if (posB[comunes[i]] < posB[comunes[i - 1]]) {
-        return { antes: comunes[i - 1], despues: comunes[i] };
-      }
-    }
-    return null;
-  }
-
-  // Secuencia de destinos de navegación de una huella (todas sus navs concatenadas).
-  function seqNav(h) {
-    const out = [];
-    (h.navs || []).forEach(function (n) {
-      n.items.forEach(function (it) { if (out.indexOf(it.href) === -1) out.push(it.href); });
-    });
-    return out;
-  }
-
-  /** 3.2.3 Navegación coherente. */
-  function analyzeNavConsistency(huellas) {
-    const conNav = (huellas || []).filter(function (h) { return seqNav(h).length >= 2; });
-    if (conNav.length < 2) {
-      return [F("3.2.3", "revisar", null, [
-        "Hace falta más de una página con navegación repetida para comprobar el orden relativo; en esta muestra hay " + conNav.length + "."
-      ])];
-    }
-    // Para la evidencia manda el NOMBRE del enlace, no el destino normalizado: es
-    // lo que ve una persona auditora en la pantalla.
-    const nombres = {};
-    conNav.forEach(function (h) {
-      (h.navs || []).forEach(function (n) {
-        n.items.forEach(function (it) { if (!nombres[it.href] && it.name) nombres[it.href] = it.name; });
-      });
-    });
-    const etiqueta = function (href) { return nombres[href] ? "«" + nombres[href] + "»" : href; };
-
-    /* TODOS los pares, no cada página contra la primera.
-     *
-     * Comparando solo contra `conNav[0]`, un destino que cambia de sitio entre la
-     * página 2 y la 3 pero que no aparece en la 1 no se compara con nada: la
-     * inversión pasa desapercibida y el criterio sale `cumple` afirmando «mantiene
-     * el mismo orden relativo en las N páginas». Comprobado con tres páginas donde
-     * «Blog» va antes de «Servicios» en una y después en otra, y ninguna de las dos
-     * cosas se ve desde la primera, que no tiene Blog.
-     *
-     * 3.2.3 habla del orden relativo entre páginas, sin página privilegiada, así que
-     * se comparan todos los pares. Con muestras de quince páginas son ciento cinco
-     * comparaciones de listas cortas: nada. */
-    const base = conNav[0], seqBase = seqNav(base);
-    const problemas = [];
-    const vistos = {};
-    for (let i = 0; i < conNav.length; i++) {
-      for (let j = i + 1; j < conNav.length; j++) {
-        const inv = ordenRelativo(seqNav(conNav[i]), seqNav(conNav[j]));
-        if (!inv) continue;
-        // Una misma inversión aparece en varios pares: se cuenta una vez, y con las
-        // dos páginas que la demuestran.
-        const clave = inv.antes + "|" + inv.despues;
-        if (vistos[clave]) continue;
-        vistos[clave] = 1;
-        problemas.push({ pagina: conNav[j].url, contra: conNav[i].url, inv: inv });
-      }
-    }
-    if (!problemas.length) {
-      return [F("3.2.3", "cumple", null, [
-        "La navegación repetida mantiene el mismo orden relativo en las " + conNav.length + " páginas de la muestra que la tienen (" +
-        seqBase.slice(0, 8).map(etiqueta).join(" → ") + (seqBase.length > 8 ? " → …" : "") + ")."
-      ])];
-    }
-    return [F("3.2.3", "falla", "moderada", problemas.slice(0, 5).map(function (p) {
-      return "En " + (p.pagina || "(página)") + " el orden de la navegación cambia: " + etiqueta(p.inv.despues) +
-        " aparece antes que " + etiqueta(p.inv.antes) + ", al revés que en " + (p.contra || base.url || "otra página de la muestra") + ".";
-    }), problemas.slice(0, 8).map(function (p) { return { locator: p.pagina || "(página)", name: "orden alterado" }; }))];
-  }
-
-  /**
-   * 3.2.4 Identificación coherente: el mismo destino, el mismo nombre.
-   *
-   * Distingue dos grados, porque no son lo mismo: un nombre que CONTIENE al otro
-   * («Inicio» / «Ir a inicio») es una inconsistencia menor a revisar; dos nombres
-   * sin nada en común para el mismo destino sí es una falla.
-   */
-  function analyzeIdConsistency(huellas) {
-    const porHref = {};
-    (huellas || []).forEach(function (h) {
-      (h.enlaces || []).forEach(function (e) {
-        const nom = normalizarNombre(e.name);
-        if (!nom) return;
-        if (!porHref[e.href]) porHref[e.href] = { nombres: {}, locator: e.locator };
-        if (!porHref[e.href].nombres[nom]) porHref[e.href].nombres[nom] = { crudo: e.name, paginas: [] };
-        const p = porHref[e.href].nombres[nom].paginas;
-        if (p.indexOf(h.url) === -1) p.push(h.url);
-      });
-    });
-
-    const fallas = [], revisiones = [];
-    // Solo cuentan los destinos que aparecen en DOS O MÁS páginas. 3.2.4 es un
-    // criterio de conjunto: comparar un destino visto en una sola página no
-    // comprueba nada, y contarlo como «coherente» declaraba conforme algo que
-    // nadie había comparado. Dos anclas distintas de la misma página («/faq#envíos»
-    // y «/faq#pagos») tampoco son el mismo destino visto dos veces.
-    const comunes = Object.keys(porHref).filter(function (href) {
-      const paginas = {};
-      Object.keys(porHref[href].nombres).forEach(function (n) {
-        porHref[href].nombres[n].paginas.forEach(function (u) { paginas[u] = true; });
-      });
-      return Object.keys(paginas).length >= 2;
-    });
-    comunes.forEach(function (href) {
-      const noms = Object.keys(porHref[href].nombres);
-      if (noms.length < 2) return;
-      // Las dos variantes tienen que verse en páginas DISTINTAS: si conviven en la
-      // misma página son dos enlaces distintos, no una identificación incoherente.
-      const enPaginasDistintas = noms.some(function (a) {
-        return noms.some(function (b) {
-          if (a === b) return false;
-          return porHref[href].nombres[a].paginas.some(function (u) {
-            return porHref[href].nombres[b].paginas.indexOf(u) === -1;
-          });
-        });
-      });
-      if (!enPaginasDistintas) return;
-      // ¿Uno contiene a otro? Entonces es matiz, no contradicción.
-      const anidados = noms.every(function (a) {
-        return noms.some(function (b) { return b !== a && (b.indexOf(a) !== -1 || a.indexOf(b) !== -1); });
-      });
-      const detalle = href + " → " + noms.map(function (n) { return "«" + porHref[href].nombres[n].crudo + "»"; }).join(" / ");
-      (anidados ? revisiones : fallas).push({ href: href, detalle: detalle, locator: porHref[href].locator });
-    });
-
-    const out = [];
-    if (fallas.length) {
-      out.push(F("3.2.4", "falla", "moderada",
-        [fallas.length + " destino(s) se identifican con nombres distintos en páginas distintas: " + fallas.slice(0, 5).map(function (f) { return f.detalle; }).join(" · ")],
-        fallas.slice(0, 8).map(function (f) { return { locator: f.locator, name: f.href }; })));
-    }
-    if (revisiones.length) {
-      out.push(F("3.2.4", "revisar", null,
-        [revisiones.length + " destino(s) usan variantes del mismo nombre (uno contiene al otro): " + revisiones.slice(0, 5).map(function (r) { return r.detalle; }).join(" · ") + ". Comprueba si la diferencia desorienta."],
-        revisiones.slice(0, 8).map(function (r) { return { locator: r.locator, name: r.href }; })));
-    }
-    if (!out.length) {
-      out.push(comunes.length
-        ? F("3.2.4", "cumple", null, ["Los " + comunes.length + " destinos que aparecen en dos o más páginas de la muestra se identifican siempre con el mismo nombre."])
-        : F("3.2.4", "revisar", null, ["Ningún destino se repite entre las páginas de la muestra (" + (huellas || []).length + " página(s)): no hay nada que comparar, así que la coherencia de identificación NO se ha comprobado."]));
-    }
-    return out;
-  }
-
-  /**
-   * 3.2.6 Ayuda coherente (WCAG 2.2, nivel A).
-   *
-   * El criterio habla de DÓNDE está la ayuda, no de en qué orden aparecen unos
-   * mecanismos respecto de otros. Comparar el orden entre tipos distintos era
-   * ruidoso: un «Contacto» en el menú y una «Ayuda» en el pie cambian de orden
-   * relativo en cuanto una página mete un enlace contextual, sin que nada se haya
-   * movido de sitio. Lo que sí es una incoherencia real es que el MISMO mecanismo
-   * viva en la cabecera en una página y en el pie en otra.
-   */
-  function analyzeHelpConsistency(huellas) {
-    const conAyuda = (huellas || []).filter(function (h) { return (h.ayuda || []).length; });
-    if (!conAyuda.length) {
-      // «No lo he encontrado» no es «no existe». La detección son unos cuantos
-      // patrones sobre los enlaces visibles: un «Atención al cliente», un
-      // <button>Asistencia</button> o un chat en un ancla interna se le escapan.
-      // Declararlo conforme era dar por comprobado lo que no se miró.
-      return [F("3.2.6", "revisar", null, [
-        "No se han detectado mecanismos de ayuda con los patrones conocidos (contacto, ayuda, FAQ, soporte, chat) en las " +
-        (huellas || []).length + " página(s) de la muestra. Confirma a mano que de verdad no los hay: si no existe ninguno, el criterio no aplica; si existe alguno que no se reconoció, hay que comprobar que está siempre en el mismo sitio."
-      ])];
-    }
-    if (conAyuda.length < 2) {
-      return [F("3.2.6", "revisar", null, ["Solo una página de la muestra ofrece ayuda (" + conAyuda[0].ayuda.map(function (a) { return a.tipo; }).join(", ") + "): hace falta más de una para comparar."])];
-    }
-
-    // Dónde aparece cada tipo de ayuda, página a página.
-    const porTipo = {};
-    conAyuda.forEach(function (h) {
-      h.ayuda.forEach(function (a) {
-        if (!porTipo[a.tipo]) porTipo[a.tipo] = {};
-        const r = a.region || "otra";
-        if (!porTipo[a.tipo][r]) porTipo[a.tipo][r] = [];
-        if (porTipo[a.tipo][r].indexOf(h.url) === -1) porTipo[a.tipo][r].push(h.url);
-      });
-    });
-
-    const movidos = Object.keys(porTipo).filter(function (t) { return Object.keys(porTipo[t]).length > 1; });
-    if (movidos.length) {
-      return [F("3.2.6", "falla", "moderada", movidos.slice(0, 4).map(function (t) {
-        const regs = porTipo[t];
-        return "El mecanismo de ayuda «" + t + "» cambia de sitio entre páginas: " +
-          Object.keys(regs).map(function (r) { return r + " en " + regs[r].slice(0, 3).map(function (u) { return u || "(página)"; }).join(", "); }).join(" · ") + ".";
-      }))];
-    }
-
-    // Mismo sitio. Dentro de una misma región, el orden relativo sí debe mantenerse.
-    const seqEnRegion = function (h, region) {
-      return h.ayuda.filter(function (a) { return (a.region || "otra") === region; }).map(function (a) { return a.tipo; });
-    };
-    const regiones = {};
-    conAyuda.forEach(function (h) { h.ayuda.forEach(function (a) { regiones[a.region || "otra"] = 1; }); });
-    const desordenes = [];
-    Object.keys(regiones).forEach(function (r) {
-      const base = conAyuda.find(function (h) { return seqEnRegion(h, r).length >= 2; });
-      if (!base) return;
-      conAyuda.forEach(function (h) {
-        if (h === base) return;
-        const inv = ordenRelativo(seqEnRegion(base, r), seqEnRegion(h, r));
-        if (inv) desordenes.push({ region: r, pagina: h.url, inv: inv });
-      });
-    });
-    if (desordenes.length) {
-      return [F("3.2.6", "falla", "moderada", desordenes.slice(0, 4).map(function (d) {
-        return "En " + (d.pagina || "(página)") + ", dentro de «" + d.region + "», la ayuda cambia de orden: «" + d.inv.despues + "» antes que «" + d.inv.antes + "».";
-      }))];
-    }
-
-    const tipos = Object.keys(porTipo);
-    const ev = ["Los mecanismos de ayuda (" + tipos.join(", ") + ") aparecen siempre en la misma parte de la página (" +
-      tipos.map(function (t) { return t + " → " + Object.keys(porTipo[t])[0]; }).join(", ") + ") en las " + conAyuda.length + " páginas que los ofrecen."];
-    const faltan = (huellas || []).filter(function (h) { return !(h.ayuda || []).length; });
-    if (faltan.length) ev.push(faltan.length + " página(s) de la muestra no ofrecen ninguno; el criterio no les aplica, pero comprueba que sea intencionado.");
-    return [F("3.2.6", "cumple-parcial", null, ev)];
-  }
-
-  /**
-   * 2.4.5 Múltiples vías: es un criterio de SITIO, no de página. Se mira la unión
-   * de mecanismos en toda la muestra.
-   */
-  function analyzeMultipleWays(huellas) {
-    const hs = huellas || [];
-    if (!hs.length) return [];
-    const union = { buscador: false, mapaWeb: false, indice: false, navegacion: false };
-    hs.forEach(function (h) { Object.keys(union).forEach(function (k) { if (h.vias && h.vias[k]) union[k] = true; }); });
-    const ETQ = { buscador: "buscador", mapaWeb: "mapa web", indice: "índice o directorio", navegacion: "navegación del sitio" };
-    const hay = Object.keys(union).filter(function (k) { return union[k]; });
-    if (hay.length >= 2) {
-      return [F("2.4.5", "cumple", null, ["El sitio ofrece " + hay.length + " vías para localizar una página: " + hay.map(function (k) { return ETQ[k]; }).join(", ") + "."])];
-    }
-    // Encontrar DOS vías en una sola página sí demuestra que el sitio las ofrece.
-    // No encontrarlas, en cambio, no demuestra nada si solo se ha mirado una
-    // página: el mapa web puede estar en el pie de otra. Un criterio de sitio no
-    // se falla desde una página suelta.
-    if (hs.length < 2) {
-      return [F("2.4.5", "revisar", null, [
-        "Solo hay " + hs.length + " página en la muestra y se detecta" + (hay.length ? "n " + hay.length + " vía(s): " + hay.map(function (k) { return ETQ[k]; }).join(", ") : " ninguna vía") +
-        ". 2.4.5 es un criterio de SITIO: añade más páginas a la muestra antes de dictaminar."
-      ])];
-    }
-    if (hay.length === 1) {
-      return [F("2.4.5", "revisar", null, [
-        "Solo se detecta una vía para localizar páginas (" + ETQ[hay[0]] + "). WCAG exige al menos dos, salvo que la página sea un paso de un proceso — eso no lo puede determinar el agente."
-      ])];
-    }
-    return [F("2.4.5", "falla", "moderada", ["No se detecta ninguna vía para localizar páginas: ni buscador, ni mapa web, ni índice, ni una navegación con varios enlaces."])];
-  }
-
-  /** Los cuatro criterios de coherencia sobre la muestra. */
-  function analyzeCoherence(huellas) {
-    if (!huellas || !huellas.length) return [];
-    return [].concat(
-      analyzeMultipleWays(huellas),
-      analyzeNavConsistency(huellas),
-      analyzeIdConsistency(huellas),
-      analyzeHelpConsistency(huellas)
-    );
-  }
-
-  /* ── Código inyectable: la huella se toma DENTRO de la página real ───────── */
-
-  const FN_SRC =
-    "var AYUDA = [" + AYUDA.map(function (a) { return "{tipo:" + JSON.stringify(a.tipo) + ",re:" + String(a.re) + "}"; }).join(",") + "];\n" +
-    "var MAPA_RE = " + String(MAPA_RE) + ";\n" +
-    "var INDICE_RE = " + String(INDICE_RE) + ";\n" +
-    [normalizarHref, tipoAyuda, tagOf, ocultoEl, loc, regionDe, nombreDe, fingerprintPage]
-      .map(function (f) { return String(f).replace(/^export\s+/, ""); }).join("\n");
-
-  /**
-   * Cuerpo para `page.evaluate(new Function("url", FINGERPRINT_BODY))`.
-   *
-   * Se ejecuta en la página, con su `window`, para que `getComputedStyle` descarte
-   * lo que el CSS oculta — el menú móvil duplicado, sobre todo.
-   */
-  const FINGERPRINT_BODY = FN_SRC + "\nreturn fingerprintPage(document, url, window);";
-
-  /** Versión envuelta para la extensión de Chrome. */
-  const FINGERPRINT_SRC = "(function(){\n" + FN_SRC +
-    "\nwindow.__a11yHuella = function(url){ return fingerprintPage(document, url || location.href, window); };\n})();";
-  NS.normalizarHref = normalizarHref;
-  NS.normalizarNombre = normalizarNombre;
-  NS.fingerprintPage = fingerprintPage;
-  NS.ordenRelativo = ordenRelativo;
-  NS.analyzeNavConsistency = analyzeNavConsistency;
-  NS.analyzeIdConsistency = analyzeIdConsistency;
-  NS.analyzeHelpConsistency = analyzeHelpConsistency;
-  NS.analyzeMultipleWays = analyzeMultipleWays;
-  NS.analyzeCoherence = analyzeCoherence;
-  NS.FINGERPRINT_BODY = FINGERPRINT_BODY;
-  NS.FINGERPRINT_SRC = FINGERPRINT_SRC;
-})(A11Y);
-
-/* ── viewport.js ── */
-(function (NS) {
-  const { WCAG22, enClause } = NS;
-  /**
-   * Adaptación del contenido — análisis PURO de las trazas de viewport.
-   *
-   * Cinco criterios que el motor marcaba `revisar` a ciegas, sin mirar nada, y que
-   * en realidad son MECÁNICOS: se aplica un cambio (estrechar, agrandar el texto,
-   * forzar el espaciado, girar) y se mide qué se rompe. Es exactamente el
-   * procedimiento manual de la Guía Técnica del OAW —el bookmarklet de Text
-   * Spacing, el zoom al 400 %— hecho por el agente.
-   *
-   *   1.4.4  Redimensionar el texto        (AA)
-   *   1.4.10 Reflujo                       (AA)
-   *   1.4.12 Espaciado del texto           (AA)
-   *   1.4.13 Contenido al recibir foco o puntero (AA)
-   *   1.3.4  Orientación                   (AA)
-   *
-   * El principio de siempre: estas funciones distinguen «lo he medido y está mal»
-   * de «no he podido medirlo». Un recorte medido es `falla`; una excepción posible
-   * o una traza incompleta es `revisar`.
-   */
-
-  const IX = {};
-  WCAG22.forEach(function (c) { IX[c.n] = { t: c.t, lvl: c.lvl }; });
-  function crit(n) { return { n: n, t: (IX[n] ? IX[n].t : n), lvl: (IX[n] ? IX[n].lvl : "AA") }; }
-  function F(n, verdict, sev, evid, nodes) {
-    const f = { c: crit(n), verdict: verdict, sev: sev, evid: evid, scope: "adaptación", origen: "medición", en: enClause(n) };
-    if (nodes && nodes.length) f.nodes = nodes;
-    return f;
-  }
-  function nodesOf(list, max) {
-    return (list || []).slice(0, max || 10).map(function (x) { return { locator: x.locator, name: x.detalle || "" }; });
-  }
-
-  /**
-   * Contenido que la propia WCAG exime de reflujo por «uso esencial»: lo que pierde
-   * sentido si se reorganiza en una columna. No es una falla automática, pero
-   * tampoco un aprobado: lo marcamos para que una persona confirme la excepción.
-   */
-  const EXENTOS_REFLUJO = ["table", "img", "svg", "canvas", "iframe", "video", "object", "embed", "pre", "code"];
-  function esExento(o) {
-    if (EXENTOS_REFLUJO.indexOf(String(o.tag || "").toLowerCase()) !== -1) return true;
-    const r = String(o.role || "").toLowerCase();
-    return r === "img" || r === "table" || r === "grid" || r === "treegrid" || r === "application";
-  }
-
-  /**
-   * 1.4.10 Reflujo: a 320 px CSS de ancho (equivale al 400 % sobre 1280) el
-   * contenido no puede exigir desplazamiento horizontal.
-   * @param {{ w:number, h:number, scrollWidth:number, clientWidth:number,
-   *           offenders?:Array<{locator:string, tag?:string, role?:string, ancho?:number, detalle?:string}> }} trace
-   */
-  function analyzeReflow(trace) {
-    if (!trace || trace.clientWidth == null) return [];
-    const exceso = Math.round(trace.scrollWidth - trace.clientWidth);
-    const donde = " a " + trace.w + "×" + trace.h + " px CSS";
-    /* El contenido RECORTADO cuenta, y cuenta antes que la barra.
-     *
-     * Dictaminando solo por el desplazamiento horizontal, un desbordamiento escondido
-     * con `overflow:hidden` no produce barra, `scrollWidth` del documento no crece, y
-     * 1.4.10 salía «cumple» con cientos de píxeles de texto ocultos e inalcanzables a
-     * 320 px CSS. El criterio no habla de barras: exige que no haya pérdida de
-     * información ni de funcionalidad. Esconder lo que no cabe es peor que la barra,
-     * porque ni se ve que falte algo. */
-    const rec = (trace.recortados || []).filter(function (r) { return !r.alcanzable; });
-    if (rec.length) {
-      return [F("1.4.10", "falla", "grave", [
-        rec.length + " bloque(s) de contenido se RECORTAN" + donde + " y lo que sobra no se puede alcanzar: el desbordamiento está oculto con " +
-        "`overflow:" + rec[0].overflow + "`, así que no hay barra ni forma de desplazarlo. " +
-        rec.slice(0, 6).map(function (r) { return r.locator + " (" + r.px + " px ocultos, termina en «…" + r.muestra + "»)"; }).join(" · ") +
-        (rec.length > 6 ? " · …" : "") + ". 1.4.10 exige que no haya pérdida de información, no solo que no haya barra horizontal."
-      ], nodesOf(rec))];
-    }
-    if (exceso <= 2) {
-      const tapado = (trace.recortados || []).filter(function (r) { return r.alcanzable; });
-      if (tapado.length) {
-        return [F("1.4.10", "revisar", null, [
-          "Sin desplazamiento horizontal" + donde + ", pero " + tapado.length + " contenedor(es) esconden contenido que no les cabe (" +
-          tapado.slice(0, 4).map(function (r) { return r.locator + ", " + r.px + " px"; }).join(" · ") +
-          "). Tienen controles dentro, así que el teclado sí arrastra el contenedor al enfocarlos; comprueba que con el ratón y a la vista también se llegue, porque no hay barra."
-        ], nodesOf(tapado))];
-      }
-      return [F("1.4.10", "cumple", null, ["Sin desplazamiento horizontal ni contenido recortado" + donde + " (equivale al 400 % sobre 1280 px)."])];
-    }
-    const off = trace.offenders || [];
-    const todosExentos = off.length > 0 && off.every(esExento);
-    if (todosExentos) {
-      return [F("1.4.10", "revisar", null, [
-        "Hay " + exceso + " px de desplazamiento horizontal" + donde + ", pero todo lo que desborda es contenido que WCAG puede eximir por uso esencial (" +
-        off.slice(0, 6).map(function (o) { return o.locator; }).join(", ") + "). Confirma que la excepción aplica."
-      ], nodesOf(off))];
-    }
-    return [F("1.4.10", "falla", "grave", [
-      "El contenido exige desplazamiento horizontal" + donde + ": " + exceso + " px de exceso. " +
-      (off.length ? "Desbordan " + off.length + " elemento(s): " + off.slice(0, 6).map(function (o) { return o.locator + (o.detalle ? " (" + o.detalle + ")" : ""); }).join(", ") + (off.length > 6 ? "…" : "") : "No se ha podido señalar el elemento concreto.")
-    ], nodesOf(off))];
-  }
-
-  // Recorte medido: el elemento no cabía y su desbordamiento queda OCULTO. Si
-  // desborda con barra de desplazamiento, el contenido sigue siendo alcanzable.
-  function informeRecorte(n, etiqueta, cambio, trace, sevFalla) {
-    // Sin traza no hay nada que decir: el criterio no se ha mirado. Distinto de
-    // `aplicado:false`, que sí es información — se intentó medir y no se pudo.
-    if (!trace) return [];
-    if (!trace.aplicado) {
-      return [F(n, "revisar", null, ["No se pudo aplicar " + cambio + " sobre la página (" + ((trace && trace.motivo) || "motivo desconocido") + "): queda por comprobar a mano."])];
-    }
-    const rec = trace.recortados || [];
-    const sup = trace.solapados || [];
-    const prev = trace.previos || [];
-    if (!rec.length && !sup.length) {
-      // Nada empeora con el cambio. Si YA había contenido recortado de serie, eso
-      // no lo causa el cambio —así que no es una falla de este criterio— pero es
-      // pérdida de contenido real y no se puede dar por bueno en silencio.
-      if (prev.length) {
-        return [F(n, "revisar", null, [
-          "Con " + cambio + " no empeora nada, pero " + prev.length + " bloque(s) YA venían con contenido recortado antes del cambio: " +
-          prev.slice(0, 6).map(function (o) { return o.locator + (o.detalle ? " (" + o.detalle + ")" : ""); }).join(", ") + (prev.length > 6 ? "…" : "") +
-          ". No lo provoca " + cambio + ", pero hay texto que no se puede leer: compruébalo."
-        ], nodesOf(prev))];
-      }
-      const cob = trace.cobertura;
-      if (cob && cob.truncado) {
-        // Con el tope, lo no medido quedaba fuera sin una palabra: la misma tarjeta
-        // que se recorta daba «falla» sola y «cumple» detrás de 400 párrafos.
-        return [F(n, "revisar", null, ["Con " + cambio + " no se recorta ni se solapa ningún bloque de texto de los " + cob.medidos +
-          " medidos, pero la página tiene " + cob.total + ": el resto NO se ha comprobado. Sube el límite para dictaminar."])];
-      }
-      /* Y «cumple» solo si el cambio SURTIÓ EFECTO.
-       *
-       * `html{font-size:200%}` no toca nada cuando los tamaños están en `px`, que es
-       * lo normal, y el criterio salía «cumple · con el texto al 200 % no se recorta
-       * ni se solapa ningún bloque» sobre una medición de efecto nulo. Ahora la fase
-       * dice por qué vía consiguió duplicarlo; si no lo consiguió por ninguna, no hay
-       * nada medido que declarar conforme. */
-      const ef = trace.efecto;
-      if (ef && ef.muestra && !ef.crecioConLaRaiz && !ef.escalados) {
-        return [F(n, "revisar", null, [
-          "No se ha podido aplicar " + cambio + " a la página: ni cambiando el tamaño de la raíz ni escalando los elementos con texto. " +
-          "No hay medición, así que el criterio queda por comprobar a mano (con el zoom de texto del navegador, no el de página)."
-        ])];
-      }
-      return [F(n, "cumple", null, ["Con " + cambio + " no se recorta ni se solapa ningún bloque de texto (" + (trace.revisados || 0) + " elementos medidos" +
-        (ef && ef.via && ef.via !== "raiz" ? "; el tamaño de la raíz no bastaba —la página declara el texto en px— y se escaló el tamaño computado de " + ef.escalados + " elemento(s), que es lo que hace el zoom de texto del navegador" : "") + ")."])];
-    }
-    const ev = [];
-    if (rec.length) ev.push(rec.length + " bloque(s) de texto se recortan al aplicar " + cambio + " (el contenido queda oculto, sin barra de desplazamiento): " +
-      rec.slice(0, 6).map(function (o) { return o.locator + (o.detalle ? " (" + o.detalle + ")" : ""); }).join(", ") + (rec.length > 6 ? "…" : "") + ".");
-    if (sup.length) ev.push(sup.length + " bloque(s) se solapan con el contenido contiguo: " + sup.slice(0, 6).map(function (o) { return o.locator; }).join(", ") + ".");
-    return [F(n, rec.length ? "falla" : "revisar", rec.length ? sevFalla : null, ev, nodesOf(rec.concat(sup)))];
-  }
-
-  /**
-   * 1.4.4 Redimensionar el texto: al 200 % el contenido y la funcionalidad siguen
-   * disponibles, sin pérdida por recorte.
-   */
-  function analyzeResize(trace) {
-    return informeRecorte("1.4.4", "Redimensionar el texto", "el texto al 200 %", trace, "grave");
-  }
-
-  /**
-   * 1.4.12 Espaciado del texto: line-height 1.5, letter-spacing 0.12em,
-   * word-spacing 0.16em y 2em entre párrafos, sin pérdida de contenido.
-   */
-  function analyzeTextSpacing(trace) {
-    return informeRecorte("1.4.12", "Espaciado del texto", "el espaciado de 1.4.12", trace, "grave");
-  }
-
-  /**
-   * 1.3.4 Orientación: el contenido no se restringe a una sola orientación.
-   * @param {{ bloqueoJS?:boolean, mediaBloqueante?:Array<string>, textoVertical?:number, textoHorizontal?:number }} trace
-   */
-  function analyzeOrientation(trace) {
-    if (!trace) return [];
-    const out = [];
-    if (trace.bloqueoJS) {
-      out.push(F("1.3.4", "falla", "grave", ["La página llama a <code>screen.orientation.lock()</code>: fuerza una orientación concreta."]));
-      return out;
-    }
-    if ((trace.mediaBloqueante || []).length) {
-      out.push(F("1.3.4", "revisar", null, ["Hay reglas CSS que ocultan contenido según la orientación (" + trace.mediaBloqueante.slice(0, 3).join(" · ") + "): comprueba que no se pierda nada al girar."]));
-      return out;
-    }
-    const v = trace.textoVertical || 0, h = trace.textoHorizontal || 0;
-    if (v && h) {
-      const perdida = Math.round((1 - Math.min(v, h) / Math.max(v, h)) * 100);
-      if (perdida >= 15) {
-        out.push(F("1.3.4", "revisar", null, ["Al girar el dispositivo cambia un " + perdida + " % la cantidad de texto visible (" + h + " → " + v + " caracteres): revisa que no se pierda contenido en una de las orientaciones."]));
-      } else {
-        out.push(F("1.3.4", "cumple", null, ["El contenido se mantiene en vertical y en horizontal (diferencia del " + perdida + " %) y no hay bloqueo de orientación."]));
-      }
-    }
-    return out;
-  }
-
-  /**
-   * 1.4.13 Contenido al recibir foco o puntero: lo que aparece al pasar el puntero
-   * o al enfocar debe poder descartarse (Esc), poder señalarse con el puntero sin
-   * que desaparezca, y persistir hasta que se retire.
-   *
-   * El atributo `title` está EXENTO de este criterio, y esto emitía un `falla` por él.
-   *
-   * El texto normativo de 1.4.13 termina así: «Exception: The visual presentation of
-   * the additional content is controlled by the user agent and is not modified by the
-   * author». El tooltip nativo del navegador es exactamente eso — lo pinta el agente
-   * de usuario y el autor no lo toca—, así que no se puede fallar 1.4.13 por usar
-   * `title`. Se emitía `falla` moderada en cualquier página con un `<abbr title>`.
-   *
-   * Que `title` sea mala idea sigue siendo verdad, pero por otras vías: no se alcanza
-   * con teclado ni con el dedo, y el soporte en lectores es desigual. Eso aterriza en
-   * 1.1.1, 2.5.3 y 4.1.2 según el caso, no aquí. Así que se dice, y se dice donde
-   * corresponde, sin colgarle al criterio una barrera que su propia excepción excluye.
-   *
-   * @param {{ titles?:Array<{locator:string, texto:string, tieneNombre?:boolean}>,
-   *           hovers?:Array<{locator:string, descartable?:boolean, señalable?:boolean}> }} trace
-   */
-  function analyzeHoverContent(trace) {
-    if (!trace) return [];
-    const out = [];
-    const titles = (trace.titles || []).filter(function (t) { return t.texto && t.texto.trim(); });
-    if (titles.length) {
-      /* Y va como `revisar`, no como `falla`: la excepción del criterio lo excluye.
-       * Lo que queda por decidir no es 1.4.13, sino si esa información solo está ahí
-       * —y entonces el problema es de otro criterio—. */
-      const sinNombre = titles.filter(function (t) { return t.tieneNombre === false; });
-      out.push(F("1.4.13", "revisar", null, [
-        titles.length + " elemento(s) llevan el atributo <code>title</code>. El tooltip nativo lo pinta el navegador y el autor no lo modifica, así que la EXCEPCIÓN de 1.4.13 lo excluye: no es una barrera de este criterio. " +
-        titles.slice(0, 6).map(function (t) { return t.locator + " «" + String(t.texto).slice(0, 30) + "»"; }).join(", ") + (titles.length > 6 ? "…" : "") + ".",
-        "Lo que sí hay que comprobar: que esa información no esté SOLO en el `title`, porque no se alcanza con teclado ni con el dedo y el soporte en lectores es desigual. Si es la única vía, la barrera es de 1.1.1, 2.5.3 o 4.1.2, según lo que aporte." +
-          (sinNombre.length ? " Ojo a " + sinNombre.length + " de ellos, que además no tienen otro nombre accesible." : "")
-      ], nodesOf(titles.map(function (t) { return { locator: t.locator, detalle: t.texto }; }))));
-    }
-    // Acepta los dos juegos de nombres: la sonda real emite `descartableConEsc` y
-    // `senalable` (sin eñe, que viaja mejor dentro del código inyectado).
-    const noDescartable = function (h) { return h.descartable === false || h.descartableConEsc === false; };
-    const noSenalable = function (h) { return h["señalable"] === false || h.senalable === false; };
-    const rotos = (trace.hovers || []).filter(function (h) { return noDescartable(h) || noSenalable(h); });
-    if (rotos.length) {
-      out.push(F("1.4.13", "falla", "grave", [
-        rotos.length + " contenido(s) emergente(s) incumplen: " + rotos.slice(0, 6).map(function (h) {
-          const q = [];
-          if (noDescartable(h)) q.push("no se descarta con Esc");
-          if (noSenalable(h)) q.push("desaparece al llevar el puntero encima");
-          return h.locator + " (" + q.join(" y ") + ")";
-        }).join(", ")
-      ], nodesOf(rotos)));
-    }
-    const sanos = (trace.hovers || []).length - rotos.length;
-    if (!titles.length && !rotos.length) {
-      if (sanos > 0) {
-        out.push(F("1.4.13", "cumple", null, [sanos + " contenido(s) emergente(s) se descartan con Esc y se pueden señalar con el puntero."]));
-      } else if (!trace.hoverProbado) {
-        // No haber encontrado `title` no es haber probado el contenido emergente.
-        // Un tooltip hecho con `:hover` en CSS —que no se cierra con Esc y
-        // desaparece al mover el puntero— es una falla de libro de 1.4.13, y esto
-        // lo daba por conforme.
-        out.push(F("1.4.13", "revisar", null, [
-          "No se han encontrado atributos <code>title</code>, y la sonda de puntero NO llegó a ejecutarse en esta pasada (la capa de adaptación no corrió, o falló). Sin ella no se ha comprobado ningún contenido emergente: compruébalo a mano o vuelve a ejecutar con la capa de viewport activa."
-        ]));
-      } else {
-        const dis = trace.disparadores || 0;
-        out.push(F("1.4.13", "cumple", null, [
-          "Se ha pasado el puntero por " + dis + " disparador(es) de contenido emergente encontrados en el CSS y no ha aparecido ninguno problemático; tampoco hay atributos <code>title</code> usados como tooltip." +
-          (trace.hojasBloqueadas ? " (" + trace.hojasBloqueadas + " hoja(s) de otro origen no se han podido leer: puede haber disparadores fuera de alcance.)" : "")
-        ]));
-      }
-    }
-    return out;
-  }
-
-  /** Agrega las cinco trazas en una sola lista de hallazgos. */
-  function analyzeViewport(traces) {
-    traces = traces || {};
-    return [].concat(
-      analyzeReflow(traces.reflow),
-      analyzeResize(traces.resize),
-      analyzeTextSpacing(traces.spacing),
-      analyzeOrientation(traces.orientation),
-      analyzeHoverContent(traces.hover)
-    );
-  }
-  NS.EXENTOS_REFLUJO = EXENTOS_REFLUJO;
-  NS.analyzeReflow = analyzeReflow;
-  NS.analyzeResize = analyzeResize;
-  NS.analyzeTextSpacing = analyzeTextSpacing;
-  NS.analyzeOrientation = analyzeOrientation;
-  NS.analyzeHoverContent = analyzeHoverContent;
-  NS.analyzeViewport = analyzeViewport;
-})(A11Y);
-
-/* ── dynamic.js ── */
-(function (NS) {
-  const { WCAG22, enClause } = NS;
-  /**
-   * Prueba dinámica de widgets — análisis PURO de la traza capturada.
-   *
-   * Un driver (Playwright o la extensión) opera la página de verdad —tabula, abre,
-   * expande, cambia de pestaña, envía formularios— y captura qué pasó. Estas
-   * funciones interpretan esa traza y emiten veredictos. Son puras y testeables sin
-   * navegador; el driver vive en dynamic-analyze.js.
-   *
-   * Principio: el driver distingue "he comprobado y está mal" de "no he podido
-   * comprobarlo". Estas funciones NUNCA convierten lo segundo en una falla. Si el
-   * clic no llegó a ocurrir, o si se agotó el presupuesto de tabulaciones, el
-   * veredicto es `revisar`, no `falla`.
-   */
-
-  const IX = {};
-  WCAG22.forEach(function (c) { IX[c.n] = { t: c.t, lvl: c.lvl }; });
-  function crit(n) { return { n: n, t: (IX[n] ? IX[n].t : n), lvl: (IX[n] ? IX[n].lvl : "A") }; }
-  function F(n, verdict, sev, evid, nodes) {
-    const f = { c: crit(n), verdict: verdict, sev: sev, evid: evid, scope: "dinámico", en: enClause(n) };
-    if (nodes && nodes.length) f.nodes = nodes;
-    return f;
-  }
-  // Identidad estable de un control en la traza: el uid único del driver si lo hay,
-  // y si no el locator legible (que PUEDE colisionar — por eso el driver manda uid).
-  function key(x) { return (x && (x.uid || x.locator)) || null; }
-  function nodesOf(list) {
-    return (list || []).slice(0, 12).map(function (x) { return { locator: x.locator, name: x.name || "" }; });
-  }
-
-  /**
-   * Operabilidad por teclado real: ¿la tabulación alcanza todos los controles?
-   * @param {{ focusables:Array<{locator:string,uid?:string}>, reached:Array<{locator:string,uid?:string}>,
-   *           trapped?:boolean, exhausted?:boolean, tabs?:number }} trace
-   */
-  function analyzeTabTrace(trace) {
-    const out = [];
-    trace = trace || {};
-    const reached = new Set((trace.reached || []).map(key));
-    const focusables = trace.focusables || [];
-    const unreached = focusables.filter(function (f) { return !reached.has(key(f)); });
-    const inter = trace.interactivos || { sueltos: [], enCompuesto: [] };
-    const sueltos = inter.sueltos || [];
-    const enCompuesto = inter.enCompuesto || [];
-
-    if (trace.trapped) {
-      out.push(F("2.1.2", "falla", "crítica", [
-        "El foco queda atrapado con Tab: no se puede salir del componente solo con teclado." +
-        (trace.atrapadoEn && trace.atrapadoEn.length
-          ? " El recorrido cicla entre " + trace.atrapadoEn.length + " control(es) —" + trace.atrapadoEn.slice(0, 6).join(" → ") +
-            "— y no vuelve a salir, con " + unreached.length + " control(es) del resto de la página sin alcanzar."
-          : "")
-      ], (trace.atrapadoEn || []).slice(0, 8).map(function (l) { return { locator: l, name: "" }; })));
-    }
-
-    /* 2.1.1 sobre los controles INTERACTIVOS que no son enfocables.
-     *
-     * Es el fallo de libro del criterio y no se estaba mirando: el driver enumeraba
-     * lo que YA era enfocable, así que un `div role="button"` sin `tabindex` no
-     * entraba en la lista, no había nada «sin alcanzar», y el análisis emitía 2.1.1
-     * `cumple` con la frase «Todos los controles interactivos se alcanzan con Tab».
-     * Cinco barreras reales invisibles, y la afirmación hecha sin haber mirado uno.
-     *
-     * Los de un widget compuesto con su parada de tabulación (tablist, listbox…) NO
-     * son barrera: el patrón ARIA correcto es una sola parada y las flechas por
-     * dentro. Pero esta prueba no recorre las flechas, así que tampoco puede firmar
-     * que ese widget se opere con teclado: se dice, y el criterio no se cierra. */
-    if (sueltos.length) {
-      out.push(F("2.1.1", "falla", "grave", [
-        sueltos.length + " control(es) con rol de widget no pueden recibir el foco: no son alcanzables con teclado de ninguna manera (sin `tabindex`, y sin un widget compuesto que gestione el foco por ellos). " +
-        sueltos.slice(0, 6).map(function (x) { return x.locator + " (role=" + x.rol + ")"; }).join(", ") + (sueltos.length > 6 ? "…" : "")
-      ], nodesOf(sueltos)));
-    }
-
-    if (!focusables.length && !sueltos.length && !enCompuesto.length) return out;
-
-    // ¿Se ha medido la tabulación? Si la fase se cayó, lo que falta NO se ha comprobado.
-    if (trace.medida === false) {
-      out.push(F("2.1.1", "revisar", null, [
-        "La prueba de tabulación no llegó a ejecutarse (la fase falló), así que de los " + focusables.length +
-        " control(es) enfocables de la página no se sabe si se alcanzan: no es que no se alcancen. Mira los errores de la ejecución y repítela."
-      ], nodesOf(focusables)));
-      return out;
-    }
-
-    if (!unreached.length && !sueltos.length) {
-      if (enCompuesto.length) {
-        out.push(F("2.1.1", "cumple-parcial", null, [
-          "Todos los controles enfocables se alcanzan con Tab (" + focusables.length + "). Además hay " + enCompuesto.length +
-          " control(es) dentro de widgets compuestos (" + enCompuesto.slice(0, 3).map(function (x) { return x.compuesto; }).join(", ") +
-          ") que por diseño no son tabulables y se operan con las flechas: el patrón es el correcto, pero esta prueba no recorre las flechas, así que esa parte queda por comprobar a mano."
-        ], nodesOf(enCompuesto)));
-        return out;
-      }
-      out.push(F("2.1.1", "cumple", null, ["Todos los controles enfocables se alcanzan con Tab (" + focusables.length + "), y no hay ningún control con rol de widget que no pueda recibir el foco."]));
-      return out;
-    }
-    if (!unreached.length) return out;   // lo de `sueltos` ya se ha dicho arriba
-    // No se alcanzaron todos. ¿Es una barrera o es que no terminamos de mirar?
-    // Si la tabulación se cortó (trampa de foco o presupuesto agotado), lo que falta
-    // NO está comprobado: pedir revisión en vez de declarar falla.
-    if (trace.trapped || trace.exhausted) {
-      out.push(F("2.1.1", "revisar", null, [
-        "La tabulación se interrumpió " + (trace.trapped ? "por una trampa de foco" : "al agotar el presupuesto de " + (trace.tabs || "?") + " pulsaciones") +
-        " con " + unreached.length + " control(es) sin alcanzar: no se puede afirmar que sean inalcanzables. Repite la prueba con un presupuesto mayor o revisa a mano."
-      ], nodesOf(unreached)));
-      return out;
-    }
-    out.push(F("2.1.1", "falla", "grave", [
-      unreached.length + " controle(s) no se alcanzan tabulando: " +
-      unreached.slice(0, 6).map(function (u) { return u.locator; }).join(", ") + (unreached.length > 6 ? "…" : "")
-    ], nodesOf(unreached)));
-    return out;
-  }
-
-  /**
-   * Disclosure / expandible: al activar, ¿cambia aria-expanded y el contenido controlado?
-   * @param {Array<{locator:string, name?:string, clicked?:boolean, expandedBefore:string,
-   *                expandedAfter:string, targetShownBefore?:boolean, targetShownAfter?:boolean}>} events
-   */
-  function analyzeDisclosure(events) {
-    const out = [];
-    (events || []).forEach(function (e) {
-      const who = e.locator + (e.name ? " «" + e.name + "»" : "");
-      const nodes = [{ locator: e.locator, name: e.name || "" }];
-      // Si la activación no llegó a ocurrir, no hay nada medido: no inventamos una falla.
-      if (e.clicked === false) {
-        out.push(F("4.1.2", "revisar", null, [
-          who + ": no se pudo activar automáticamente (" + (e.reason || "el control no responde al clic sintético") +
-          "): el cambio de estado queda sin comprobar."
-        ], nodes));
-        return;
-      }
-      if (e.expandedBefore === e.expandedAfter) {
-        out.push(F("4.1.2", "falla", "grave", ["Al activar " + who + ", <code>aria-expanded</code> no cambia (" + e.expandedBefore + "): el estado no se expone tras la interacción."], nodes));
-      } else if (e.targetShownBefore != null && e.targetShownAfter != null && e.targetShownBefore === e.targetShownAfter) {
-        out.push(F("4.1.2", "revisar", null, [who + ": aria-expanded cambia (" + e.expandedBefore + "→" + e.expandedAfter + ") pero el contenido controlado no cambia de visibilidad."], nodes));
-      } else {
-        out.push(F("4.1.2", "cumple", null, [who + ": el estado y el contenido controlado cambian al activar (" + e.expandedBefore + "→" + e.expandedAfter + ")."], nodes));
-      }
-    });
-    return out;
-  }
-
-  /**
-   * Pestañas: al activar una pestaña, ¿se mueve aria-selected y se muestra su panel?
-   * @param {Array<{locator:string, clicked?:boolean, selectedAfter:string, othersSelected:number, panelShown?:boolean}>} events
-   */
-  function analyzeTabs(events) {
-    const out = [];
-    (events || []).forEach(function (e) {
-      const nodes = [{ locator: e.locator, name: e.name || "" }];
-      if (e.clicked === false) {
-        out.push(F("4.1.2", "revisar", null, [e.locator + ": no se pudo activar automáticamente (" + (e.reason || "sin respuesta al clic") + "): sin comprobar."], nodes));
-      } else if (e.selectedAfter !== "true") {
-        out.push(F("4.1.2", "falla", "grave", [e.locator + ": al activarla, aria-selected no pasa a true."], nodes));
-      } else if (e.othersSelected > 0) {
-        out.push(F("4.1.2", "revisar", null, [e.locator + ": hay " + e.othersSelected + " pestaña(s) más marcadas como seleccionadas a la vez."], nodes));
-      } else if (e.panelShown === false) {
-        out.push(F("1.3.1", "revisar", null, [e.locator + ": la pestaña se selecciona pero su tabpanel no se muestra."], nodes));
-      } else {
-        out.push(F("4.1.2", "cumple", null, [e.locator + ": selecciona y muestra su panel correctamente."], nodes));
-      }
-    });
-    return out;
-  }
-
-  /**
-   * Errores de formulario forzados: al enviar con datos inválidos, ¿se identifican
-   * en texto y se anuncian?
-   *
-   * `trace.intercepted` indica que el envío se bloqueó antes de salir a la red (modo
-   * seguro). No cambia el veredicto: la validación de cliente y el marcado ARIA se
-   * producen igual; solo evita tocar el servidor ajeno.
-   *
-   * @param {{ submitted:boolean, intercepted?:boolean, hasAlert?:boolean,
-   *           fields:Array<{locator:string, required:boolean, invalid:boolean,
-   *                         describedbyText?:string, hasAlert?:boolean}> }} trace
-   */
-  function analyzeErrorState(trace) {
-    const out = [];
-    if (!trace || !trace.submitted) return out;
-    const bad = (trace.fields || []).filter(function (f) { return f.required || f.invalid; });
-    if (!bad.length) return out;
-    /* 3.3.1 pide que el error se DESCRIBA EN TEXTO, no que esté asociado por ARIA.
-     *
-     * La técnica suficiente **G83** se satisface con texto de error visible junto al
-     * campo, sin asociación programática (eso es 1.3.1 y 4.1.2, que son otros
-     * criterios y tienen sus propias filas). Mirando solo `aria-describedby`, un
-     * formulario que hace lo que manda G83 —desocultar «Error: el correo es
-     * obligatorio» al lado del campo, más un `role="alert"` con el resumen— salía con
-     * un `falla` **grave** de 3.3.1. Una barrera inventada sobre contenido conforme,
-     * que es lo que destruye la credibilidad de un informe delante de un cliente.
-     *
-     * Así que el texto cuenta venga de donde venga: de `aria-describedby`, de
-     * `aria-errormessage` o del entorno del campo (`errorCercaText`, que el driver
-     * recoge). Si no hay texto en ninguna parte, entonces sí es 3.3.1; si hay texto
-     * pero sin asociar, es 4.1.2 a revisar. */
-    const textoDe = function (f) {
-      return [f.describedbyText, f.errormessageText, f.errorCercaText]
-        .map(function (t) { return String(t || "").trim(); }).filter(Boolean).join(" ");
-    };
-    const sinTexto = bad.filter(function (f) { return !textoDe(f); });
-    const textoSinAsociar = bad.filter(function (f) {
-      return textoDe(f) && !(f.describedbyText || f.errormessageText || "").trim();
-    });
-    const sinInvalid = bad.filter(function (f) { return !f.invalid; });
-    const hayAlerta = (trace.fields || []).some(function (f) { return f.hasAlert; }) || trace.hasAlert;
-    /* Y «se anuncian» hay que haberlo VISTO anunciar.
-     *
-     * `hasAlert` era la simple existencia de un `[role=alert]` o `[aria-live]` en
-     * cualquier parte del documento, vacío o no, relacionado con el error o no. Con
-     * eso se emitía `3.3.1 cumple` y la evidencia «los errores se identifican en
-     * texto, exponen aria-invalid **y se anuncian**»: tres afirmaciones, y ninguna
-     * comprobada. El driver compara ahora el contenido de las regiones live antes y
-     * después del envío (`liveCambio`); mientras no conste ese cambio, el criterio no
-     * se cierra como conforme. */
-    const anuncioVisto = trace.liveCambio === true;
-
-    if (sinTexto.length) out.push(F("3.3.1", "falla", "grave", [sinTexto.length + " campo(s) con error sin ninguna descripción en texto —ni asociada (aria-describedby/errormessage) ni visible junto al campo—: " + sinTexto.slice(0, 6).map(function (f) { return f.locator; }).join(", ") + "."], nodesOf(sinTexto)));
-    if (textoSinAsociar.length) out.push(F("4.1.2", "revisar", null, [textoSinAsociar.length + " campo(s) tienen el texto del error al lado pero sin asociar por ARIA: cumple 3.3.1 (técnica G83) y deja 4.1.2 y 1.3.1 por comprobar. Elementos: " + textoSinAsociar.slice(0, 6).map(function (f) { return f.locator; }).join(", ") + "."], nodesOf(textoSinAsociar)));
-    if (sinInvalid.length) out.push(F("4.1.2", "revisar", null, [sinInvalid.length + " campo(s) en error sin <code>aria-invalid=\"true\"</code>: el estado de error no se expone a la API."], nodesOf(sinInvalid)));
-    if (!hayAlerta) out.push(F("4.1.3", "revisar", null, ["No se detecta un mensaje de estado (role=alert / aria-live) al enviar: revisa que el error se anuncie sin mover el foco."]));
-    else if (!anuncioVisto) out.push(F("4.1.3", "revisar", null, ["Hay una región de estado (role=alert / aria-live) en la página, pero su contenido no ha cambiado al enviar: que exista el contenedor no quiere decir que el error se anuncie. Compruébalo con un lector."]));
-
-    if (!sinTexto.length && !sinInvalid.length) {
-      if (anuncioVisto && !textoSinAsociar.length) {
-        out.push(F("3.3.1", "cumple", null, ["Los errores se identifican en texto asociado al campo, exponen <code>aria-invalid</code>, y el anuncio se ha visto producirse: el contenido de la región de estado cambió al enviar."]));
-      } else {
-        /* Se ha medido lo medible y falta juicio: ni falla ni conforme.
-         *
-         * Y se dice QUÉ se ha medido, que no es lo mismo que lo que pide el criterio.
-         * Lo observado es que al enviar apareció texto nuevo junto al campo; que ese
-         * texto describa el error —y no sea otra cosa que salió a la vez— lo juzga una
-         * persona leyéndolo. Escribir «el error está descrito en texto» sería afirmar
-         * el criterio a partir de un indicio. */
-        out.push(F("3.3.1", "cumple-parcial", null, [
-          (textoSinAsociar.length
-            ? "Al enviar apareció texto nuevo junto a " + textoSinAsociar.length + " campo(s) en error, sin asociar por ARIA — que es lo que admite la técnica G83. Lee ese texto y comprueba que identifica el error: «" +
-              textoDe(textoSinAsociar[0]).slice(0, 120) + "»."
-            : "Cada campo en error tiene texto de error asociado por ARIA.") +
-          (anuncioVisto ? "" : " Y no se ha podido comprobar que el error se ANUNCIE: la región de estado no cambió de contenido al enviar, o no se pudo observar.")
-        ], nodesOf(textoSinAsociar.length ? textoSinAsociar : bad)));
-      }
-    }
-    return out;
-  }
-
-  /**
-   * 3.2.1 Al recibir el foco · 3.2.2 Al recibir entradas.
-   *
-   * Los dos criterios dicen lo mismo con dos disparadores distintos: enfocar un
-   * control (3.2.1) o cambiar su valor (3.2.2) NO puede provocar por sí solo un
-   * cambio de contexto —navegar a otra página, abrir una ventana, mover el foco a
-   * otro sitio, sustituir el contenido— si no se ha avisado antes.
-   *
-   * Esto es medible con lo que la capa dinámica ya hace: tabula y pulsa. Lo único
-   * que faltaba era mirar qué pasa DESPUÉS de enfocar y después de cambiar, y las
-   * tres señales son observables: la URL, dónde está el foco, y una huella del
-   * contenido visible.
-   *
-   * @param {Array<{locator:string, uid:string, disparador:"foco"|"entrada",
-   *                navego:boolean, focoMovido:boolean, contenidoCambio:boolean}>} eventos
-   */
-  function analyzeContextChange(eventos, noSondados, censo) {
-    const out = [];
-    /* Lo que NO se ha sondado sale en la evidencia y, cuando no hay nada que
-     * reprochar, también en el veredicto.
-     *
-     * El driver recorta la lista de candidatos con un tope (veinte por defecto) y
-     * antes no se lo contaba a nadie: en una página de sesenta controles se sondaban
-     * veinte y el criterio salía `pasa`, que `esConforme()` trata como conformidad.
-     * Cuarenta controles sin tocar y 3.2.1 exportado como conforme en el IRA.
-     *
-     * `cumple-parcial` es la palabra exacta para esto —la parte medida está bien, el
-     * resto no se ha mirado— y `esConforme()` ya la excluye. */
-    const fuera = (censo && censo.total > censo.sondados) ? censo.total - censo.sondados : 0;
-    const cola = (noSondados
-      ? " " + noSondados + " control(es) no se pudieron sondar (la página se recargó o cambió durante la prueba): quedan sin comprobar."
-      : "") + (fuera
-      ? " Quedan " + fuera + " de " + censo.total + " control(es) sin sondar por el tope de la prueba (súbelo con `maxContexto`): de esos no se sabe nada."
-      : "");
-    const porCrit = { foco: "3.2.1", entrada: "3.2.2" };
-    ["foco", "entrada"].forEach(function (disp) {
-      const crit = porCrit[disp];
-      const propios = (eventos || []).filter(function (e) { return e.disparador === disp; });
-      if (!propios.length) return;
-
-      const graves = propios.filter(function (e) { return e.navego; });
-      const medios = propios.filter(function (e) { return !e.navego && (e.focoMovido || e.contenidoCambio); });
-      const verbo = disp === "foco" ? "al recibir el foco" : "al cambiar su valor";
-
-      if (graves.length) {
-        out.push(F(crit, "falla", "grave", [
-          graves.length + " control(es) provocan una NAVEGACIÓN " + verbo + ", sin que medie ninguna acción de la persona: " +
-          graves.slice(0, 5).map(function (e) { return e.locator; }).join(", ") +
-          ". Es el caso que " + crit + " prohíbe expresamente." + cola
-        ], graves.slice(0, 8).map(function (e) { return { locator: e.locator, name: "", path: e.uid }; })));
-      }
-      if (medios.length) {
-        out.push(F(crit, "revisar", null, [
-          medios.length + " control(es) cambian algo " + verbo + " sin activarlos: " +
-          medios.slice(0, 5).map(function (e) {
-            const q = [];
-            if (e.focoMovido) q.push("el foco salta a otro sitio");
-            if (e.contenidoCambio) q.push("cambia el contenido visible");
-            return e.locator + " (" + q.join(" y ") + ")";
-          }).join(" · ") +
-          ". " + crit + " lo permite si se ha avisado antes de que iba a pasar: comprueba si hay ese aviso."
-        ], medios.slice(0, 8).map(function (e) { return { locator: e.locator, name: "", path: e.uid }; })));
-      }
-      if (!graves.length && !medios.length) {
-        // Sin nada que reprochar, el veredicto depende de si se miró TODO.
-        const completo = !fuera && !noSondados;
-        out.push(F(crit, completo ? "pasa" : "cumple-parcial", null, [
-          "Se han probado " + propios.length + " control(es) y ninguno provoca navegación, salto de foco ni sustitución de contenido " + verbo + "." + cola
-        ]));
-      }
-    });
-    return out;
-  }
-  NS.analyzeTabTrace = analyzeTabTrace;
-  NS.analyzeDisclosure = analyzeDisclosure;
-  NS.analyzeTabs = analyzeTabs;
-  NS.analyzeErrorState = analyzeErrorState;
-  NS.analyzeContextChange = analyzeContextChange;
-})(A11Y);
-
-/* ── axe-map.js ── */
-(function (NS) {
-  /**
-   * Mapeo de resultados de axe-core a criterios WCAG.
-   *
-   * axe etiqueta cada regla con tags del tipo `wcag412`, `wcag143`, `wcag1410`…
-   * de los que se deriva el número de criterio sin necesidad de una tabla manual.
-   * Los tags de nivel (`wcag2a`, `wcag2aa`, `wcag21aa`…) y de categoría se ignoran.
-   */
-
-  // "wcag412" → "4.1.2" · "wcag1410" → "1.4.10" · "wcag2a" → null (nivel, no criterio)
-  function scFromAxeTag(tag) {
-    const m = /^wcag(\d)(\d)(\d+)$/.exec(tag);
-    if (!m) return null;
-    return m[1] + "." + m[2] + "." + m[3];
-  }
-
-  // Todos los criterios WCAG referenciados por los tags de una regla de axe.
-  function scFromAxeTags(tags) {
-    const out = [];
-    (tags || []).forEach(function (t) {
-      const sc = scFromAxeTag(t);
-      if (sc && out.indexOf(sc) === -1) out.push(sc);
-    });
-    return out;
-  }
-
-  /**
-   * Indexa las violaciones de axe por criterio WCAG.
-   * Devuelve un Map: SC → { sc, rules: [{ id, impact, help, sc, nodes }] }.
-   */
-  function axeViolationsBySC(violations) {
-    const bySC = new Map();
-    (violations || []).forEach(function (v) {
-      const scs = scFromAxeTags(v.tags);
-      scs.forEach(function (sc) {
-        if (!bySC.has(sc)) bySC.set(sc, { sc: sc, rules: [] });
-        bySC.get(sc).rules.push({
-          id: v.id,
-          impact: v.impact || null,
-          help: v.help || "",
-          sc: sc,
-          nodes: (v.nodes || []).length
-        });
-      });
-    });
-    return bySC;
-  }
-  NS.scFromAxeTag = scFromAxeTag;
-  NS.scFromAxeTags = scFromAxeTags;
-  NS.axeViolationsBySC = axeViolationsBySC;
-})(A11Y);
-
 /* ── cuaderno.js ── */
 (function (NS) {
   const { WCAG22, enClause, buildPath, VERDICTS } = NS;
@@ -4283,9 +2752,88 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
 
   /* ── Señales de aplicabilidad ─────────────────────────────────────────────── */
 
-  // Reproductores embebidos. Igual que en la auditoría de página: si hay un
-  // iframe de YouTube, hay medios, aunque el DOM no tenga <video>.
-  const EMBEBIDOS = /youtube\.com|youtu\.be|vimeo\.com|dailymotion|ivoox|spotify\.com|soundcloud|twitch\.tv|kaltura|brightcove|jwplayer|wistia/i;
+  /* Reproductores embebidos RECONOCIDOS. Si hay un iframe de YouTube, hay medios,
+   * aunque el DOM no tenga <video>.
+   *
+   * La lista incluye las plataformas chinas, y no por exotismo: esto se midió contra
+   * un sitio institucional español hecho para el mercado chino, con una página entera
+   * de vídeos, y el cuaderno declaró «1.2.5 no aplica: la página no tiene ningún
+   * vídeo». Los vídeos estaban ahí, en un reproductor que la lista no conocía.
+   */
+  const DOMINIOS_MEDIA = [
+    // Occidentales
+    "youtube\\.com", "youtu\\.be", "vimeo\\.com", "dailymotion\\.com", "ivoox\\.com", "spotify\\.com",
+    "soundcloud\\.com", "twitch\\.tv", "kaltura\\.com", "brightcove\\.net", "brightcove\\.com",
+    "jwplayer\\.com", "jwpcdn\\.com", "wistia\\.(com|net)", "vidyard\\.com", "streamable\\.com",
+    "ted\\.com/talks", "facebook\\.com/plugins/video",
+    // Chinas: imprescindibles para cualquier sitio dirigido a ese mercado
+    "youku\\.com", "bilibili\\.com", "qq\\.com/x?tv", "v\\.qq\\.com", "iqiyi\\.com", "miaopai\\.com",
+    "weibo\\.com/tv", "ixigua\\.com", "douyin\\.com", "tudou\\.com", "letv\\.com", "le\\.com/ptv",
+    "mgtv\\.com", "sohu\\.com/v", "vzuu\\.com", "xinpianchang\\.com",
+    // Tencent Cloud VOD y su TCPlayer. Lo añadió una medición: la página de vídeos de
+    // un sitio real no tiene ni un `<video>` ni un iframe —los vídeos son ENLACES a
+    // `vod-player.html` en `vod2.myqcloud.com`, que se abren en una caja de luz— y con
+    // eso los cuatro criterios de medios salían en blanco en la página que más medios
+    // tiene de toda la muestra. Se nombra el reproductor, no todo `myqcloud.com`, que
+    // también sirve imágenes y CDN.
+    "vod2?\\.myqcloud\\.com", "vod-player", "tcplayer",
+    // Otras regiones
+    "rutube\\.ru", "vk\\.com/video", "nicovideo\\.jp", "tv\\.naver\\.com", "kakao\\.com", "tv\\.kakao"
+  ];
+  /* Cada dominio se ancla a una frontera de host.
+   *
+   * Sin anclar, `le\.com` (LeTV) casa dentro de «goo**gle.com**» y cualquier URL de
+   * Google pasaba por reproductor de vídeo reconocido — incluido el iframe de Maps,
+   * que entonces hacía aplicar 1.2.4 y 1.2.5 en la página de contacto de cualquier
+   * sitio. Es el mismo error que el `\s` colapsado: un patrón que casa dentro de otra
+   * palabra. Lo cazó la sonda del propio arreglo, lo que dice bastante de por qué hay
+   * que probar cada cosa en vez de darla por buena.
+   */
+  const EMBEBIDOS = new RegExp(DOMINIOS_MEDIA.map(function (d) { return "(?:^|[/.])" + d; }).join("|"), "i");
+
+  /* Y un marco que NO reconocemos puede ser un reproductor igual.
+   *
+   * Esta era la raíz del fallo, y no la lista: filtrando por lista blanca, «no está en
+   * la lista» se interpretaba como «no hay medios», y de ahí salía un `no-aplica` —que
+   * es una AFIRMACIÓN, no un hueco— sobre una página llena de vídeos. Para un motor de
+   * fallo seguro el reparto correcto es el contrario: lo reconocido se trata como
+   * medio, lo desconocido deja el criterio PENDIENTE diciendo qué marco hay que mirar,
+   * y solo se declara «no aplica» cuando no hay ni medios propios ni marcos de ninguna
+   * clase.
+   *
+   * Se descartan los marcos que claramente no son medios —mapas, publicidad, analítica,
+   * redes de comentarios— porque dejar el criterio pendiente por el iframe de Google
+   * Maps de la página de contacto es ruido, no prudencia. */
+  const NO_MEDIOS = /maps\.google|google\.com\/maps|openstreetmap|recaptcha|googletagmanager|google-analytics|doubleclick|adservice|disqus|hotjar|intercom|zendesk|facebook\.com\/plugins\/(like|page|comments)|platform\.twitter|about:blank/i;
+
+  /* ¿Hay una alternativa en texto cerca del medio?
+   *
+   * 1.2.1 y 1.2.3 se satisfacen con una transcripción o una alternativa en texto, y eso
+   * no vive dentro del `<video>`: es un enlace o un bloque al lado. Lo que se puede
+   * medir es si existe algo que se anuncie como tal junto al medio; que ese texto sea
+   * una transcripción FIEL lo juzga una persona leyéndolo, y así se dice.
+   *
+   * El léxico va en los mismos idiomas que el de la ayuda, y por el mismo motivo: con
+   * «transcript» y «transcripción» a secas, un sitio chino no tiene ninguna.
+   */
+  const TRANSCRIPCION_RE = /(?:(?:^|\b)(?:transcripci[oó]n|transcrici[oó]n|transcripci[oó]|transcri[çc][aã]o|transcript|texto alternativo|versi[oó]n en texto|audiodescripci[oó]n|audio\s?description|subt[ií]tulos?|subtitles?|captions?)\b)|(?:文字稿|字幕|文稿|音频描述|口述影像)/i;
+
+  /** Lo que hay alrededor de un medio: un enlace o un texto que anuncie alternativa. */
+  function alternativaCerca(el, doc) {
+    let n = el, saltos = 0;
+    while (n && n.parentElement && saltos < 3) {
+      n = n.parentElement; saltos++;
+      const enlaces = Array.prototype.slice.call(n.querySelectorAll("a[href],button"));
+      for (let i = 0; i < enlaces.length; i++) {
+        const t = (enlaces[i].getAttribute("aria-label") || enlaces[i].textContent || "").replace(/\s+/g, " ").trim();
+        if (t && TRANSCRIPCION_RE.test(t)) return { como: "enlace", texto: t.slice(0, 60), locator: loc(enlaces[i]) };
+      }
+      const txt = (n.textContent || "").replace(/\s+/g, " ").trim();
+      if (TRANSCRIPCION_RE.test(txt)) return { como: "texto", texto: txt.slice(0, 60), locator: loc(n) };
+    }
+    void doc;
+    return null;
+  }
 
   function medios(doc) {
     const propios = visibles(doc, "video,audio").map(function (el) {
@@ -4298,10 +2846,15 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         descripciones: pistas.indexOf("descriptions") !== -1
       };
     });
-    const externos = visibles(doc, "iframe[src],embed[src],object[data]").filter(function (el) {
-      return EMBEBIDOS.test(el.getAttribute("src") || el.getAttribute("data") || "");
+    const marcos = visibles(doc, "iframe[src],embed[src],object[data]");
+    const fuente = function (el) { return el.getAttribute("src") || el.getAttribute("data") || ""; };
+    const externos = marcos.filter(function (el) { return EMBEBIDOS.test(fuente(el)); });
+    const dudosos = marcos.filter(function (el) {
+      const u = fuente(el);
+      if (!u || EMBEBIDOS.test(u) || NO_MEDIOS.test(u)) return false;
+      return true;
     });
-    return { propios: propios, externos: externos };
+    return { propios: propios, externos: externos, dudosos: dudosos };
   }
 
   /* 1.3.3 · Instrucciones que dependen de la forma, el color o la posición.
@@ -4416,20 +2969,32 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     return ficha(n, { aplica: false, veredicto: "no-aplica", pregunta: "", comoDecidir: [], loQueYaSabemos: [porque], datos: datos || {} });
   }
 
+  const refMarcoDudoso = function (el) {
+    return ref(el, "marco que NO se ha podido identificar (" +
+      (el.getAttribute("src") || el.getAttribute("data") || "").slice(0, 80) +
+      "): ábrelo y mira si es un reproductor");
+  };
+
   const FICHAS = {
     "1.2.4": function (doc, ctx) {
       const m = ctx.medios;
-      if (!m.propios.length && !m.externos.length) {
-        return noAplica("1.2.4", "La página no tiene ningún <video>, <audio> ni reproductor embebido reconocido: no hay contenido en directo que subtitular.");
+      const dudosos = m.dudosos || [];
+      /* «No aplica» solo si no hay NADA que pueda ser un medio: ni propios, ni
+       * reconocidos, ni marcos sin identificar. Un marco desconocido puede ser un
+       * reproductor, y declarar que el criterio no viene al caso sin haberlo abierto es
+       * afirmar lo que no se sabe. */
+      if (!m.propios.length && !m.externos.length && !dudosos.length) {
+        return noAplica("1.2.4", "La página no tiene ningún <video>, <audio> ni marco embebido de ninguna clase: no hay contenido en directo que subtitular.");
       }
       return ficha("1.2.4", {
         pregunta: "¿Alguno de estos medios es una emisión EN DIRECTO? Si lo es, ¿lleva subtítulos en directo?",
         queMirar: m.propios.map(function (x) { return ref(x.el, "<" + x.tag + ">, pistas: " + (x.pistas.join(", ") || "ninguna")); })
-          .concat(m.externos.map(function (el) { return ref(el, "reproductor embebido: " + (el.getAttribute("src") || el.getAttribute("data") || "").slice(0, 80)); })),
+          .concat(m.externos.map(function (el) { return ref(el, "reproductor embebido: " + (el.getAttribute("src") || el.getAttribute("data") || "").slice(0, 80)); }))
+          .concat(dudosos.map(refMarcoDudoso)),
         loQueYaSabemos: [
           "Si es DIRECTO o grabado no se puede saber desde el marcado: un <video> y una emisión se escriben igual.",
           m.propios.filter(function (x) { return x.subtitulos; }).length + " de " + m.propios.length + " medio(s) propio(s) declaran pista de subtítulos."
-        ],
+        ].concat(dudosos.length ? [dudosos.length + " marco(s) de la página no se han podido identificar: si alguno es un reproductor, este criterio aplica."] : []),
         comoDecidir: [
           "Si ninguno es en directo → no aplica.",
           "Si alguno lo es y no lleva subtítulos sincronizados → falla.",
@@ -4440,8 +3005,9 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
 
     "1.2.5": function (doc, ctx) {
       const videos = ctx.medios.propios.filter(function (x) { return x.tag === "video"; });
-      if (!videos.length && !ctx.medios.externos.length) {
-        return noAplica("1.2.5", "La página no tiene ningún vídeo ni reproductor embebido reconocido: no hay nada que audiodescribir.");
+      const dudosos5 = ctx.medios.dudosos || [];
+      if (!videos.length && !ctx.medios.externos.length && !dudosos5.length) {
+        return noAplica("1.2.5", "La página no tiene ningún vídeo ni marco embebido de ninguna clase: no hay nada que audiodescribir.");
       }
       const sinDesc = videos.filter(function (x) { return !x.descripciones; });
       return ficha("1.2.5", {
@@ -4449,7 +3015,8 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         queMirar: videos.map(function (x) { return ref(x.el, x.descripciones ? "declara <track kind=\"descriptions\">" : "sin pista de descripciones"); })
           .concat(ctx.medios.externos.map(function (el) {
             return ref(el, "reproductor embebido (" + (el.getAttribute("src") || el.getAttribute("data") || "").slice(0, 80) + "): hay que abrirlo para saberlo");
-          })),
+          }))
+          .concat(dudosos5.map(refMarcoDudoso)),
         loQueYaSabemos: [
           sinDesc.length + " de " + videos.length + " vídeo(s) propio(s) no declaran pista de audiodescripción.",
           "Que no la declaren no basta para fallar: la audiodescripción puede estar integrada en el propio audio, y eso solo se sabe viéndolo."
@@ -5288,6 +3855,10 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     return l.join("\n");
   }
   NS.CRITERIOS_DE_JUICIO = CRITERIOS_DE_JUICIO;
+  NS.EMBEBIDOS = EMBEBIDOS;
+  NS.NO_MEDIOS = NO_MEDIOS;
+  NS.alternativaCerca = alternativaCerca;
+  NS.medios = medios;
   NS.cuadernoDeJuicio = cuadernoDeJuicio;
   NS.pendientesDeJuicio = pendientesDeJuicio;
   NS.registrarJuicio = registrarJuicio;
@@ -5295,6 +3866,2332 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   NS.cuadernoDeMuestra = cuadernoDeMuestra;
   NS.aplicaCuaderno = aplicaCuaderno;
   NS.cuadernoTexto = cuadernoTexto;
+})(A11Y);
+
+/* ── page-audit.js ── */
+(function (NS) {
+  const { WCAG22, enClause, EMBEBIDOS, NO_MEDIOS, alternativaCerca } = NS;
+  /**
+   * Auditoría de ÁMBITO DE PÁGINA.
+   *
+   * El motor de componente dictamina rol/nombre/estado/criterios por elemento.
+   * Hay criterios WCAG que solo tienen sentido a nivel de página completa —título,
+   * idioma, landmarks, saltar bloques, jerarquía de encabezados, ids duplicados—.
+   * Este módulo los evalúa sobre el documento renderizado (post-JS).
+   *
+   * `auditPageDoc(doc)` recibe un documento ya parseado; `auditPageHtml(html, DP)`
+   * lo parsea con el DOMParser dado (linkedom en Node, nativo en navegador).
+   */
+
+  const IX = {};
+  WCAG22.forEach(function (c) { IX[c.n] = { t: c.t, lvl: c.lvl }; });
+
+  function crit(n) { return { n: n, t: (IX[n] ? IX[n].t : n), lvl: (IX[n] ? IX[n].lvl : "A") }; }
+  function F(n, verdict, sev, evid, nodes) {
+    const f = { c: crit(n), verdict: verdict, sev: sev, evid: evid, scope: "página", en: enClause(n) };
+    if (nodes && nodes.length) f.nodes = nodes;
+    return f;
+  }
+
+  const HEADING_SEL = "h1,h2,h3,h4,h5,h6,[role=heading]";
+  const tag = function (el) { return el && el.tagName ? el.tagName.toLowerCase() : ""; };
+
+  /**
+   * ¿Está el elemento oculto para todo el mundo?
+   *
+   * Sin CSS aplicado no podemos saberlo todo, pero sí lo declarado: `hidden`,
+   * `aria-hidden="true"`, `display:none`/`visibility:hidden` en línea, `inert`, o
+   * un ancestro en esa situación. Un encabezado o un landmark oculto no cuenta:
+   * antes inflaban el número de landmarks y el salto de jerarquía.
+   */
+  function ocultoEl(el) {
+    let p = el;
+    while (p && p.nodeType === 1) {
+      if (p.hasAttribute("hidden") || p.hasAttribute("inert")) return true;
+      if (p.getAttribute("aria-hidden") === "true") return true;
+      const st = (p.getAttribute("style") || "").replace(/\s+/g, "").toLowerCase();
+      if (/display:none|visibility:hidden/.test(st)) return true;
+      if (tag(p) === "template") return true;
+      p = p.parentElement;
+    }
+    return false;
+  }
+  function visibles(list) { return Array.prototype.slice.call(list).filter(function (el) { return !ocultoEl(el); }); }
+  function loc(el) {
+    const t = tag(el);
+    if (el.id) return t + "#" + el.id;
+    const c = (el.getAttribute("class") || "").trim().split(/\s+/).filter(Boolean)[0];
+    return c ? t + "." + c : t;
+  }
+
+  /**
+   * El <title> del documento: el que está en <head>.
+   *
+   * `doc.querySelector("title")` devolvía también el <title> de un <svg> o de un
+   * <math> —que son texto alternativo del gráfico, no el título de la página—, así
+   * que una página SIN título salía «cumple». Y si había varios <title> en head y el
+   * primero estaba vacío, salía «falla» aunque el siguiente tuviera texto.
+   */
+  function tituloDocumento(doc) {
+    const todos = Array.prototype.slice.call(doc.querySelectorAll("title")).filter(function (t) {
+      let p = t.parentElement;
+      while (p) { const n = tag(p); if (n === "svg" || n === "math") return false; p = p.parentElement; }
+      return true;
+    });
+    const enHead = todos.filter(function (t) { return tag(t.parentElement) === "head"; });
+    const cand = enHead.length ? enHead : todos;
+    let texto = "";
+    for (const t of cand) { const s = (t.textContent || "").trim(); if (s) { texto = s; break; } }
+    return { texto: texto, n: cand.length };
+  }
+
+  // Conjunto (sin duplicados) de elementos que actúan como un landmark dado.
+  function landmarks(doc, role, tags) {
+    const set = new Set();
+    visibles(doc.querySelectorAll("[role=" + role + "]")).forEach(function (el) { set.add(el); });
+    (tags || []).forEach(function (t) {
+      visibles(doc.querySelectorAll(t)).forEach(function (el) {
+        // header/footer solo son banner/contentinfo si NO están dentro de contenido de sección.
+        if ((t === "header" || t === "footer") && enSeccion(el)) return;
+        // Un role explícito distinto gana sobre el rol implícito.
+        const r = (el.getAttribute("role") || "").split(/\s+/)[0];
+        if (r && r !== role) return;
+        set.add(el);
+      });
+    });
+    return Array.from(set); // ojo: slice.call sobre un Set devuelve [] (no tiene length)
+  }
+  function enSeccion(el) {
+    let p = el.parentElement;
+    while (p) { if (["article", "aside", "main", "nav", "section"].indexOf(tag(p)) !== -1) return true; p = p.parentElement; }
+    return false;
+  }
+
+  // Atributos que apuntan a un id. Faltaban la mitad: un id duplicado usado por
+  // aria-errormessage o aria-activedescendant pasaba desapercibido.
+  const IDREF_ATTRS = ["aria-labelledby", "aria-describedby", "aria-controls", "aria-owns",
+    "aria-flowto", "aria-details", "aria-errormessage", "aria-activedescendant", "headers", "list", "popovertarget"];
+
+  /* ── 1.2.x Medios: el inventario SÍ es automatizable ─────────────────────── */
+
+  /**
+   * Qué medios hay y qué pistas declaran.
+   *
+   * Los cinco criterios de 1.2 estaban enteros en el cajón de «evaluación
+   * humana», y la mitad del trabajo no lo es: que un `<video>` no declare NINGUNA
+   * pista de subtítulos es una ausencia determinable desde el marcado, igual que
+   * lo es que una imagen no tenga `alt`. Lo que exige juicio es la CALIDAD —si los
+   * subtítulos están sincronizados, si la audiodescripción cubre lo que hace
+   * falta—, y eso el veredicto lo dice en vez de fingir que lo ha mirado.
+   *
+   * Los medios incrustados de terceros (YouTube, Vimeo) se inventarían aparte: su
+   * contenido no se ve desde aquí, así que se listan para que una persona los
+   * abra, no se dictaminan.
+   */
+  /* La lista de reproductores es UNA, y vive en `cuaderno.js`.
+   *
+   * Aquí había otra: nueve dominios occidentales, sin ninguna plataforma china. Cuando
+   * se arregló el inventario de medios para que reconociera Youku, Bilibili, iQiyi y
+   * compañía, el arreglo entró en `cuaderno.js` —que decide 1.2.4 y 1.2.5— y NO en este
+   * archivo, que decide 1.2.1, 1.2.2 y 1.2.3. Así que el mismo sitio chino tenía sus
+   * reproductores reconocidos para dos criterios y no para los otros tres, y esos tres
+   * salían en blanco. El fallo no era la lista corta: era tener dos listas.
+   */
+  function inventarioMedios(doc) {
+    const propios = [], externos = [], enlaces = [];
+    Array.prototype.forEach.call(doc.querySelectorAll("video,audio"), function (el) {
+      if (ocultoEl(el)) return;
+      const tag = el.tagName.toLowerCase();
+      const pistas = Array.prototype.slice.call(el.querySelectorAll("track")).map(function (t) {
+        return (t.getAttribute("kind") || "subtitles").toLowerCase();
+      });
+      propios.push({
+        tag: tag, locator: loc(el),
+        subtitulos: pistas.indexOf("captions") !== -1 || pistas.indexOf("subtitles") !== -1,
+        descripciones: pistas.indexOf("descriptions") !== -1,
+        pistas: pistas,
+        autoplay: el.hasAttribute("autoplay"),
+        controles: el.hasAttribute("controls"),
+        silenciado: el.hasAttribute("muted"),
+        alternativa: alternativaCerca(el, doc)
+      });
+    });
+    /* Y los marcos DUDOSOS, que es lo que el cuaderno ya hacía para 1.2.4 y 1.2.5.
+     *
+     * Un marco que no se reconoce ni como reproductor ni como otra cosa (un mapa, un
+     * captcha, una analítica) puede ser un reproductor que no está en la lista. El
+     * cuaderno lo trata así desde que se arregló el inventario; aquí no, y el efecto era
+     * que en una página cuyo único medio es un marco desconocido, 1.2.1, 1.2.2 y 1.2.3
+     * no emitían NADA — fila en blanco, que no es lo mismo que «no aplica». */
+    const dudosos = [];
+    Array.prototype.forEach.call(doc.querySelectorAll("iframe[src],embed[src],object[data]"), function (el) {
+      const src = el.getAttribute("src") || el.getAttribute("data") || "";
+      if (ocultoEl(el) || !src) return;
+      const ficha = { locator: loc(el), src: src.slice(0, 120), nombre: (el.getAttribute("title") || "").slice(0, 60) };
+      if (EMBEBIDOS.test(src)) externos.push(ficha);
+      else if (!NO_MEDIOS.test(src)) dudosos.push(ficha);
+    });
+    /* Y los ENLACES a un reproductor o a un archivo de medios.
+     *
+     * Esto lo añadió una medición, no una idea: la página de vídeos de un sitio real no
+     * tiene ni un `<video>` ni un `<iframe>`. Los vídeos son enlaces a un reproductor
+     * externo que se abre en una caja de luz al pulsarlos, así que en el DOM no hay
+     * ningún medio hasta que alguien hace clic — y los cuatro criterios de medios
+     * salían EN BLANCO justamente en la página que más medios tiene de toda la muestra.
+     *
+     * Cuenta el enlace cuyo destino es un reproductor reconocido o un archivo de medios
+     * por extensión. Un enlace a una página que lleve «video» en la ruta no cuenta: eso
+     * es adivinar. */
+    const ARCHIVO_MEDIA = /\.(mp4|m4v|webm|ogv|mov|avi|mkv|mp3|m4a|ogg|oga|wav|flac|m3u8|mpd)(\?|#|$)/i;
+    Array.prototype.forEach.call(doc.querySelectorAll("a[href]"), function (el) {
+      const href = el.getAttribute("href") || "";
+      if (!href || ocultoEl(el)) return;
+      if (!EMBEBIDOS.test(href) && !ARCHIVO_MEDIA.test(href)) return;
+      enlaces.push({
+        locator: loc(el), src: href.slice(0, 120),
+        nombre: (el.getAttribute("aria-label") || el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 60),
+        archivo: ARCHIVO_MEDIA.test(href)
+      });
+    });
+    return { propios: propios, externos: externos, dudosos: dudosos, enlaces: enlaces };
+  }
+
+  /**
+   * 3.1.2 Idioma de las partes: un bloque en otro idioma sin `lang`.
+   *
+   * Detección por palabras funcionales, que son las que de verdad separan idiomas
+   * en textos cortos. No pretende ser un detector de idioma: pretende no callarse
+   * cuando un bloque largo está claramente en otro idioma que el declarado. Por
+   * eso el veredicto es `revisar` y no `falla`.
+   */
+  const FUNCIONALES = {
+    es: ["el", "la", "los", "las", "de", "que", "y", "en", "un", "una", "por", "con", "para", "del", "se", "no", "es", "al", "lo", "su"],
+    en: ["the", "of", "and", "to", "in", "a", "is", "that", "for", "it", "with", "as", "was", "on", "are", "this", "be", "by", "an", "from"],
+    fr: ["le", "la", "les", "des", "et", "est", "un", "une", "pour", "dans", "que", "qui", "par", "sur", "avec", "au", "du", "ne", "pas", "ce"],
+    pt: ["o", "os", "as", "de", "que", "e", "em", "um", "uma", "para", "com", "não", "por", "do", "da", "dos", "das", "no", "na", "se"],
+    gl: ["o", "os", "as", "do", "da", "dos", "das", "e", "en", "un", "unha", "para", "con", "non", "que", "por", "ao", "nos", "se", "é"]
+  };
+  function idiomaProbable(texto) {
+    const palabras = String(texto || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .split(/[^a-z]+/).filter(Boolean);
+    if (palabras.length < 25) return null;   // muy corto: no se puede afirmar nada
+    const punt = {};
+    Object.keys(FUNCIONALES).forEach(function (k) {
+      punt[k] = palabras.filter(function (w) { return FUNCIONALES[k].indexOf(w) !== -1; }).length / palabras.length;
+    });
+    const orden = Object.keys(punt).sort(function (a, b) { return punt[b] - punt[a]; });
+    // Exigir margen: sin diferencia clara entre el primero y el segundo, no se dice.
+    if (punt[orden[0]] < 0.08 || punt[orden[0]] < punt[orden[1]] * 1.6) return null;
+    return orden[0];
+  }
+
+  /* ── Lo que se puede ver en el marcado de los criterios «de interacción» ── */
+
+  /**
+   * 2.2.1 Tiempo ajustable: el temporizador que NADIE puede ajustar.
+   *
+   * `<meta http-equiv="refresh">` es el fallo determinable del criterio: recarga o
+   * redirige sola, sin aviso y sin forma de pararla. WCAG solo la admite con un
+   * retardo mayor de 20 horas (que en la práctica es «desactivada»).
+   */
+  function metaRefresh(doc) {
+    const out = [];
+    Array.prototype.forEach.call(doc.querySelectorAll('meta[http-equiv]'), function (m) {
+      if (String(m.getAttribute("http-equiv") || "").toLowerCase() !== "refresh") return;
+      const c = String(m.getAttribute("content") || "");
+      const seg = parseFloat(c);
+      out.push({ segundos: isNaN(seg) ? null : seg, contenido: c.slice(0, 80), redirige: /url\s*=/i.test(c) });
+    });
+    return out;
+  }
+
+  /**
+   * 2.1.4 Atajos de teclado de un carácter.
+   *
+   * Solo ve los manejadores EN LÍNEA: un `addEventListener` no está en el marcado.
+   * Por eso lo que sale es `revisar` con los candidatos, no un veredicto.
+   */
+  const TECLA_SUELTA = /\b(?:e|ev|evt|event)\.(?:key|which|keyCode|charCode)\s*(?:===?|==)\s*["']?[A-Za-z0-9]["']?/;
+  const CON_MODIFICADOR = /\b(?:e|ev|evt|event)\.(?:ctrlKey|metaKey|altKey|shiftKey)/;
+  function atajosDeUnaTecla(doc) {
+    const out = [];
+    const ATTR = ["onkeydown", "onkeyup", "onkeypress"];
+    Array.prototype.forEach.call(doc.querySelectorAll("[onkeydown],[onkeyup],[onkeypress]"), function (el) {
+      ATTR.forEach(function (a) {
+        const code = el.getAttribute(a);
+        if (!code) return;
+        if (TECLA_SUELTA.test(code) && !CON_MODIFICADOR.test(code)) {
+          out.push({ locator: loc(el), attr: a, code: code.replace(/\s+/g, " ").slice(0, 70) });
+        }
+      });
+    });
+    // Y los scripts en línea, que es donde suele estar de verdad.
+    Array.prototype.forEach.call(doc.querySelectorAll("script:not([src])"), function (sc) {
+      const code = String(sc.textContent || "");
+      if (/addEventListener\s*\(\s*["']key(down|press|up)["']/.test(code) && TECLA_SUELTA.test(code) && !CON_MODIFICADOR.test(code)) {
+        out.push({ locator: "script (en línea)", attr: "addEventListener", code: (TECLA_SUELTA.exec(code) || [""])[0].slice(0, 70) });
+      }
+    });
+    return out;
+  }
+
+  /**
+   * 2.5.1 / 2.5.2 / 2.5.4 / 2.5.7: candidatos de puntero, gesto y movimiento.
+   *
+   * Aquí no se dictamina nada: se localiza DÓNDE hay que mirar. Un `touchstart`,
+   * un `pointerdown`, un `devicemotion` o un `draggable` no son una barrera por sí
+   * mismos, pero son los únicos sitios donde estos cuatro criterios pueden fallar,
+   * y encontrarlos a mano en un sitio grande es lo que cuesta.
+   */
+  const SONDAS_PUNTERO = [
+    { crit: "2.5.1", etiqueta: "gestos de varios puntos o trazado", re: /\b(touchmove|gesturestart|gesturechange|pinch|swipe|hammer|interact\.js)\b/i },
+    { crit: "2.5.2", etiqueta: "acciones en la pulsación (down) en vez de en la soltada (up)", re: /\b(onmousedown|onpointerdown|ontouchstart)\b/i },
+    { crit: "2.5.4", etiqueta: "actuación por movimiento del dispositivo", re: /\b(devicemotion|deviceorientation|DeviceMotionEvent|DeviceOrientationEvent|shake)\b/i },
+    { crit: "2.5.7", etiqueta: "movimientos de arrastre", re: /\b(dragstart|ondragstart|draggable\s*=|sortable|dnd-|drag-and-drop)\b/i }
+  ];
+  function candidatosPuntero(doc) {
+    const porCrit = {};
+    const fuentes = [];
+    Array.prototype.forEach.call(doc.querySelectorAll("*"), function (el) {
+      const attrs = el.attributes || [];
+      for (let i = 0; i < attrs.length; i++) {
+        const n = attrs[i].name.toLowerCase();
+        if (n.indexOf("on") === 0 || n === "draggable") fuentes.push({ locator: loc(el), texto: n + "=" + String(attrs[i].value || "").slice(0, 40) });
+      }
+    });
+    Array.prototype.forEach.call(doc.querySelectorAll("script:not([src])"), function (sc) {
+      fuentes.push({ locator: "script (en línea)", texto: String(sc.textContent || "").slice(0, 4000) });
+    });
+    SONDAS_PUNTERO.forEach(function (sonda) {
+      const hits = fuentes.filter(function (f) { return sonda.re.test(f.texto); });
+      if (hits.length) porCrit[sonda.crit] = { etiqueta: sonda.etiqueta, hits: hits.slice(0, 6) };
+    });
+    return porCrit;
+  }
+
+  function auditPageDoc(doc) {
+    const out = [];
+    const html = doc.documentElement;
+
+    // 2.4.2 Titulada
+    const t = tituloDocumento(doc);
+    out.push(t.texto
+      ? F("2.4.2", "cumple-parcial", null, ["La página declara <title>: «" + t.texto.slice(0, 80) + "». Que sea descriptivo y único en el sitio exige juicio humano."])
+      : F("2.4.2", "falla", "grave", ["La página no tiene <title> en <head> o está vacío: se anuncia por su URL."]));
+
+    // 3.1.1 Idioma de la página. BCP-47 NO distingue mayúsculas: lang="ES" y
+    // lang="es-ES" son válidos, y antes se marcaban a revisar.
+    const lang = html ? (html.getAttribute("lang") || "").trim() : "";
+    const xmlLang = html ? (html.getAttribute("xml:lang") || "").trim() : "";
+    const efectivo = lang || xmlLang;
+    if (!efectivo) out.push(F("3.1.1", "falla", "grave", ["<html> no declara el atributo lang: el lector no sabe en qué idioma leer."]));
+    else if (!/^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i.test(efectivo)) out.push(F("3.1.1", "falla", "grave", ["<html lang=\"" + efectivo + "\"> no es una etiqueta de idioma BCP-47 válida."]));
+    else if (lang && xmlLang && lang.toLowerCase() !== xmlLang.toLowerCase()) out.push(F("3.1.1", "revisar", null, ["lang=\"" + lang + "\" y xml:lang=\"" + xmlLang + "\" no coinciden."]));
+    else out.push(F("3.1.1", "cumple", null, ["Idioma declarado: lang=\"" + efectivo + "\"."]));
+
+    // 1.3.1 Landmarks: exactamente un main; banner/contentinfo no duplicados
+    const mains = landmarks(doc, "main", ["main"]);
+    if (mains.length === 0) out.push(F("1.3.1", "revisar", null, ["No hay landmark <main>: dificulta ir directo al contenido principal."]));
+    else if (mains.length > 1) out.push(F("1.3.1", "falla", "moderada", ["Hay " + mains.length + " landmarks main: debe haber solo uno."], mains.map(function (e) { return { locator: loc(e) }; })));
+    const banners = landmarks(doc, "banner", ["header"]);
+    const infos = landmarks(doc, "contentinfo", ["footer"]);
+    if (banners.length > 1) out.push(F("1.3.1", "revisar", null, ["Hay " + banners.length + " landmarks banner: normalmente debe haber uno."], banners.map(function (e) { return { locator: loc(e) }; })));
+    if (infos.length > 1) out.push(F("1.3.1", "revisar", null, ["Hay " + infos.length + " landmarks contentinfo: normalmente debe haber uno."], infos.map(function (e) { return { locator: loc(e) }; })));
+
+    /* 2.4.1 Saltar bloques.
+     *
+     * Un enlace de salto de verdad cumple TRES cosas, y hasta ahora solo se
+     * comprobaba una. Que el destino exista ya se comprobaba —antes valía cualquier
+     * `a[href^='#']`, incluido el `href="#"` de un botón falso—. Faltaban las otras
+     * dos, y sin ellas el criterio se daba por casi cumplido con un ancla cualquiera:
+     *
+     *  - Tiene que estar al PRINCIPIO: si para llegar al enlace de salto hay que
+     *    tabular por el menú entero, no sirve de nada. Se exige que esté entre los
+     *    primeros controles enfocables del documento. El acordeón de una ficha o un
+     *    «volver arriba» del pie apuntan a destinos que existen y no son saltos.
+     *  - Tiene que SALTAR algo: el destino va después de parte del contenido
+     *    repetido. Un ancla cuyo destino está antes que el menú no se salta nada.
+     *
+     * `cumple-parcial` no es conforme, así que esto no era una conformidad falsa;
+     * pero sí una evidencia que afirmaba un mecanismo que la página no tiene. */
+    const enfocables = visibles(doc.querySelectorAll("a[href],button,input,select,textarea,summary,[tabindex]"))
+      .filter(function (el) { return (el.getAttribute("tabindex") || "0").charAt(0) !== "-"; });
+    const anclas = visibles(doc.querySelectorAll("a[href^='#']"));
+    const destinoDe = function (a) {
+      const h = (a.getAttribute("href") || "").slice(1);
+      if (!h) return null;
+      try { return doc.getElementById(h) || doc.querySelector('a[name="' + h.replace(/"/g, '\\"') + '"]') || null; } catch (e) { return null; }
+    };
+    /* ¿Cuánto hay que tabular para llegar? Se mide sobre la lista de enfocables, que
+     * es lo que de verdad recorre quien usa el teclado. Tres es holgado: lo normal es
+     * que el enlace de salto sea el primero. */
+    const ordenEnfocable = function (el) { return enfocables.indexOf(el); };
+    /* El orden del documento se saca de un índice propio, no de
+     * `compareDocumentPosition`.
+     *
+     * Lo escribí con `compareDocumentPosition` y la sonda lo cazó en el primer
+     * intento: en linkedom no está implementado, así que devolvía `undefined`, la
+     * máscara de bits daba 0 y TODO quedaba «antes de todo». El enlace de salto bueno
+     * se rechazaba y la cuenta de controles previos salía 0 siempre — un dato falso en
+     * la evidencia, que es peor que no darlo. El motor corre en linkedom y en el
+     * navegador, así que la comparación tiene que funcionar en los dos. */
+    const orden = new Map();
+    Array.prototype.forEach.call(doc.querySelectorAll("*"), function (el, i) { orden.set(el, i); });
+    const pos = function (el) { const v = orden.get(el); return v == null ? -1 : v; };
+    const anclasConDestino = anclas.map(function (a) { return { a: a, d: destinoDe(a) }; }).filter(function (x) { return !!x.d; });
+    const salto = anclasConDestino.find(function (x) {
+      const i = ordenEnfocable(x.a);
+      if (i < 0 || i > 2) return false;
+      // ¿Se salta algo? El destino va DESPUÉS del enlace, y con contenido enfocable
+      // por medio: un ancla que apunta a lo que tiene justo al lado no salta nada.
+      const pa = pos(x.a), pd = pos(x.d);
+      return pa >= 0 && pd > pa;
+    });
+    // Cuántos controles se ahorra quien lo usa: un dato, no una condición. Exigir que
+    // ahorrase al menos uno rechazaba un enlace de salto legítimo en una página sin
+    // bloque repetido por delante, que es justo la página donde 2.4.1 no pide nada.
+    const saltados = salto
+      ? enfocables.filter(function (el) { const p = pos(el); return p > pos(salto.a) && p < pos(salto.d); }).length
+      : 0;
+    /* Y el destino tiene que ser el CONTENIDO, no un sitio cualquiera más abajo.
+     *
+     * Estructuralmente, el `<a href="#panel">Desplegar</a>` que abre un acordeón al
+     * principio de una ficha es idéntico a un enlace de salto: primer enfocable, y su
+     * destino está detrás del menú. Lo comprobé y pasaba por enlace de salto. Por el
+     * nombre no se puede distinguir sin atarse a un idioma —este sitio está en chino—,
+     * así que se distingue por el destino: `cumple-parcial` solo si apunta al landmark
+     * `main` o a algo de dentro. Cualquier otro destino se nombra y se deja a revisar,
+     * que es lo que es: puede ser un salto a un `div#contenido` sin landmark, o puede
+     * ser un botón falso. */
+    const alContenido = salto && mains.some(function (m) { return m === salto.d || (m.contains && m.contains(salto.d)); });
+    const navs = visibles(doc.querySelectorAll("nav,[role=navigation]"));
+    const headings = visibles(doc.querySelectorAll(HEADING_SEL)).map(function (h) {
+      const n = tag(h);
+      const lvl = /^h[1-6]$/.test(n) ? parseInt(n[1], 10) : parseInt(h.getAttribute("aria-level") || "2", 10);
+      return { lvl: lvl, text: (h.textContent || "").trim().slice(0, 40), el: h };
+    });
+    if (salto && alContenido) {
+      out.push(F("2.4.1", "cumple-parcial", null, ["Hay un enlace de salto al contenido principal (" + salto.a.getAttribute("href") + "), entre los primeros controles enfocables; se ahorra " + saltados + " control(es). Confirma que sea visible al recibir el foco."], [{ locator: loc(salto.a) }]));
+    } else if (salto) {
+      out.push(F("2.4.1", "revisar", null, [
+        "Hay un ancla interna entre los primeros controles enfocables (" + salto.a.getAttribute("href") + ", se salta " + saltados + " control(es)), pero su destino no es el landmark `main` ni está dentro de él.",
+        "Puede ser un enlace de salto a un contenedor sin landmark —y entonces vale— o un control que despliega algo, que no tiene nada que ver con 2.4.1. Míralo: es lo único que separa las dos cosas."
+      ], [{ locator: loc(salto.a) }]));
+    } else if (mains.length || navs.length || headings.length) {
+      /* `revisar`, y con los datos puestos para que se pueda decidir en diez
+       * segundos. La evidencia decía «hay landmarks/encabezados» juntando las dos
+       * cosas: medido en un sitio real, cero `main`, cero `nav`, cero anclas internas
+       * y catorce encabezados — y el informe decía «landmarks», que la página no
+       * tiene. Lo que decide a mano este criterio son tres números y una advertencia,
+       * así que van los tres números y la advertencia. */
+      /* ¿Cuánto cuesta llegar al contenido? Hasta el `main` si lo hay, y si no hasta
+       * el primer encabezado, que es lo único que marca dónde empieza el contenido en
+       * una página sin landmarks. */
+      const ancla = mains.length ? mains[0] : (headings.length ? headings[0].el : null);
+      const pAncla = ancla ? pos(ancla) : -1;
+      const antesDelContenido = pAncla >= 0
+        ? enfocables.filter(function (el) { return pos(el) < pAncla; }).length
+        : enfocables.length;
+      const haciaDonde = mains.length ? "llegar al landmark main" : "llegar al primer encabezado";
+      const anclasNoSalto = anclasConDestino.length;
+      out.push(F("2.4.1", "revisar", null, [
+        "No hay enlace de salto utilizable" +
+        (anclasNoSalto ? " (hay " + anclasNoSalto + " ancla(s) interna(s) con destino válido, pero ninguna está entre los primeros controles enfocables apuntando hacia delante: no son enlaces de salto)" : "") +
+        ". Lo que hay como mecanismo alternativo: " +
+        [mains.length ? mains.length + " landmark main" : null,
+          navs.length ? navs.length + " landmark(s) de navegación" : null,
+          headings.length ? headings.length + " encabezado(s)" : null].filter(Boolean).join(", ") + ".",
+        "Hay que tabular por " + antesDelContenido + " control(es) para " + haciaDonde + ", de " + enfocables.length + " enfocables en la página.",
+        "WCAG admite los landmarks (ARIA11) y los encabezados (H69) como técnicas suficientes, así que esto no se firma como falla desde aquí. Pero decide tú: landmarks y encabezados solo se navegan con tecnología de apoyo, y quien usa el teclado sin lector de pantalla no tiene con qué saltar el bloque repetido. Es el motivo habitual para firmarlo como barrera."
+      ]));
+    } else {
+      out.push(F("2.4.1", "falla", "moderada", ["No hay enlace de salto ni landmarks ni encabezados para saltar bloques repetidos: " + enfocables.length + " control(es) enfocable(s) que hay que recorrer en cada página."]));
+    }
+
+    // 2.4.6 / 1.3.1 Encabezados: existe h1 y sin saltos de nivel (solo los visibles)
+    if (!headings.length) {
+      out.push(F("1.3.1", "revisar", null, ["La página no tiene encabezados visibles: no hay estructura navegable por títulos."]));
+    } else {
+      const hasH1 = headings.some(function (h) { return h.lvl === 1; });
+      let skip = null, skipEl = null, prev = 0;
+      for (const h of headings) { if (prev && h.lvl > prev + 1) { skip = prev + "→" + h.lvl; skipEl = h.el; break; } prev = h.lvl; }
+      const vacios = headings.filter(function (h) { return !h.text; });
+      if (!hasH1) out.push(F("2.4.6", "revisar", null, ["No hay un encabezado de nivel 1 (h1) en la página."]));
+      if (skip) out.push(F("1.3.1", "revisar", null, ["Salto en la jerarquía de encabezados (" + skip + "): revisa que el orden de niveles sea correcto."], skipEl ? [{ locator: loc(skipEl) }] : null));
+      if (vacios.length) out.push(F("2.4.6", "falla", "moderada", [vacios.length + " encabezado(s) sin texto: anuncian un nivel vacío."], vacios.map(function (h) { return { locator: loc(h.el) }; })));
+      if (hasH1 && !skip && !vacios.length) out.push(F("2.4.6", "cumple-parcial", null, [headings.length + " encabezados con jerarquía sin saltos; la calidad del texto exige juicio."]));
+    }
+
+    // 1.3.1 / 4.1.2 IDs: duplicados usados en relaciones, y referencias colgantes
+    const idCount = {};
+    Array.prototype.forEach.call(doc.querySelectorAll("[id]"), function (el) {
+      const id = el.getAttribute("id"); if (id) idCount[id] = (idCount[id] || 0) + 1;
+    });
+    const referenced = {};
+    IDREF_ATTRS.forEach(function (attr) {
+      Array.prototype.forEach.call(doc.querySelectorAll("[" + attr + "]"), function (el) {
+        const multi = attr !== "aria-activedescendant" && attr !== "list" && attr !== "popovertarget";
+        const v = (el.getAttribute(attr) || "").trim();
+        (multi ? v.split(/\s+/) : [v]).forEach(function (id) { if (id) (referenced[id] = referenced[id] || []).push(el); });
+      });
+    });
+    Array.prototype.forEach.call(doc.querySelectorAll("label[for]"), function (el) {
+      const f = el.getAttribute("for"); if (f) (referenced[f] = referenced[f] || []).push(el);
+    });
+    const dupRef = Object.keys(idCount).filter(function (id) { return idCount[id] > 1 && referenced[id]; });
+    if (dupRef.length) out.push(F("1.3.1", "falla", "grave", ["IDs duplicados usados en relaciones ARIA/label: " + dupRef.slice(0, 8).join(", ") + " — la relación se vuelve ambigua."]));
+    const colgantes = Object.keys(referenced).filter(function (id) { return !idCount[id]; });
+    if (colgantes.length) {
+      out.push(F("4.1.2", "falla", "grave", ["Referencias a IDs que no existen: " + colgantes.slice(0, 8).join(", ") + " — el nombre, la descripción o la relación no llegan a la API de accesibilidad."],
+        colgantes.slice(0, 8).map(function (id) { return { locator: loc(referenced[id][0]), name: id }; })));
+    }
+
+    /* ── 1.2.x Medios ── */
+    const medios = inventarioMedios(doc);
+    const dudosos = medios.dudosos || [], enlazados = medios.enlaces || [];
+    if (medios.propios.length || medios.externos.length || dudosos.length || enlazados.length) {
+      const videos = medios.propios.filter(function (m) { return m.tag === "video"; });
+      const audios = medios.propios.filter(function (m) { return m.tag === "audio"; });
+      const sinSub = videos.filter(function (m) { return !m.subtitulos; });
+      const sinDesc = videos.filter(function (m) { return !m.descripciones; });
+
+      if (sinSub.length) {
+        out.push(F("1.2.2", "falla", "grave", [
+          sinSub.length + " vídeo(s) no declaran ninguna pista de subtítulos (<track kind=\"captions\">): " +
+          sinSub.slice(0, 5).map(function (m) { return m.locator; }).join(", ") +
+          ". La ausencia de pista sí es determinable; que los subtítulos existentes sean correctos, no."
+        ], sinSub.slice(0, 8).map(function (m) { return { locator: m.locator, name: "sin subtítulos" }; })));
+      } else if (videos.length) {
+        out.push(F("1.2.2", "cumple-parcial", null, [
+          "Los " + videos.length + " vídeo(s) declaran pista de subtítulos. Que estén completos, sincronizados y en el idioma correcto exige verlos."
+        ]));
+      }
+      if (sinDesc.length) {
+        /* «Ni se detecta una alternativa» era una afirmación que no se comprobaba.
+         *
+         * 1.2.3 se satisface con una alternativa en texto, y eso no vive dentro del
+         * `<video>`: es un enlace o un bloque al lado. Ahora se busca —en los mismos
+         * idiomas que el léxico de ayuda, chino incluido— y se distingue el vídeo que
+         * no tiene nada del que tiene algo que se anuncia como transcripción, que son
+         * dos sitios muy distintos a los que mandar a quien audita. */
+        const conTexto = sinDesc.map(function (m) { return { m: m, alt: m.alternativa }; }).filter(function (x) { return !!x.alt; });
+        const pelados = sinDesc.filter(function (m) { return !m.alternativa; });
+        out.push(F("1.2.3", "revisar", null, [
+          pelados.length
+            ? pelados.length + " vídeo(s) no declaran pista de audiodescripción (<track kind=\"descriptions\">) y NO se encuentra junto a ellos nada que se anuncie como transcripción o alternativa en texto: " +
+              pelados.slice(0, 5).map(function (m) { return m.locator; }).join(", ") + "."
+            : "Ningún vídeo se queda sin audiodescripción ni sin algo al lado que se anuncie como alternativa en texto.",
+          conTexto.length
+            ? conTexto.length + " vídeo(s) sin pista de descripciones pero con una alternativa anunciada al lado (" +
+              conTexto.slice(0, 4).map(function (x) { return x.m.locator + " → «" + x.alt.texto + "»"; }).join("; ") +
+              "): 1.2.3 se satisface con una alternativa en texto completa, así que lee eso y comprueba que cuenta lo que pasa en el vídeo."
+            : null
+        ].filter(Boolean), sinDesc.slice(0, 8).map(function (m) { return { locator: m.locator, name: m.alternativa ? "alternativa anunciada al lado" : "sin audiodescripción" }; })));
+      }
+      if (audios.length) {
+        const sinTranscripcion = audios.filter(function (m) { return !m.alternativa; });
+        out.push(F("1.2.1", "revisar", null, [
+          audios.length + " elemento(s) de solo audio (" + audios.map(function (m) { return m.locator; }).join(", ") + ").",
+          sinTranscripcion.length
+            ? sinTranscripcion.length + " de ellos no tienen al lado nada que se anuncie como transcripción (" +
+              sinTranscripcion.slice(0, 5).map(function (m) { return m.locator; }).join(", ") + "): 1.2.1 exige una alternativa en texto equivalente."
+            : "Todos tienen al lado algo que se anuncia como transcripción (" +
+              audios.slice(0, 4).map(function (m) { return m.locator + " → «" + m.alternativa.texto + "»"; }).join("; ") +
+              "): léela y comprueba que es equivalente."
+        ], audios.slice(0, 8).map(function (m) { return { locator: m.locator, name: "solo audio" }; })));
+      }
+      if (medios.externos.length) {
+        out.push(F("1.2.2", "revisar", null, [
+          medios.externos.length + " medio(s) incrustados de terceros (" +
+          medios.externos.slice(0, 4).map(function (m) { return m.locator + " → " + m.src.replace(/^https?:\/\//, "").slice(0, 45); }).join(", ") +
+          "): su contenido no se ve desde aquí. Ábrelos y comprueba subtítulos y audiodescripción en el propio reproductor."
+        ], medios.externos.slice(0, 8).map(function (m) { return { locator: m.locator, name: m.nombre || "medio incrustado" }; })));
+      }
+
+      /* Lo que aplica a los tres criterios se dice en los TRES.
+       *
+       * Esta nota salía solo bajo 1.2.2 — y su propio texto dice «1.2.1, 1.2.2 y 1.2.3
+       * aplican». Medido en la cuarta pasada contra el sitio real: 1.2.2 apareció y
+       * 1.2.1 y 1.2.3 siguieron en blanco por la misma página y el mismo marco. Una
+       * fila en blanco no es «no aplica», que es el defecto que esto venía a arreglar. */
+      const notaMedios = function (texto, nodos) {
+        ["1.2.1", "1.2.2", "1.2.3"].forEach(function (c) { out.push(F(c, "revisar", null, [texto], nodos)); });
+      };
+      if (dudosos.length) {
+        notaMedios(
+          dudosos.length + " marco(s) no se reconocen ni como reproductor ni como otra cosa (" +
+          dudosos.slice(0, 4).map(function (m) { return m.locator + " → " + m.src.replace(/^https?:\/\//, "").slice(0, 45); }).join(", ") +
+          "): pueden ser reproductores que no están en la lista. Ábrelos: si llevan vídeo o audio, 1.2.1, 1.2.2 y 1.2.3 aplican y hay que comprobarlos ahí.",
+          dudosos.slice(0, 8).map(function (m) { return { locator: m.locator, name: m.nombre || "marco sin reconocer" }; }));
+      }
+      if (enlazados.length) {
+        const conArchivo = enlazados.filter(function (m) { return m.archivo; });
+        notaMedios(
+          enlazados.length + " enlace(s) llevan a un reproductor externo o a un archivo de medios (" +
+          enlazados.slice(0, 4).map(function (m) { return m.locator + (m.nombre ? " «" + m.nombre + "»" : "") + " → " + m.src.replace(/^https?:\/\//, "").slice(0, 55); }).join(", ") +
+          (enlazados.length > 4 ? ", …" : "") + "). " +
+          (conArchivo.length ? conArchivo.length + " apuntan a un archivo de medios directamente. " : "") +
+          "Son medios que la página ofrece aunque no haya ningún `<video>` en el DOM —se abren al pulsarlos—, así que 1.2.1, 1.2.2 y 1.2.3 aplican: ábrelos y comprueba ahí subtítulos, audiodescripción y transcripción.",
+          enlazados.slice(0, 8).map(function (m) { return { locator: m.locator, name: m.nombre || "enlace a medio" }; }));
+      }
+
+      /* 1.4.2 Control del audio: lo que suena solo y no se puede parar.
+       *
+       * Y cuando NO hay nada que suene solo, también se dice. Era el último «No
+       * evaluado» de los 55 subcriterios: solo hablaba al encontrar un medio con
+       * `autoplay`, así que en un sitio sin `<video>` ni `<audio>` en el DOM —el caso
+       * medido: 26 vídeos ofrecidos como enlaces a un reproductor externo— la fila
+       * quedaba vacía. El criterio sí se puede acotar: lo que 1.4.2 prohíbe es el audio
+       * que arranca SOLO al cargar, y un medio que se abre al pulsarlo no es automático.
+       * Eso es un `cumple-parcial` medido, no una fila en blanco. */
+      const suenanSolos = medios.propios.filter(function (m) { return m.autoplay && !m.silenciado; });
+      if (medios.propios.length && !suenanSolos.length) {
+        /* Hay medios y ninguno arranca con sonido: eso también es un resultado. */
+        out.push(F("1.4.2", "cumple-parcial", null, [
+          "Los " + medios.propios.length + " medio(s) de la página (" + medios.propios.map(function (m) { return m.locator; }).join(", ") +
+          ") no arrancan solos con sonido: " +
+          (medios.propios.filter(function (m) { return m.autoplay; }).length
+            ? "los que llevan `autoplay` están silenciados."
+            : "ninguno declara `autoplay`.") +
+          " 1.4.2 prohíbe el audio que empieza solo al cargar, y aquí no empieza ninguno.",
+          "Queda fuera lo que arranque por JavaScript después de cargar (un `play()` diferido, un `muted = false`) y el audio que venga dentro de un marco: compruébalo cargando la página con el volumen puesto."
+        ]));
+      }
+      if (!medios.propios.length && (enlazados.length || medios.externos.length || dudosos.length)) {
+        out.push(F("1.4.2", "cumple-parcial", null, [
+          "No hay ningún `<video>` ni `<audio>` en la página, así que nada arranca con sonido al cargar: lo que 1.4.2 prohíbe es el audio automático, y los " +
+          (enlazados.length + medios.externos.length + dudosos.length) + " medio(s) que la página ofrece se abren al pulsarlos, lo que no es automático.",
+          "Queda por comprobar una cosa, y es la que importa: que al abrir ese reproductor el audio no empiece solo sin forma de pararlo —varios de estos enlaces llevan `autoplay` en la URL— y que el reproductor tenga sus controles alcanzables con el teclado. Eso se ve abriéndolo."
+        ]));
+      }
+      if (suenanSolos.length) {
+        const sinControl = suenanSolos.filter(function (m) { return !m.controles; });
+        out.push(sinControl.length
+          ? F("1.4.2", "falla", "grave", [
+              sinControl.length + " medio(s) con <code>autoplay</code>, sin silenciar y SIN controles: " +
+              sinControl.map(function (m) { return m.locator; }).join(", ") +
+              ". Si suena más de 3 segundos no hay forma de pararlo, que es justo lo que prohíbe 1.4.2."
+            ], sinControl.slice(0, 8).map(function (m) { return { locator: m.locator, name: "autoplay sin control" }; }))
+          : F("1.4.2", "revisar", null, [
+              suenanSolos.length + " medio(s) se reproducen solos con sonido pero ofrecen controles: comprueba que el mecanismo de parada esté al principio del orden de tabulación."
+            ], suenanSolos.slice(0, 8).map(function (m) { return { locator: m.locator, name: "autoplay con control" }; })));
+      }
+    }
+
+    /* ── 2.2.1 Tiempo ajustable ── */
+    const refrescos = metaRefresh(doc);
+    refrescos.forEach(function (r) {
+      // El único umbral que WCAG admite son 20 horas: por debajo, o se puede
+      // ajustar/parar/extender, o es una falla.
+      if (r.segundos != null && r.segundos > 72000) return;
+      out.push(F("2.2.1", "falla", "grave", [
+        "La página se " + (r.redirige ? "redirige" : "recarga") + " sola con <code>&lt;meta http-equiv=\"refresh\"&gt;</code>" +
+        (r.segundos != null ? " a los " + r.segundos + " segundos" : "") +
+        " (<code>" + r.contenido + "</code>): no hay forma de apagarlo, ajustarlo ni prorrogarlo, que es lo que exige 2.2.1."
+      ], [{ locator: "meta[http-equiv=refresh]", name: r.contenido }]));
+    });
+
+    /* ── 2.1.4 Atajos de teclado de un carácter ── */
+    const atajos = atajosDeUnaTecla(doc);
+    if (atajos.length) {
+      out.push(F("2.1.4", "revisar", null, [
+        atajos.length + " manejador(es) de teclado comparan una tecla suelta sin exigir Ctrl, Alt, Cmd ni Mayúsculas: " +
+        atajos.slice(0, 4).map(function (a) { return a.locator + " (" + a.attr + ": " + a.code + ")"; }).join(" · ") +
+        ". 2.1.4 exige poder desactivar el atajo, reasignarlo, o que solo actúe con el foco puesto en su control. Solo se ven los manejadores en línea: los de un bundle externo no se detectan desde aquí."
+      ], atajos.slice(0, 8).map(function (a) { return { locator: a.locator, name: a.attr }; })));
+    }
+
+    /* ── 2.5.1 / 2.5.2 / 2.5.4 / 2.5.7: dónde hay que mirar ── */
+    const puntero = candidatosPuntero(doc);
+    Object.keys(puntero).forEach(function (crit) {
+      const p = puntero[crit];
+      out.push(F(crit, "revisar", null, [
+        "Se detectan " + p.hits.length + " indicio(s) de " + p.etiqueta + ": " +
+        p.hits.slice(0, 4).map(function (h) { return h.locator; }).join(", ") +
+        ". El agente no dictamina este criterio; señala dónde mirar, que en un sitio grande es lo que cuesta."
+      ], p.hits.map(function (h) { return { locator: h.locator, name: "" }; })));
+    });
+
+    /* ── 3.1.2 Idioma de las partes ── */
+    const langPagina = String((html && html.getAttribute("lang")) || "").toLowerCase().split("-")[0];
+    if (langPagina) {
+      const sospechosos = [];
+      const bloques = doc.querySelectorAll("p,li,blockquote,td,dd,figcaption,h1,h2,h3,h4,h5,h6");
+      for (let i = 0; i < bloques.length && sospechosos.length < 12; i++) {
+        const el = bloques[i];
+        if (ocultoEl(el)) continue;
+        // Si el propio bloque o un antepasado ya declara idioma, está resuelto.
+        let p = el, declarado = null;
+        while (p && p.nodeType === 1) { const l = p.getAttribute("lang"); if (l) { declarado = l.toLowerCase().split("-")[0]; break; } p = p.parentElement; }
+        if (declarado && declarado !== langPagina) continue;
+        const txt = (el.textContent || "").replace(/\s+/g, " ").trim();
+        const idioma = idiomaProbable(txt);
+        if (idioma && idioma !== langPagina) {
+          sospechosos.push({ locator: loc(el), idioma: idioma, texto: txt.slice(0, 60) });
+        }
+      }
+      if (sospechosos.length) {
+        out.push(F("3.1.2", "revisar", null, [
+          sospechosos.length + " bloque(s) parecen estar en un idioma distinto del declarado (<code>lang=\"" + langPagina + "\"</code>) y no lo marcan: " +
+          sospechosos.slice(0, 4).map(function (x) { return x.locator + " (¿" + x.idioma + "?) «" + x.texto + "»"; }).join(" · ") +
+          ". La detección es por palabras funcionales y puede equivocarse con textos técnicos o con citas: confírmalo antes de anotarlo."
+        ], sospechosos.slice(0, 8).map(function (x) { return { locator: x.locator, name: x.idioma }; })));
+      }
+    }
+
+    return out;
+  }
+
+  function auditPageHtml(html, DP) {
+    const P = DP || (typeof DOMParser !== "undefined" ? DOMParser : null);
+    if (!P) throw new Error("auditPageHtml necesita un DOMParser (pásalo como 2.º argumento en Node)");
+    const doc = new P().parseFromString(String(html || ""), "text/html");
+    return auditPageDoc(doc);
+  }
+
+  // Resumen de veredictos de página.
+  function pageSummary(findings) {
+    const s = { falla: 0, revisar: 0, humano: 0, "cumple-parcial": 0, cumple: 0 };
+    findings.forEach(function (f) { if (s[f.verdict] != null) s[f.verdict]++; });
+    return s;
+  }
+  NS.auditPageDoc = auditPageDoc;
+  NS.auditPageHtml = auditPageHtml;
+  NS.pageSummary = pageSummary;
+})(A11Y);
+
+/* ── coherence.js ── */
+(function (NS) {
+  const { WCAG22, enClause } = NS;
+  /**
+   * Coherencia entre páginas de la muestra.
+   *
+   * Cuatro criterios que el motor daba por «evaluación humana» y que en cuanto hay
+   * una muestra son deterministas: no hablan de juicio, hablan de comparar páginas
+   * entre sí. Lo que hace falta es mirar más de una a la vez, y el muestreo ya está.
+   *
+   *   3.2.3 Navegación coherente     (AA) — el mismo orden relativo en cada página
+   *   3.2.4 Identificación coherente (AA) — la misma función, el mismo nombre
+   *   3.2.6 Ayuda coherente          (A)  — la ayuda, en el mismo sitio relativo
+   *   2.4.5 Múltiples vías           (AA) — más de una forma de localizar una página
+   *
+   * `fingerprintPage(doc)` saca la huella de un documento ya renderizado; es pura y
+   * corre igual en Node (linkedom) que en el navegador. `analyzeCoherence(huellas)`
+   * compara las huellas y emite los veredictos. Ninguna de las dos toca la red.
+   */
+
+  const IX = {};
+  WCAG22.forEach(function (c) { IX[c.n] = { t: c.t, lvl: c.lvl }; });
+  function crit(n) { return { n: n, t: (IX[n] ? IX[n].t : n), lvl: (IX[n] ? IX[n].lvl : "AA") }; }
+  function F(n, verdict, sev, evid, nodes) {
+    const f = { c: crit(n), verdict: verdict, sev: sev, evid: evid, scope: "sitio", origen: "coherencia", en: enClause(n) };
+    if (nodes && nodes.length) f.nodes = nodes;
+    return f;
+  }
+
+  /* ── Normalización ───────────────────────────────────────────────────────── */
+
+  /** Destino canónico de un enlace: es la IDENTIDAD de «misma función». */
+  function normalizarHref(href, base) {
+    const h = String(href || "").trim();
+    if (!h) return null;
+    if (/^(mailto:|tel:|javascript:)/i.test(h)) return h.toLowerCase().replace(/\s+/g, "");
+    if (h === "#" || h.charAt(0) === "#") return null; // ancla interna: no identifica una página
+    let u;
+    try { u = new URL(h, base || "http://local/"); } catch (e) { return h.toLowerCase(); }
+    u.hash = "";
+    let p = u.pathname.replace(/\/+$/, "");
+    if (!p) p = "/";
+    /* El HOST no distingue mayúsculas; la RUTA sí.
+     *
+     * Minusculizándolo todo, `/Servicios` y `/servicios` quedaban como el mismo
+     * destino, y 3.2.4 emitía un `falla` —«el mismo destino con nombres distintos»—
+     * sobre dos páginas que en el servidor son dos páginas diferentes y pueden
+     * llamarse cada una como quiera. En HTTP la ruta es sensible a mayúsculas, así
+     * que se respeta tal cual; lo mismo la cadena de consulta, donde un valor puede
+     * ser un identificador que las distinga. */
+    return u.host.toLowerCase() + p + (u.search || "");
+  }
+
+  /** Nombre comparable: sin acentos, sin puntuación de adorno, en minúsculas. */
+  function normalizarNombre(s) {
+    return String(s || "")
+      .normalize("NFD").replace(/[̀-ͯ]/g, "")
+      .toLowerCase()
+      .replace(/[«»"'`´¡!¿?.,;:()\[\]|–—-]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  /* Mecanismos de ayuda que reconoce 3.2.6 — y en los idiomas en los que están.
+   *
+   * El léxico era solo español e inglés, y eso no es un detalle de cobertura: en una
+   * auditoría real de un sitio chino (la versión en chino del portal de turismo de
+   * España) no se reconoció NINGÚN mecanismo de ayuda. Ahí resultó que de verdad no
+   * hay ninguno —pie con «关于我们», «隐私政策», «Cookie 政策» y «网站地图», ni contacto
+   * ni correo ni teléfono—, así que el veredicto era correcto por casualidad. Con un
+   * «联系我们» en el pie habríamos dicho «no se ha detectado ayuda» sobre una página
+   * que la tiene, y eso es la clase de afirmación que no se puede permitir.
+   *
+   * Van los idiomas en los que se trabaja de verdad: castellano, gallego, catalán,
+   * euskera, portugués, inglés y chino (simplificado y tradicional). El chino va en
+   * una alternativa SIN `\b`: en JavaScript los ideogramas no son `\w`, así que `\b`
+   * detrás de «帮助» no casa nunca y toda la rama quedaría muerta sin que se note. */
+  const AYUDA = [
+    // El orden decide: `tipoAyuda` devuelve el primero que casa, y «在线客服»
+    // (chat en línea) contiene «客服» (atención al cliente), así que el chat va antes.
+    { tipo: "contacto", re: /(?:(?:^|\b)(?:contacto|contactar|contacte|contato|contact|cont[aá]ctanos|kontaktua|harremanetarako)\b)|(?:联系|联络|聯絡|聯繫|連絡)/i },
+    { tipo: "chat", re: /(?:(?:^|\b)(?:chat|chatbot|habla con)\b)|(?:在线客服|線上客服|聊天)/i },
+    { tipo: "ayuda", re: /(?:(?:^|\b)(?:ayuda|axuda|ajuda|laguntza|help|soporte|support|asistencia|assist[eè]ncia)\b)|(?:帮助|幫助|客服|客户服务|客戶服務)/i },
+    { tipo: "faq", re: /(?:(?:^|\b)(?:faq|preguntas frecuentes|preguntes freq[üu]ents|perguntas frequentes|d[uú]bidas|dudas)\b)|(?:常见问题|常見問題|问答|問答)/i },
+    { tipo: "teléfono", re: /^tel:/i },
+    { tipo: "correo", re: /^mailto:/i }
+  ];
+  /* Un `mailto:` no es por sí solo un mecanismo de ayuda.
+   *
+   * Probando el esquema contra el `href` crudo, un «Compartir por correo» dentro de
+   * un artículo se registraba como mecanismo de ayuda «correo». Y como solo se
+   * guardaba la primera aparición de cada tipo, en la ficha ganaba la del contenido
+   * y en la portada la del pie: 3.2.6 emitía un `falla` diciendo que el mecanismo
+   * «cambia de sitio» en dos páginas que tienen la misma dirección de contacto en el
+   * mismo pie.
+   *
+   * 3.2.6 habla de mecanismos de AYUDA. Un `tel:` o un `mailto:` cuentan cuando algo
+   * dice que sirven para pedir ayuda: el nombre del enlace, o el hecho de estar en
+   * la cabecera o el pie, que es donde se ponen los datos de contacto. Un `mailto:`
+   * en medio del contenido, con un nombre que habla de compartir, es otra cosa.
+   */
+  const COMPARTIR_RE = /(compartir|comparte|share|env[ií]a(r)? (esto|a un amigo)|tweet|whatsapp|分享)/i;
+  function tipoAyuda(nombre, href, region) {
+    const esquema = /^(mailto:|tel:)/i.test(String(href || ""));
+    if (esquema) {
+      if (COMPARTIR_RE.test(nombre)) return null;
+      // Un mailto: «vacío» (sin destinatario) es para que lo rellene quien comparte.
+      if (/^mailto:\s*(\?|$)/i.test(String(href || ""))) return null;
+      const porNombre = AYUDA.find(function (a) { return a.tipo !== "correo" && a.tipo !== "teléfono" && a.re.test(nombre); });
+      if (porNombre) return porNombre.tipo;
+      const enSitioDeContacto = region === "pie" || region === "cabecera";
+      if (!enSitioDeContacto) return null;
+      return /^tel:/i.test(href) ? "teléfono" : "correo";
+    }
+    for (const a of AYUDA) {
+      if (a.tipo === "correo" || a.tipo === "teléfono") continue;
+      if (a.re.test(href) || a.re.test(nombre)) return a.tipo;
+    }
+    return null;
+  }
+
+  const MAPA_RE = /(mapa (del sitio|do sitio|del lloc|web)|mapa do s[ií]tio|sitemap|[ií]ndice del sitio|网站地图|網站地圖)/i;
+  const INDICE_RE = /(?:(?:^|\b)(?:[ií]ndice|a-z|directorio|directori|listado alfab[eé]tico)\b)|(?:索引|目录|目錄)/i;
+
+  /* ── Huella de una página ────────────────────────────────────────────────── */
+
+  function tagOf(el) { return (el && el.tagName) ? el.tagName.toLowerCase() : ""; }
+  /**
+   * ¿Oculto? Con `win` se usa getComputedStyle y se ve la verdad del render; sin
+   * él solo se puede mirar lo declarado en el marcado.
+   *
+   * La diferencia importa aquí más que en otros sitios: casi todos los sitios
+   * llevan un menú móvil duplicado que el CSS oculta en escritorio. Si se cuela en
+   * la huella, la secuencia de navegación sale duplicada y 3.2.3 se inventa
+   * cambios de orden que no existen.
+   */
+  function ocultoEl(el, win) {
+    let p = el;
+    while (p && p.nodeType === 1) {
+      // `inert` también saca el contenido del árbol de accesibilidad: sin él, esta
+      // copia de la función y la de page-audit.js daban respuestas distintas sobre
+      // el mismo elemento.
+      if (p.hasAttribute("hidden") || p.hasAttribute("inert") || p.getAttribute("aria-hidden") === "true") return true;
+      if (win) {
+        const cs = win.getComputedStyle(p);
+        if (cs.display === "none" || cs.visibility === "hidden") return true;
+      } else {
+        const st = (p.getAttribute("style") || "").replace(/\s+/g, "").toLowerCase();
+        if (st.indexOf("display:none") !== -1 || st.indexOf("visibility:hidden") !== -1) return true;
+      }
+      p = p.parentElement;
+    }
+    return false;
+  }
+  function loc(el) {
+    const t = tagOf(el);
+    if (el.id) return t + "#" + el.id;
+    const c = (el.getAttribute("class") || "").trim().split(/\s+/).filter(Boolean)[0];
+    return c ? t + "." + c : t;
+  }
+  /**
+   * QUÉ componente es, para poder decir si dos enlaces son «el mismo» entre páginas.
+   *
+   * 3.2.4 compara componentes con la misma funcionalidad, y el ítem de un menú y el
+   * «+ más» de una tarjeta no lo son aunque vayan al mismo sitio. Lo intenté con la
+   * región (cabecera, pie, navegación, contenido) y contra el sitio real no sirvió de
+   * nada: no tiene NINGÚN landmark, así que `regionDe` devolvía «otra» para todo y los
+   * dos enlaces caían en el mismo grupo. Peor: el mismo menú salía «cabecera» en unas
+   * páginas y «otra» en otras, y una clasificación que cambia de página en página
+   * rompe también la comprobación de convivencia.
+   *
+   * Lo que sí es estable sin landmarks es la etiqueta y las clases: `a.menus_item` es
+   * el menú y `a.moer` es la tarjeta, en todas las páginas. El `id` se deja fuera a
+   * propósito: muchos sitios lo derivan del texto del enlace, y entonces cambiaría
+   * justo cuando el nombre cambia, que es lo que hay que detectar.
+   */
+  function componenteDe(el) {
+    const t = tagOf(el);
+    const cs = (el.getAttribute("class") || "").trim().split(/\s+/).filter(Boolean).sort();
+    return cs.length ? t + "." + cs.join(".") : t;
+  }
+  /**
+   * Región de la página donde vive un elemento: cabecera, navegación, contenido o
+   * pie. Es lo que de verdad mide 3.2.6 —dónde está la ayuda—, mucho más estable
+   * que el orden entre mecanismos distintos.
+   */
+  /* La región es la MÁS EXTERNA, no la primera que se encuentra subiendo.
+   *
+   * Devolviendo la primera, un `<footer><a>Contacto</a>` daba «pie» y un
+   * `<footer><nav><a>Contacto</a></nav>` daba «navegación»: la misma ubicación
+   * visual, dos regiones distintas, y 3.2.6 emitía un `falla` diciendo que el
+   * mecanismo de ayuda «cambia de sitio entre páginas» porque una de ellas envolvía
+   * los enlaces del pie en un `<nav>`. 3.2.6 habla de la ubicación relativa, no del
+   * envoltorio, así que un `nav` dentro del pie sigue siendo el pie.
+   *
+   * Se sube hasta arriba y manda el último landmark encontrado, con una excepción:
+   * `navegación` no gana nunca a `pie`, `cabecera`, `contenido` ni `lateral`, porque
+   * un `nav` casi siempre vive dentro de uno de ellos y es el contenedor el que dice
+   * dónde está la cosa en la pantalla.
+   */
+  function regionDe(el) {
+    let p = el, encontrada = null;
+    while (p && p.nodeType === 1) {
+      const t = tagOf(p), r = (p.getAttribute("role") || "").split(/\s+/)[0];
+      let aqui = null;
+      if (t === "footer" || r === "contentinfo") aqui = "pie";
+      else if (t === "header" || r === "banner") aqui = "cabecera";
+      else if (t === "nav" || r === "navigation") aqui = "navegación";
+      else if (t === "main" || r === "main") aqui = "contenido";
+      else if (t === "aside" || r === "complementary") aqui = "lateral";
+      // El más externo manda, y «navegación» solo se queda si no hay nada mejor.
+      if (aqui && (encontrada === null || aqui !== "navegación")) encontrada = aqui;
+      p = p.parentElement;
+    }
+    return encontrada || "otra";
+  }
+  function nombreDe(el) {
+    const al = el.getAttribute("aria-label");
+    if (al && al.trim()) return al.trim();
+    const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+    if (t) return t;
+    const img = el.querySelector && el.querySelector("img[alt]");
+    if (img) { const a = (img.getAttribute("alt") || "").trim(); if (a) return a; }
+    const ti = el.getAttribute("title");
+    return ti ? ti.trim() : "";
+  }
+
+  /**
+   * Huella comparable de una página: sus enlaces de navegación en orden, los
+   * mecanismos de ayuda y las vías de localización.
+   *
+   * @param {Document} doc  documento ya renderizado (post-JS)
+   * @param {string} [url]  URL de la página, para resolver los enlaces relativos
+   * @param {Window} [win]  ventana real, para descartar lo oculto por CSS
+   */
+  function fingerprintPage(doc, url, win) {
+    const visibles = function (sel) {
+      return Array.prototype.slice.call(doc.querySelectorAll(sel)).filter(function (el) { return !ocultoEl(el, win); });
+    };
+
+    // Navegación: los enlaces dentro de landmarks de navegación, EN ORDEN de DOM.
+    const navs = [];
+    visibles("nav,[role=navigation]").forEach(function (nav) {
+      const items = [];
+      Array.prototype.slice.call(nav.querySelectorAll("a[href]")).forEach(function (a) {
+        if (ocultoEl(a, win)) return;
+        const href = normalizarHref(a.getAttribute("href"), url);
+        if (!href) return;
+        items.push({ href: href, name: nombreDe(a), locator: loc(a) });
+      });
+      if (items.length) navs.push({ locator: loc(nav), label: nombreDe(nav) || (nav.getAttribute("aria-label") || ""), items: items });
+    });
+
+    // Todos los enlaces de la página, en orden: identidad para 3.2.4 y 3.2.6.
+    const enlaces = [];
+    visibles("a[href]").forEach(function (a, i) {
+      const raw = a.getAttribute("href");
+      const href = normalizarHref(raw, url);
+      if (!href) return;
+      enlaces.push({ href: href, raw: raw, name: nombreDe(a), locator: loc(a), comp: componenteDe(a), region: regionDe(a), orden: enlaces.length });
+    });
+
+    // Ayuda: mecanismos reconocibles, en el orden en que aparecen.
+    const ayuda = [];
+    enlaces.forEach(function (e) {
+      const t = tipoAyuda(e.name, e.raw, e.region);
+      if (t && !ayuda.some(function (x) { return x.tipo === t; })) {
+        ayuda.push({ tipo: t, name: e.name, href: e.href, locator: e.locator, region: e.region, orden: e.orden });
+      }
+    });
+
+    // Vías de localización (2.4.5).
+    // OJO: visible, como el resto de la huella. Sin el filtro, un buscador dentro
+    // de un menú móvil con `display:none` contaba como vía de localización y
+    // empujaba 2.4.5 a «cumple» con algo que el usuario no puede usar.
+    const buscador = Array.prototype.slice.call(doc.querySelectorAll('input[type=search],[role=search]'))
+      .some(function (el) { return !ocultoEl(el, win); }) ||
+      Array.prototype.slice.call(doc.querySelectorAll("form")).some(function (f) {
+        if (ocultoEl(f, win)) return false;
+        return /buscar|buscador|search|busqueda|búsqueda|procura|bilatu|搜索|搜寻|搜尋|查询|查詢/i.test((f.getAttribute("action") || "") + " " + (f.id || "") + " " + (f.className || "") + " " + (f.getAttribute("role") || ""));
+      });
+    const mapaWeb = enlaces.some(function (e) { return MAPA_RE.test(e.name) || MAPA_RE.test(e.href); });
+    const indice = enlaces.some(function (e) { return INDICE_RE.test(e.name); });
+    const navegacion = navs.some(function (n) { return n.items.length >= 3; });
+
+    return {
+      url: url || null,
+      navs: navs,
+      enlaces: enlaces,
+      ayuda: ayuda,
+      vias: { buscador: buscador, mapaWeb: mapaWeb, indice: indice, navegacion: navegacion }
+    };
+  }
+
+  /* ── Comparación ─────────────────────────────────────────────────────────── */
+
+  /**
+   * ¿Conservan las dos secuencias el mismo orden relativo en lo que comparten?
+   * Devuelve `null` si sí, o la primera pareja invertida si no.
+   */
+  function ordenRelativo(a, b) {
+    const setB = new Set(b);
+    const comunes = a.filter(function (x) { return setB.has(x); });
+    const posB = {};
+    b.forEach(function (x, i) { if (posB[x] == null) posB[x] = i; });
+    for (let i = 1; i < comunes.length; i++) {
+      if (posB[comunes[i]] < posB[comunes[i - 1]]) {
+        return { antes: comunes[i - 1], despues: comunes[i] };
+      }
+    }
+    return null;
+  }
+
+  // Secuencia de destinos de navegación de una huella (todas sus navs concatenadas).
+  function seqNav(h) {
+    const out = [];
+    (h.navs || []).forEach(function (n) {
+      n.items.forEach(function (it) { if (out.indexOf(it.href) === -1) out.push(it.href); });
+    });
+    return out;
+  }
+
+  /** 3.2.3 Navegación coherente. */
+  function analyzeNavConsistency(huellas) {
+    const conNav = (huellas || []).filter(function (h) { return seqNav(h).length >= 2; });
+    if (conNav.length < 2) {
+      return [F("3.2.3", "revisar", null, [
+        "Hace falta más de una página con navegación repetida para comprobar el orden relativo; en esta muestra hay " + conNav.length + "."
+      ])];
+    }
+    // Para la evidencia manda el NOMBRE del enlace, no el destino normalizado: es
+    // lo que ve una persona auditora en la pantalla.
+    const nombres = {};
+    conNav.forEach(function (h) {
+      (h.navs || []).forEach(function (n) {
+        n.items.forEach(function (it) { if (!nombres[it.href] && it.name) nombres[it.href] = it.name; });
+      });
+    });
+    const etiqueta = function (href) { return nombres[href] ? "«" + nombres[href] + "»" : href; };
+
+    /* TODOS los pares, no cada página contra la primera.
+     *
+     * Comparando solo contra `conNav[0]`, un destino que cambia de sitio entre la
+     * página 2 y la 3 pero que no aparece en la 1 no se compara con nada: la
+     * inversión pasa desapercibida y el criterio sale `cumple` afirmando «mantiene
+     * el mismo orden relativo en las N páginas». Comprobado con tres páginas donde
+     * «Blog» va antes de «Servicios» en una y después en otra, y ninguna de las dos
+     * cosas se ve desde la primera, que no tiene Blog.
+     *
+     * 3.2.3 habla del orden relativo entre páginas, sin página privilegiada, así que
+     * se comparan todos los pares. Con muestras de quince páginas son ciento cinco
+     * comparaciones de listas cortas: nada. */
+    const base = conNav[0], seqBase = seqNav(base);
+    const problemas = [];
+    const vistos = {};
+    for (let i = 0; i < conNav.length; i++) {
+      for (let j = i + 1; j < conNav.length; j++) {
+        const inv = ordenRelativo(seqNav(conNav[i]), seqNav(conNav[j]));
+        if (!inv) continue;
+        // Una misma inversión aparece en varios pares: se cuenta una vez, y con las
+        // dos páginas que la demuestran.
+        const clave = inv.antes + "|" + inv.despues;
+        if (vistos[clave]) continue;
+        vistos[clave] = 1;
+        problemas.push({ pagina: conNav[j].url, contra: conNav[i].url, inv: inv });
+      }
+    }
+    if (!problemas.length) {
+      return [F("3.2.3", "cumple", null, [
+        "La navegación repetida mantiene el mismo orden relativo en las " + conNav.length + " páginas de la muestra que la tienen (" +
+        seqBase.slice(0, 8).map(etiqueta).join(" → ") + (seqBase.length > 8 ? " → …" : "") + ")."
+      ])];
+    }
+    return [F("3.2.3", "falla", "moderada", problemas.slice(0, 5).map(function (p) {
+      return "En " + (p.pagina || "(página)") + " el orden de la navegación cambia: " + etiqueta(p.inv.despues) +
+        " aparece antes que " + etiqueta(p.inv.antes) + ", al revés que en " + (p.contra || base.url || "otra página de la muestra") + ".";
+    }), problemas.slice(0, 8).map(function (p) { return { locator: p.pagina || "(página)", name: "orden alterado" }; }))];
+  }
+
+  /**
+   * 3.2.4 Identificación coherente: el mismo destino, el mismo nombre.
+   *
+   * Distingue dos grados, porque no son lo mismo: un nombre que CONTIENE al otro
+   * («Inicio» / «Ir a inicio») es una inconsistencia menor a revisar; dos nombres
+   * sin nada en común para el mismo destino sí es una falla.
+   */
+  function analyzeIdConsistency(huellas) {
+    /* Se agrupa por destino Y POR REGIÓN, y no solo por destino.
+     *
+     * 3.2.4 habla de componentes con la MISMA funcionalidad. Comparando solo por
+     * destino, el patrón más común de la web entera salía como falla: el menú de
+     * cabecera llama a una página por su nombre y una tarjeta del contenido la enlaza
+     * con un «+ más» / «Leer más» / «Ver todo». Son dos componentes distintos que van
+     * al mismo sitio, no un componente identificado de dos maneras. Medido contra un
+     * sitio real: 7 destinos acusados, todos del mismo par —el nombre del menú y el
+     * «+ 更多» de una tarjeta—, y el informe hecho a mano no señalaba ninguno.
+     *
+     * Un enlace de la cabecera, uno del pie y uno del contenido no son el mismo
+     * componente, así que no se comparan entre sí. Dentro de una misma región sí:
+     * un ítem del menú que se llama distinto en otra página es exactamente lo que el
+     * criterio prohíbe, y eso se sigue cazando. */
+    const porHref = {};
+    const clave = function (href, comp) { return href + " \u0000 " + (comp || "(sin componente)"); };
+    const regionesPorHref = {};
+    (huellas || []).forEach(function (h) {
+      (h.enlaces || []).forEach(function (e) {
+        const nom = normalizarNombre(e.name);
+        if (!nom) return;
+        const k = clave(e.href, e.comp || e.locator);
+        if (!porHref[k]) porHref[k] = { href: e.href, region: e.region, comp: e.comp || e.locator, nombres: {}, locator: e.locator };
+        if (!porHref[k].nombres[nom]) porHref[k].nombres[nom] = { crudo: e.name, paginas: [] };
+        const p = porHref[k].nombres[nom].paginas;
+        if (p.indexOf(h.url) === -1) p.push(h.url);
+        // Para poder decir, sin acusar, que un destino se nombra distinto según
+        // desde dónde se enlace: es normal, pero conviene saberlo.
+        if (!regionesPorHref[e.href]) regionesPorHref[e.href] = {};
+        regionesPorHref[e.href][(e.comp || e.locator) + "\u0000" + nom] = e.name;
+      });
+    });
+
+    const fallas = [], revisiones = [];
+    // Solo cuentan los destinos que aparecen en DOS O MÁS páginas. 3.2.4 es un
+    // criterio de conjunto: comparar un destino visto en una sola página no
+    // comprueba nada, y contarlo como «coherente» declaraba conforme algo que
+    // nadie había comparado. Dos anclas distintas de la misma página («/faq#envíos»
+    // y «/faq#pagos») tampoco son el mismo destino visto dos veces.
+    const comunes = Object.keys(porHref).filter(function (href) {
+      const paginas = {};
+      Object.keys(porHref[href].nombres).forEach(function (n) {
+        porHref[href].nombres[n].paginas.forEach(function (u) { paginas[u] = true; });
+      });
+      return Object.keys(paginas).length >= 2;
+    });
+    comunes.forEach(function (k) {
+      const g = porHref[k];
+      const noms = Object.keys(g.nombres);
+      if (noms.length < 2) return;
+      /* Dos nombres que CONVIVEN en una misma página no son una identificación
+       * incoherente: son dos enlaces distintos.
+       *
+       * Esta comprobación ya estaba, con el comentario correcto y la pregunta
+       * equivocada: preguntaba si algún nombre se ve en alguna página donde el otro no
+       * esté, y eso es verdad en cuanto un nombre está en todas las páginas y el otro
+       * solo en la portada — que es justo el caso del menú y la tarjeta. Lo que hay que
+       * preguntar es lo que decía el comentario: ¿hay ALGUNA página donde se vean los
+       * dos? Si la hay, son dos componentes, y comparar sus nombres no mide nada. */
+      const convivenEnAlguna = noms.some(function (a) {
+        return noms.some(function (b) {
+          if (a === b) return false;
+          return g.nombres[a].paginas.some(function (u) { return g.nombres[b].paginas.indexOf(u) !== -1; });
+        });
+      });
+      if (convivenEnAlguna) return;
+      // ¿Uno contiene a otro? Entonces es matiz, no contradicción.
+      const anidados = noms.every(function (a) {
+        return noms.some(function (b) { return b !== a && (b.indexOf(a) !== -1 || a.indexOf(b) !== -1); });
+      });
+      const donde = " (" + g.comp + (g.region && g.region !== "otra" ? ", en " + g.region : "") + ")";
+      const detalle = g.href + donde + " → " + noms.map(function (n) { return "«" + g.nombres[n].crudo + "»"; }).join(" / ");
+      (anidados ? revisiones : fallas).push({ href: g.href, detalle: detalle, locator: g.locator });
+    });
+    /* Un destino nombrado distinto SEGÚN DESDE DÓNDE se enlace no es una falla de
+     * 3.2.4 —son componentes distintos— pero sí es algo que conviene saber, así que se
+     * dice sin acusar y sin cambiar el veredicto. */
+    const porRegiones = Object.keys(regionesPorHref).filter(function (href) {
+      const claves = Object.keys(regionesPorHref[href]);
+      if (claves.length < 2) return false;
+      const regs = {}, noms = {};
+      claves.forEach(function (c) { const p = c.split("\u0000"); regs[p[0]] = true; noms[p[1]] = true; });
+      return Object.keys(regs).length >= 2 && Object.keys(noms).length >= 2;
+    });
+
+    const out = [];
+    if (fallas.length) {
+      out.push(F("3.2.4", "falla", "moderada",
+        [fallas.length + " destino(s) se identifican con nombres distintos en páginas distintas: " + fallas.slice(0, 5).map(function (f) { return f.detalle; }).join(" · ")],
+        fallas.slice(0, 8).map(function (f) { return { locator: f.locator, name: f.href }; })));
+    }
+    if (revisiones.length) {
+      out.push(F("3.2.4", "revisar", null,
+        [revisiones.length + " destino(s) usan variantes del mismo nombre (uno contiene al otro): " + revisiones.slice(0, 5).map(function (r) { return r.detalle; }).join(" · ") + ". Comprueba si la diferencia desorienta."],
+        revisiones.slice(0, 8).map(function (r) { return { locator: r.locator, name: r.href }; })));
+    }
+    const nota = porRegiones.length
+      ? " " + porRegiones.length + " destino(s) se nombran distinto según desde dónde se enlacen (menú, pie o contenido): son componentes distintos, no una identificación incoherente, pero ahí están: " +
+        porRegiones.slice(0, 3).join(", ") + "."
+      : "";
+    if (!out.length) {
+      out.push(comunes.length
+        ? F("3.2.4", "cumple", null, ["Los " + comunes.length + " destino(s) que aparecen en dos o más páginas de la muestra, dentro de una misma región, se identifican siempre con el mismo nombre." + nota])
+        : F("3.2.4", "revisar", null, ["Ningún destino se repite entre las páginas de la muestra (" + (huellas || []).length + " página(s)): no hay nada que comparar, así que la coherencia de identificación NO se ha comprobado." + nota]));
+    }
+    return out;
+  }
+
+  /**
+   * 3.2.6 Ayuda coherente (WCAG 2.2, nivel A).
+   *
+   * El criterio habla de DÓNDE está la ayuda, no de en qué orden aparecen unos
+   * mecanismos respecto de otros. Comparar el orden entre tipos distintos era
+   * ruidoso: un «Contacto» en el menú y una «Ayuda» en el pie cambian de orden
+   * relativo en cuanto una página mete un enlace contextual, sin que nada se haya
+   * movido de sitio. Lo que sí es una incoherencia real es que el MISMO mecanismo
+   * viva en la cabecera en una página y en el pie en otra.
+   */
+  function analyzeHelpConsistency(huellas) {
+    const conAyuda = (huellas || []).filter(function (h) { return (h.ayuda || []).length; });
+    if (!conAyuda.length) {
+      // «No lo he encontrado» no es «no existe». La detección son unos cuantos
+      // patrones sobre los enlaces visibles: un «Atención al cliente», un
+      // <button>Asistencia</button> o un chat en un ancla interna se le escapan.
+      // Declararlo conforme era dar por comprobado lo que no se miró.
+      return [F("3.2.6", "revisar", null, [
+        "No se han detectado mecanismos de ayuda con los patrones conocidos (contacto, ayuda, FAQ, soporte, chat) en las " +
+        (huellas || []).length + " página(s) de la muestra. Confirma a mano que de verdad no los hay: si no existe ninguno, el criterio no aplica; si existe alguno que no se reconoció, hay que comprobar que está siempre en el mismo sitio."
+      ])];
+    }
+    if (conAyuda.length < 2) {
+      return [F("3.2.6", "revisar", null, ["Solo una página de la muestra ofrece ayuda (" + conAyuda[0].ayuda.map(function (a) { return a.tipo; }).join(", ") + "): hace falta más de una para comparar."])];
+    }
+
+    // Dónde aparece cada tipo de ayuda, página a página.
+    const porTipo = {};
+    conAyuda.forEach(function (h) {
+      h.ayuda.forEach(function (a) {
+        if (!porTipo[a.tipo]) porTipo[a.tipo] = {};
+        const r = a.region || "otra";
+        if (!porTipo[a.tipo][r]) porTipo[a.tipo][r] = [];
+        if (porTipo[a.tipo][r].indexOf(h.url) === -1) porTipo[a.tipo][r].push(h.url);
+      });
+    });
+
+    const movidos = Object.keys(porTipo).filter(function (t) { return Object.keys(porTipo[t]).length > 1; });
+    if (movidos.length) {
+      return [F("3.2.6", "falla", "moderada", movidos.slice(0, 4).map(function (t) {
+        const regs = porTipo[t];
+        return "El mecanismo de ayuda «" + t + "» cambia de sitio entre páginas: " +
+          Object.keys(regs).map(function (r) { return r + " en " + regs[r].slice(0, 3).map(function (u) { return u || "(página)"; }).join(", "); }).join(" · ") + ".";
+      }))];
+    }
+
+    // Mismo sitio. Dentro de una misma región, el orden relativo sí debe mantenerse.
+    const seqEnRegion = function (h, region) {
+      return h.ayuda.filter(function (a) { return (a.region || "otra") === region; }).map(function (a) { return a.tipo; });
+    };
+    const regiones = {};
+    conAyuda.forEach(function (h) { h.ayuda.forEach(function (a) { regiones[a.region || "otra"] = 1; }); });
+    const desordenes = [];
+    Object.keys(regiones).forEach(function (r) {
+      const base = conAyuda.find(function (h) { return seqEnRegion(h, r).length >= 2; });
+      if (!base) return;
+      conAyuda.forEach(function (h) {
+        if (h === base) return;
+        const inv = ordenRelativo(seqEnRegion(base, r), seqEnRegion(h, r));
+        if (inv) desordenes.push({ region: r, pagina: h.url, inv: inv });
+      });
+    });
+    if (desordenes.length) {
+      return [F("3.2.6", "falla", "moderada", desordenes.slice(0, 4).map(function (d) {
+        return "En " + (d.pagina || "(página)") + ", dentro de «" + d.region + "», la ayuda cambia de orden: «" + d.inv.despues + "» antes que «" + d.inv.antes + "».";
+      }))];
+    }
+
+    const tipos = Object.keys(porTipo);
+    const ev = ["Los mecanismos de ayuda (" + tipos.join(", ") + ") aparecen siempre en la misma parte de la página (" +
+      tipos.map(function (t) { return t + " → " + Object.keys(porTipo[t])[0]; }).join(", ") + ") en las " + conAyuda.length + " páginas que los ofrecen."];
+    const faltan = (huellas || []).filter(function (h) { return !(h.ayuda || []).length; });
+    if (faltan.length) ev.push(faltan.length + " página(s) de la muestra no ofrecen ninguno; el criterio no les aplica, pero comprueba que sea intencionado.");
+    return [F("3.2.6", "cumple-parcial", null, ev)];
+  }
+
+  /**
+   * 2.4.5 Múltiples vías: es un criterio de SITIO, no de página. Se mira la unión
+   * de mecanismos en toda la muestra.
+   */
+  function analyzeMultipleWays(huellas) {
+    const hs = huellas || [];
+    if (!hs.length) return [];
+    const union = { buscador: false, mapaWeb: false, indice: false, navegacion: false };
+    hs.forEach(function (h) { Object.keys(union).forEach(function (k) { if (h.vias && h.vias[k]) union[k] = true; }); });
+    const ETQ = { buscador: "buscador", mapaWeb: "mapa web", indice: "índice o directorio", navegacion: "navegación del sitio" };
+    const hay = Object.keys(union).filter(function (k) { return union[k]; });
+    if (hay.length >= 2) {
+      return [F("2.4.5", "cumple", null, ["El sitio ofrece " + hay.length + " vías para localizar una página: " + hay.map(function (k) { return ETQ[k]; }).join(", ") + "."])];
+    }
+    // Encontrar DOS vías en una sola página sí demuestra que el sitio las ofrece.
+    // No encontrarlas, en cambio, no demuestra nada si solo se ha mirado una
+    // página: el mapa web puede estar en el pie de otra. Un criterio de sitio no
+    // se falla desde una página suelta.
+    if (hs.length < 2) {
+      return [F("2.4.5", "revisar", null, [
+        "Solo hay " + hs.length + " página en la muestra y se detecta" + (hay.length ? "n " + hay.length + " vía(s): " + hay.map(function (k) { return ETQ[k]; }).join(", ") : " ninguna vía") +
+        ". 2.4.5 es un criterio de SITIO: añade más páginas a la muestra antes de dictaminar."
+      ])];
+    }
+    if (hay.length === 1) {
+      return [F("2.4.5", "revisar", null, [
+        "Solo se detecta una vía para localizar páginas (" + ETQ[hay[0]] + "). WCAG exige al menos dos, salvo que la página sea un paso de un proceso — eso no lo puede determinar el agente."
+      ])];
+    }
+    return [F("2.4.5", "falla", "moderada", ["No se detecta ninguna vía para localizar páginas: ni buscador, ni mapa web, ni índice, ni una navegación con varios enlaces."])];
+  }
+
+  /** Los cuatro criterios de coherencia sobre la muestra. */
+  function analyzeCoherence(huellas) {
+    if (!huellas || !huellas.length) return [];
+    return [].concat(
+      analyzeMultipleWays(huellas),
+      analyzeNavConsistency(huellas),
+      analyzeIdConsistency(huellas),
+      analyzeHelpConsistency(huellas)
+    );
+  }
+
+  /* ── Código inyectable: la huella se toma DENTRO de la página real ───────── */
+
+  /* Las constantes del módulo viajan a la página, y van en UNA lista.
+   *
+   * `COMPARTIR_RE` no viajaba. `tipoAyuda` la usa en la primera línea de la rama de
+   * `mailto:`/`tel:`, así que la huella lanzaba `ReferenceError` en cuanto la página
+   * tenía un correo o un teléfono enlazado — es decir, en el pie de casi cualquier
+   * sitio español. El error se recogía en `errores` y la huella quedaba en `null`, y
+   * sin huellas la comparación entre páginas no compara nada: 2.4.5, 3.2.3, 3.2.4 y
+   * 3.2.6 desaparecían del informe sin que nadie lo dijera. Comprobado en Chromium:
+   * «ReferenceError: COMPARTIR_RE is not defined».
+   *
+   * Que estuviera escrito a mano era el problema, así que ahora es una lista con
+   * nombre, y hay un test que extrae los identificadores en MAYÚSCULAS de las
+   * funciones serializadas y falla si alguno no está declarado aquí. */
+  const CONSTANTES = { MAPA_RE: MAPA_RE, INDICE_RE: INDICE_RE, COMPARTIR_RE: COMPARTIR_RE };
+  const FN_SRC =
+    "var AYUDA = [" + AYUDA.map(function (a) { return "{tipo:" + JSON.stringify(a.tipo) + ",re:" + String(a.re) + "}"; }).join(",") + "];\n" +
+    Object.keys(CONSTANTES).map(function (k) { return "var " + k + " = " + String(CONSTANTES[k]) + ";"; }).join("\n") + "\n" +
+    [normalizarHref, tipoAyuda, tagOf, ocultoEl, loc, componenteDe, regionDe, nombreDe, fingerprintPage]
+      .map(function (f) { return String(f).replace(/^export\s+/, ""); }).join("\n");
+  /** Los nombres que se declaran en el código inyectado; el guard los compara. */
+  const FN_DECLARADAS = ["AYUDA"].concat(Object.keys(CONSTANTES));
+  /** Las funciones que se serializan, para que el guard pueda leer su fuente. */
+  const FN_FUENTES = [normalizarHref, tipoAyuda, tagOf, ocultoEl, loc, componenteDe, regionDe, nombreDe, fingerprintPage]
+    .map(function (f) { return String(f); });
+
+  /**
+   * Cuerpo para `page.evaluate(new Function("url", FINGERPRINT_BODY))`.
+   *
+   * Se ejecuta en la página, con su `window`, para que `getComputedStyle` descarte
+   * lo que el CSS oculta — el menú móvil duplicado, sobre todo.
+   */
+  const FINGERPRINT_BODY = FN_SRC + "\nreturn fingerprintPage(document, url, window);";
+
+  /** Versión envuelta para la extensión de Chrome. */
+  const FINGERPRINT_SRC = "(function(){\n" + FN_SRC +
+    "\nwindow.__a11yHuella = function(url){ return fingerprintPage(document, url || location.href, window); };\n})();";
+  NS.normalizarHref = normalizarHref;
+  NS.normalizarNombre = normalizarNombre;
+  NS.fingerprintPage = fingerprintPage;
+  NS.ordenRelativo = ordenRelativo;
+  NS.analyzeNavConsistency = analyzeNavConsistency;
+  NS.analyzeIdConsistency = analyzeIdConsistency;
+  NS.analyzeHelpConsistency = analyzeHelpConsistency;
+  NS.analyzeMultipleWays = analyzeMultipleWays;
+  NS.analyzeCoherence = analyzeCoherence;
+  NS.FN_SRC = FN_SRC;
+  NS.FN_DECLARADAS = FN_DECLARADAS;
+  NS.FN_FUENTES = FN_FUENTES;
+  NS.FINGERPRINT_BODY = FINGERPRINT_BODY;
+  NS.FINGERPRINT_SRC = FINGERPRINT_SRC;
+})(A11Y);
+
+/* ── viewport.js ── */
+(function (NS) {
+  const { WCAG22, enClause } = NS;
+  /**
+   * Adaptación del contenido — análisis PURO de las trazas de viewport.
+   *
+   * Cinco criterios que el motor marcaba `revisar` a ciegas, sin mirar nada, y que
+   * en realidad son MECÁNICOS: se aplica un cambio (estrechar, agrandar el texto,
+   * forzar el espaciado, girar) y se mide qué se rompe. Es exactamente el
+   * procedimiento manual de la Guía Técnica del OAW —el bookmarklet de Text
+   * Spacing, el zoom al 400 %— hecho por el agente.
+   *
+   *   1.4.4  Redimensionar el texto        (AA)
+   *   1.4.10 Reflujo                       (AA)
+   *   1.4.12 Espaciado del texto           (AA)
+   *   1.4.13 Contenido al recibir foco o puntero (AA)
+   *   1.3.4  Orientación                   (AA)
+   *
+   * El principio de siempre: estas funciones distinguen «lo he medido y está mal»
+   * de «no he podido medirlo». Un recorte medido es `falla`; una excepción posible
+   * o una traza incompleta es `revisar`.
+   */
+
+  const IX = {};
+  WCAG22.forEach(function (c) { IX[c.n] = { t: c.t, lvl: c.lvl }; });
+  function crit(n) { return { n: n, t: (IX[n] ? IX[n].t : n), lvl: (IX[n] ? IX[n].lvl : "AA") }; }
+  function F(n, verdict, sev, evid, nodes) {
+    const f = { c: crit(n), verdict: verdict, sev: sev, evid: evid, scope: "adaptación", origen: "medición", en: enClause(n) };
+    if (nodes && nodes.length) f.nodes = nodes;
+    return f;
+  }
+  /* El `uid` de la sonda es un selector canónico, y viaja al hallazgo como `path`.
+   *
+   * Sin él, las barreras de esta capa salían al CSV con la columna «Selector» VACÍA y
+   * un locator que no distingue: cinco filas de 1.4.13 diciendo `li.float-left` y
+   * nada con que ir a buscarlas. Una barrera que no se puede localizar no se puede
+   * arreglar ni comprobar. */
+  function nodesOf(list, max) {
+    return (list || []).slice(0, max || 10).map(function (x) {
+      const n = { locator: x.locator, name: x.detalle || "" };
+      if (x.uid) n.path = x.uid;
+      return n;
+    });
+  }
+
+  /**
+   * Contenido que la propia WCAG exime de reflujo por «uso esencial»: lo que pierde
+   * sentido si se reorganiza en una columna. No es una falla automática, pero
+   * tampoco un aprobado: lo marcamos para que una persona confirme la excepción.
+   */
+  const EXENTOS_REFLUJO = ["table", "img", "svg", "canvas", "iframe", "video", "object", "embed", "pre", "code"];
+  function esExento(o) {
+    if (EXENTOS_REFLUJO.indexOf(String(o.tag || "").toLowerCase()) !== -1) return true;
+    const r = String(o.role || "").toLowerCase();
+    return r === "img" || r === "table" || r === "grid" || r === "treegrid" || r === "application";
+  }
+
+  /**
+   * 1.4.10 Reflujo: a 320 px CSS de ancho (equivale al 400 % sobre 1280) el
+   * contenido no puede exigir desplazamiento horizontal.
+   * @param {{ w:number, h:number, scrollWidth:number, clientWidth:number,
+   *           offenders?:Array<{locator:string, tag?:string, role?:string, ancho?:number, detalle?:string}> }} trace
+   */
+  function analyzeReflow(trace) {
+    if (!trace || trace.clientWidth == null) return [];
+    const exceso = Math.round(trace.scrollWidth - trace.clientWidth);
+    const donde = " a " + trace.w + "×" + trace.h + " px CSS";
+    /* El contenido RECORTADO cuenta, y cuenta antes que la barra.
+     *
+     * Dictaminando solo por el desplazamiento horizontal, un desbordamiento escondido
+     * con `overflow:hidden` no produce barra, `scrollWidth` del documento no crece, y
+     * 1.4.10 salía «cumple» con cientos de píxeles de texto ocultos e inalcanzables a
+     * 320 px CSS. El criterio no habla de barras: exige que no haya pérdida de
+     * información ni de funcionalidad. Esconder lo que no cabe es peor que la barra,
+     * porque ni se ve que falte algo. */
+    const rec = (trace.recortados || []).filter(function (r) { return !r.alcanzable; });
+    if (rec.length) {
+      return [F("1.4.10", "falla", "grave", [
+        rec.length + " bloque(s) de contenido se RECORTAN" + donde + " y lo que sobra no se puede alcanzar: el desbordamiento está oculto con " +
+        "`overflow:" + rec[0].overflow + "`, así que no hay barra ni forma de desplazarlo. " +
+        rec.slice(0, 6).map(function (r) { return r.locator + " (" + r.px + " px ocultos, termina en «…" + r.muestra + "»)"; }).join(" · ") +
+        (rec.length > 6 ? " · …" : "") + ". 1.4.10 exige que no haya pérdida de información, no solo que no haya barra horizontal."
+      ], nodesOf(rec))];
+    }
+    if (exceso <= 2) {
+      const tapado = (trace.recortados || []).filter(function (r) { return r.alcanzable; });
+      if (tapado.length) {
+        return [F("1.4.10", "revisar", null, [
+          "Sin desplazamiento horizontal" + donde + ", pero " + tapado.length + " contenedor(es) esconden contenido que no les cabe (" +
+          tapado.slice(0, 4).map(function (r) { return r.locator + ", " + r.px + " px"; }).join(" · ") +
+          "). Tienen controles dentro, así que el teclado sí arrastra el contenedor al enfocarlos; comprueba que con el ratón y a la vista también se llegue, porque no hay barra."
+        ], nodesOf(tapado))];
+      }
+      return [F("1.4.10", "cumple", null, ["Sin desplazamiento horizontal ni contenido recortado" + donde + " (equivale al 400 % sobre 1280 px)."])];
+    }
+    const off = trace.offenders || [];
+    const todosExentos = off.length > 0 && off.every(esExento);
+    if (todosExentos) {
+      return [F("1.4.10", "revisar", null, [
+        "Hay " + exceso + " px de desplazamiento horizontal" + donde + ", pero todo lo que desborda es contenido que WCAG puede eximir por uso esencial (" +
+        off.slice(0, 6).map(function (o) { return o.locator; }).join(", ") + "). Confirma que la excepción aplica."
+      ], nodesOf(off))];
+    }
+    return [F("1.4.10", "falla", "grave", [
+      "El contenido exige desplazamiento horizontal" + donde + ": " + exceso + " px de exceso. " +
+      (off.length ? "Desbordan " + off.length + " elemento(s): " + off.slice(0, 6).map(function (o) { return o.locator + (o.detalle ? " (" + o.detalle + ")" : ""); }).join(", ") + (off.length > 6 ? "…" : "") : "No se ha podido señalar el elemento concreto.")
+    ], nodesOf(off))];
+  }
+
+  // Recorte medido: el elemento no cabía y su desbordamiento queda OCULTO. Si
+  // desborda con barra de desplazamiento, el contenido sigue siendo alcanzable.
+  function informeRecorte(n, etiqueta, cambio, trace, sevFalla) {
+    // Sin traza no hay nada que decir: el criterio no se ha mirado. Distinto de
+    // `aplicado:false`, que sí es información — se intentó medir y no se pudo.
+    if (!trace) return [];
+    if (!trace.aplicado) {
+      return [F(n, "revisar", null, ["No se pudo aplicar " + cambio + " sobre la página (" + ((trace && trace.motivo) || "motivo desconocido") + "): queda por comprobar a mano."])];
+    }
+    const rec = trace.recortados || [];
+    const sup = trace.solapados || [];
+    const prev = trace.previos || [];
+    if (!rec.length && !sup.length) {
+      // Nada empeora con el cambio. Si YA había contenido recortado de serie, eso
+      // no lo causa el cambio —así que no es una falla de este criterio— pero es
+      // pérdida de contenido real y no se puede dar por bueno en silencio.
+      if (prev.length) {
+        return [F(n, "revisar", null, [
+          "Con " + cambio + " no empeora nada, pero " + prev.length + " bloque(s) YA venían con contenido recortado antes del cambio: " +
+          prev.slice(0, 6).map(function (o) { return o.locator + (o.detalle ? " (" + o.detalle + ")" : ""); }).join(", ") + (prev.length > 6 ? "…" : "") +
+          ". No lo provoca " + cambio + ", pero hay texto que no se puede leer: compruébalo."
+        ], nodesOf(prev))];
+      }
+      const cob = trace.cobertura;
+      if (cob && cob.truncado) {
+        // Con el tope, lo no medido quedaba fuera sin una palabra: la misma tarjeta
+        // que se recorta daba «falla» sola y «cumple» detrás de 400 párrafos.
+        return [F(n, "revisar", null, ["Con " + cambio + " no se recorta ni se solapa ningún bloque de texto de los " + cob.medidos +
+          " medidos, pero la página tiene " + cob.total + ": el resto NO se ha comprobado. Sube el límite para dictaminar."])];
+      }
+      /* Y «cumple» solo si el cambio SURTIÓ EFECTO.
+       *
+       * `html{font-size:200%}` no toca nada cuando los tamaños están en `px`, que es
+       * lo normal, y el criterio salía «cumple · con el texto al 200 % no se recorta
+       * ni se solapa ningún bloque» sobre una medición de efecto nulo. Ahora la fase
+       * dice por qué vía consiguió duplicarlo; si no lo consiguió por ninguna, no hay
+       * nada medido que declarar conforme. */
+      const ef = trace.efecto;
+      if (ef && ef.muestra && !ef.crecioConLaRaiz && !ef.escalados) {
+        return [F(n, "revisar", null, [
+          "No se ha podido aplicar " + cambio + " a la página: ni cambiando el tamaño de la raíz ni escalando los elementos con texto. " +
+          "No hay medición, así que el criterio queda por comprobar a mano (con el zoom de texto del navegador, no el de página)."
+        ])];
+      }
+      return [F(n, "cumple", null, ["Con " + cambio + " no se recorta ni se solapa ningún bloque de texto (" + (trace.revisados || 0) + " elementos medidos" +
+        (ef && ef.via && ef.via !== "raiz" ? "; el tamaño de la raíz no bastaba —la página declara el texto en px— y se escaló el tamaño computado de " + ef.escalados + " elemento(s), que es lo que hace el zoom de texto del navegador" : "") + ")."])];
+    }
+    const ev = [];
+    if (rec.length) ev.push(rec.length + " bloque(s) de texto se recortan al aplicar " + cambio + " (el contenido queda oculto, sin barra de desplazamiento): " +
+      rec.slice(0, 6).map(function (o) { return o.locator + (o.detalle ? " (" + o.detalle + ")" : ""); }).join(", ") + (rec.length > 6 ? "…" : "") + ".");
+    if (sup.length) ev.push(sup.length + " bloque(s) se solapan con el contenido contiguo: " + sup.slice(0, 6).map(function (o) { return o.locator; }).join(", ") + ".");
+    return [F(n, rec.length ? "falla" : "revisar", rec.length ? sevFalla : null, ev, nodesOf(rec.concat(sup)))];
+  }
+
+  /**
+   * 1.4.4 Redimensionar el texto: al 200 % el contenido y la funcionalidad siguen
+   * disponibles, sin pérdida por recorte.
+   */
+  function analyzeResize(trace) {
+    return informeRecorte("1.4.4", "Redimensionar el texto", "el texto al 200 %", trace, "grave");
+  }
+
+  /**
+   * 1.4.12 Espaciado del texto: line-height 1.5, letter-spacing 0.12em,
+   * word-spacing 0.16em y 2em entre párrafos, sin pérdida de contenido.
+   */
+  function analyzeTextSpacing(trace) {
+    return informeRecorte("1.4.12", "Espaciado del texto", "el espaciado de 1.4.12", trace, "grave");
+  }
+
+  /**
+   * 1.3.4 Orientación: el contenido no se restringe a una sola orientación.
+   * @param {{ bloqueoJS?:boolean, mediaBloqueante?:Array<string>, textoVertical?:number, textoHorizontal?:number }} trace
+   */
+  function analyzeOrientation(trace) {
+    if (!trace) return [];
+    const out = [];
+    if (trace.bloqueoJS) {
+      out.push(F("1.3.4", "falla", "grave", ["La página llama a <code>screen.orientation.lock()</code>: fuerza una orientación concreta."]));
+      return out;
+    }
+    if ((trace.mediaBloqueante || []).length) {
+      out.push(F("1.3.4", "revisar", null, ["Hay reglas CSS que ocultan contenido según la orientación (" + trace.mediaBloqueante.slice(0, 3).join(" · ") + "): comprueba que no se pierda nada al girar."]));
+      return out;
+    }
+    const v = trace.textoVertical || 0, h = trace.textoHorizontal || 0;
+    if (v && h) {
+      const perdida = Math.round((1 - Math.min(v, h) / Math.max(v, h)) * 100);
+      if (perdida >= 15) {
+        out.push(F("1.3.4", "revisar", null, ["Al girar el dispositivo cambia un " + perdida + " % la cantidad de texto visible (" + h + " → " + v + " caracteres): revisa que no se pierda contenido en una de las orientaciones."]));
+      } else {
+        out.push(F("1.3.4", "cumple", null, ["El contenido se mantiene en vertical y en horizontal (diferencia del " + perdida + " %) y no hay bloqueo de orientación."]));
+      }
+    }
+    return out;
+  }
+
+  /**
+   * 1.4.13 Contenido al recibir foco o puntero: lo que aparece al pasar el puntero
+   * o al enfocar debe poder descartarse (Esc), poder señalarse con el puntero sin
+   * que desaparezca, y persistir hasta que se retire.
+   *
+   * El atributo `title` está EXENTO de este criterio, y esto emitía un `falla` por él.
+   *
+   * El texto normativo de 1.4.13 termina así: «Exception: The visual presentation of
+   * the additional content is controlled by the user agent and is not modified by the
+   * author». El tooltip nativo del navegador es exactamente eso — lo pinta el agente
+   * de usuario y el autor no lo toca—, así que no se puede fallar 1.4.13 por usar
+   * `title`. Se emitía `falla` moderada en cualquier página con un `<abbr title>`.
+   *
+   * Que `title` sea mala idea sigue siendo verdad, pero por otras vías: no se alcanza
+   * con teclado ni con el dedo, y el soporte en lectores es desigual. Eso aterriza en
+   * 1.1.1, 2.5.3 y 4.1.2 según el caso, no aquí. Así que se dice, y se dice donde
+   * corresponde, sin colgarle al criterio una barrera que su propia excepción excluye.
+   *
+   * @param {{ titles?:Array<{locator:string, texto:string, tieneNombre?:boolean}>,
+   *           hovers?:Array<{locator:string, descartable?:boolean, señalable?:boolean}> }} trace
+   */
+  function analyzeHoverContent(trace) {
+    if (!trace) return [];
+    const out = [];
+    const titles = (trace.titles || []).filter(function (t) { return t.texto && t.texto.trim(); });
+    if (titles.length) {
+      /* Y va como `revisar`, no como `falla`: la excepción del criterio lo excluye.
+       * Lo que queda por decidir no es 1.4.13, sino si esa información solo está ahí
+       * —y entonces el problema es de otro criterio—. */
+      const sinNombre = titles.filter(function (t) { return t.tieneNombre === false; });
+      out.push(F("1.4.13", "revisar", null, [
+        titles.length + " elemento(s) llevan el atributo <code>title</code>. El tooltip nativo lo pinta el navegador y el autor no lo modifica, así que la EXCEPCIÓN de 1.4.13 lo excluye: no es una barrera de este criterio. " +
+        titles.slice(0, 6).map(function (t) { return t.locator + " «" + String(t.texto).slice(0, 30) + "»"; }).join(", ") + (titles.length > 6 ? "…" : "") + ".",
+        "Lo que sí hay que comprobar: que esa información no esté SOLO en el `title`, porque no se alcanza con teclado ni con el dedo y el soporte en lectores es desigual. Si es la única vía, la barrera es de 1.1.1, 2.5.3 o 4.1.2, según lo que aporte." +
+          (sinNombre.length ? " Ojo a " + sinNombre.length + " de ellos, que además no tienen otro nombre accesible." : "")
+      ], nodesOf(titles.map(function (t) { return { locator: t.locator, detalle: t.texto }; }))));
+    }
+    // Acepta los dos juegos de nombres: la sonda real emite `descartableConEsc` y
+    // `senalable` (sin eñe, que viaja mejor dentro del código inyectado).
+    const noDescartable = function (h) { return h.descartable === false || h.descartableConEsc === false; };
+    const noSenalable = function (h) { return h["señalable"] === false || h.senalable === false; };
+    /* El requisito de «descartable» solo se incumple si el emergente TAPA algo.
+     *
+     * Lo dice el propio criterio: «except when the additional content ... does not
+     * obscure or replace other content». Un emergente hecho con `:hover` en CSS no
+     * responde a Esc por definición, así que sin esta condición TODOS salían como falla
+     * grave — incluido el tooltip que aparece en un hueco reservado y no tapa nada, que
+     * la excepción exime expresamente. Medido contra un sitio real: 47 filas de 1.4.13,
+     * y el informe hecho a mano no señalaba ninguna.
+     *
+     * `tapa` lo mide la sonda (fuera del flujo y con algo pintado debajo). Cuando el
+     * dato no está —una traza vieja, o una pasada donde no se pudo medir— se mantiene
+     * el criterio a prueba de fallos: se cuenta como que tapa, porque lo contrario es
+     * absolver sin haber mirado. */
+    const tapa = function (h) { return h.tapa !== false; };
+    const rotos = (trace.hovers || []).filter(function (h) { return (noDescartable(h) && tapa(h)) || noSenalable(h); });
+    const eximidos = (trace.hovers || []).filter(function (h) { return noDescartable(h) && !tapa(h) && !noSenalable(h); });
+    if (rotos.length) {
+      out.push(F("1.4.13", "falla", "grave", [
+        rotos.length + " contenido(s) emergente(s) incumplen: " + rotos.slice(0, 6).map(function (h) {
+          const q = [];
+          if (noDescartable(h) && tapa(h)) q.push("no se descarta con Esc y tapa contenido que había debajo" + (h.tapa === undefined ? " (o no se pudo comprobar que no lo tape)" : ""));
+          if (noSenalable(h)) q.push("desaparece al llevar el puntero encima");
+          return h.locator + " (" + q.join(" y ") + ")";
+        }).join(", ") + (rotos.length > 6 ? ", …" : "") + ".",
+        "Las tres condiciones de 1.4.13 son descartable sin mover el puntero ni el foco, señalable con el puntero sin que se cierre, y persistente. «Descartable» solo se exige cuando el emergente tapa o sustituye otro contenido, que es lo que se ha comprobado aquí."
+      ], nodesOf(rotos)));
+    }
+    if (eximidos.length) {
+      // No es una barrera: la excepción del criterio lo dice. Se cuenta, porque un
+      // emergente que no responde a Esc conviene conocerlo, y no se acusa.
+      out.push(F("1.4.13", "cumple-parcial", null, [
+        eximidos.length + " contenido(s) emergente(s) no responden a Esc pero NO tapan ningún contenido (" +
+        eximidos.slice(0, 5).map(function (h) { return h.locator; }).join(", ") +
+        "): la excepción de 1.4.13 los exime expresamente («does not obscure or replace other content»), así que no son barreras de este criterio. Si cambia la maquetación y llegan a solapar, pasan a serlo."
+      ], nodesOf(eximidos)));
+    }
+    /* Y lo que no se pudo medir no se cuenta como medido.
+     *
+     * La sonda devuelve `señalable: null` cuando el viaje del puntero no se pudo hacer
+     * (el emergente quedó fuera de la ventana, o la página se movió por debajo). Eso no
+     * es «se puede señalar»: es «no se ha comprobado», y mezclarlo con los sanos era
+     * firmar `cumple` sobre un emergente que nadie miró. */
+    const sinViaje = (trace.hovers || []).filter(function (h) {
+      const falta = h.senalable === null || h.descartableConEsc === null || h.descartable === null;
+      return falta && !noSenalable(h) && !(noDescartable(h) && tapa(h));
+    });
+    const sanos = (trace.hovers || []).length - rotos.length - eximidos.length - sinViaje.length;
+    if (!titles.length && !rotos.length && !eximidos.length) {
+      if (sanos > 0 || sinViaje.length) {
+        out.push(F("1.4.13", sinViaje.length ? "cumple-parcial" : "cumple", null, [
+          sanos + " contenido(s) emergente(s) se descartan con Esc y se pueden señalar con el puntero." +
+          (sinViaje.length ? " De otros " + sinViaje.length + " no se pudieron comprobar las dos condiciones (el puntero no llegó a viajar hasta ellos, o el emergente no se pudo volver a abrir para probar Esc): " +
+            sinViaje.slice(0, 4).map(function (h) { return h.locator; }).join(", ") + ". Eso queda sin comprobar, no aprobado." : "")
+        ], nodesOf(sinViaje)));
+      } else if (!trace.hoverProbado) {
+        // No haber encontrado `title` no es haber probado el contenido emergente.
+        // Un tooltip hecho con `:hover` en CSS —que no se cierra con Esc y
+        // desaparece al mover el puntero— es una falla de libro de 1.4.13, y esto
+        // lo daba por conforme.
+        out.push(F("1.4.13", "revisar", null, [
+          "No se han encontrado atributos <code>title</code>, y la sonda de puntero NO llegó a ejecutarse en esta pasada (la capa de adaptación no corrió, o falló). Sin ella no se ha comprobado ningún contenido emergente: compruébalo a mano o vuelve a ejecutar con la capa de viewport activa."
+        ]));
+      } else {
+        const dis = trace.disparadores || 0;
+        out.push(F("1.4.13", "cumple", null, [
+          "Se ha pasado el puntero por " + dis + " disparador(es) de contenido emergente encontrados en el CSS y no ha aparecido ninguno problemático; tampoco hay atributos <code>title</code> usados como tooltip." +
+          (trace.hojasBloqueadas ? " (" + trace.hojasBloqueadas + " hoja(s) de otro origen no se han podido leer: puede haber disparadores fuera de alcance.)" : "")
+        ]));
+      }
+    }
+    return out;
+  }
+
+  /** Agrega las cinco trazas en una sola lista de hallazgos. */
+  function analyzeViewport(traces) {
+    traces = traces || {};
+    return [].concat(
+      analyzeReflow(traces.reflow),
+      analyzeResize(traces.resize),
+      analyzeTextSpacing(traces.spacing),
+      analyzeOrientation(traces.orientation),
+      analyzeHoverContent(traces.hover),
+      analyzeTimeLimits(traces.tiempos)
+    );
+  }
+
+  /**
+   * 2.2.1 Tiempo ajustable — los temporizadores largos, vistos al programarse.
+   *
+   * Lo único que se miraba era `<meta http-equiv="refresh">`, que es el fallo de libro
+   * y que hoy casi nadie usa: medido contra un sitio real, 2.2.1 no emitió nada. El
+   * límite de tiempo de verdad lo pone JavaScript —`setTimeout(cerrarSesion, 900000)`—
+   * y eso no está en el marcado. Envolviendo `setTimeout` y `setInterval` antes de que
+   * cargue la página se anota cada llamada con retardo de 20 s o más, con su retardo y
+   * la línea de pila de donde sale.
+   *
+   * El veredicto es `revisar`, y el motivo está en los datos: un temporizador largo
+   * puede ser un cierre de sesión —y entonces 2.2.1 exige poder apagarlo, ajustarlo o
+   * prorrogarlo— o puede ser un sondeo, una baliza de analítica o la caducidad de una
+   * caché, que al criterio no le importan. Lo que se afirma es lo observado: se programó
+   * un temporizador de tantos segundos, y sale de aquí.
+   */
+  function analyzeTimeLimits(t) {
+    if (!t || !Array.isArray(t.largos)) return [];
+    const seg = function (ms) { return ms >= 60000 ? Math.round(ms / 60000) + " min" : Math.round(ms / 1000) + " s"; };
+    if (!t.largos.length) {
+      return [F("2.2.1", "cumple-parcial", null, [
+        "Con la API de temporizadores envuelta desde antes de cargar, no se ha programado ningún `setTimeout` ni `setInterval` de 20 s o más (" +
+        (t.total || 0) + " temporizador(es) en total, todos por debajo del umbral).",
+        "Queda fuera lo que se programe DESPUÉS del momento de mirar —un cierre de sesión que arranca al iniciar sesión, por ejemplo—, los límites que imponga el servidor y los que vengan de un `<meta http-equiv=\"refresh\">`, que se comprueba aparte. Por eso es `cumple-parcial` y no `cumple`."
+      ])];
+    }
+    /* Y si el temporizador sale de una etiqueta de analítica, se dice.
+     *
+     * Medido contra el sitio real, el único temporizador largo de la muestra es un
+     * `setInterval` de 24 h programado por `gtm.js` de Google Tag Manager: no impone
+     * ningún límite a la persona. La fila es correcta —se programó, y eso es lo que se
+     * afirma— pero sin anotar la procedencia obliga a quien audita a ir a mirar un
+     * bundle de terceros para descartarla. Anotarlo no la esconde: la deja descartable
+     * de un vistazo. */
+    const ANALITICA = /(googletagmanager|google-analytics|gtag\/js|gtm\.js|doubleclick|hotjar|clarity\.ms|segment\.(com|io)|matomo|piwik|newrelic|sentry|intercom|zendesk|facebook\.net\/.*\/fbevents)/i;
+    const deAnalitica = t.largos.filter(function (x) { return ANALITICA.test(String(x.origen || "")); });
+    return [F("2.2.1", "revisar", null, [
+      t.largos.length + " temporizador(es) de 20 s o más programados mientras la página cargaba: " +
+      t.largos.slice(0, 5).map(function (x) {
+        return x.api + " de " + seg(x.ms) + (x.origen ? " (desde " + x.origen + ")" : "");
+      }).join(" · ") + ".",
+      deAnalitica.length === t.largos.length
+        ? "Todos salen de etiquetas de analítica o de herramientas de terceros, que no imponen ningún límite de tiempo a la persona: lo normal es que esto se descarte. Confírmalo y ciérralo."
+        : (deAnalitica.length ? deAnalitica.length + " de ellos salen de etiquetas de analítica o herramientas de terceros, que no imponen límites a la persona." : null),
+      "Si alguno impone un límite de tiempo a la persona —cerrar la sesión, caducar un carrito, pasar de paso en un formulario—, 2.2.1 exige poder apagarlo, ajustarlo hasta diez veces, o prorrogarlo con un aviso de al menos 20 s. Si es un sondeo, una baliza o una caché, el criterio no dice nada. Lo que se ha visto es que se programaron: lo que hacen al cumplirse lo decide quien audita."
+    ].filter(Boolean), t.largos.slice(0, 8).map(function (x) {
+      return { locator: x.api + "(" + seg(x.ms) + ")", name: x.origen || "" };
+    }))];
+  }
+  NS.EXENTOS_REFLUJO = EXENTOS_REFLUJO;
+  NS.analyzeReflow = analyzeReflow;
+  NS.analyzeResize = analyzeResize;
+  NS.analyzeTextSpacing = analyzeTextSpacing;
+  NS.analyzeOrientation = analyzeOrientation;
+  NS.analyzeHoverContent = analyzeHoverContent;
+  NS.analyzeViewport = analyzeViewport;
+  NS.analyzeTimeLimits = analyzeTimeLimits;
+})(A11Y);
+
+/* ── dynamic.js ── */
+(function (NS) {
+  const { WCAG22, enClause } = NS;
+  /**
+   * Prueba dinámica de widgets — análisis PURO de la traza capturada.
+   *
+   * Un driver (Playwright o la extensión) opera la página de verdad —tabula, abre,
+   * expande, cambia de pestaña, envía formularios— y captura qué pasó. Estas
+   * funciones interpretan esa traza y emiten veredictos. Son puras y testeables sin
+   * navegador; el driver vive en dynamic-analyze.js.
+   *
+   * Principio: el driver distingue "he comprobado y está mal" de "no he podido
+   * comprobarlo". Estas funciones NUNCA convierten lo segundo en una falla. Si el
+   * clic no llegó a ocurrir, o si se agotó el presupuesto de tabulaciones, el
+   * veredicto es `revisar`, no `falla`.
+   */
+
+  const IX = {};
+  WCAG22.forEach(function (c) { IX[c.n] = { t: c.t, lvl: c.lvl }; });
+  function crit(n) { return { n: n, t: (IX[n] ? IX[n].t : n), lvl: (IX[n] ? IX[n].lvl : "A") }; }
+  function F(n, verdict, sev, evid, nodes) {
+    const f = { c: crit(n), verdict: verdict, sev: sev, evid: evid, scope: "dinámico", en: enClause(n) };
+    if (nodes && nodes.length) f.nodes = nodes;
+    return f;
+  }
+  // Identidad estable de un control en la traza: el uid único del driver si lo hay,
+  // y si no el locator legible (que PUEDE colisionar — por eso el driver manda uid).
+  function key(x) { return (x && (x.uid || x.locator)) || null; }
+  function nodesOf(list) {
+    return (list || []).slice(0, 12).map(function (x) { return { locator: x.locator, name: x.name || "" }; });
+  }
+
+  /**
+   * Operabilidad por teclado real: ¿la tabulación alcanza todos los controles?
+   * @param {{ focusables:Array<{locator:string,uid?:string}>, reached:Array<{locator:string,uid?:string}>,
+   *           trapped?:boolean, exhausted?:boolean, tabs?:number }} trace
+   */
+  function analyzeTabTrace(trace) {
+    const out = [];
+    trace = trace || {};
+    const reached = new Set((trace.reached || []).map(key));
+    const focusables = trace.focusables || [];
+    const unreached = focusables.filter(function (f) { return !reached.has(key(f)); });
+    const inter = trace.interactivos || { sueltos: [], enCompuesto: [] };
+    const sueltos = inter.sueltos || [];
+    const enCompuesto = inter.enCompuesto || [];
+
+    if (trace.trapped) {
+      out.push(F("2.1.2", "falla", "crítica", [
+        "El foco queda atrapado con Tab: no se puede salir del componente solo con teclado." +
+        (trace.atrapadoEn && trace.atrapadoEn.length
+          ? " El recorrido cicla entre " + trace.atrapadoEn.length + " control(es) —" + trace.atrapadoEn.slice(0, 6).join(" → ") +
+            "— y no vuelve a salir, con " + unreached.length + " control(es) del resto de la página sin alcanzar."
+          : "")
+      ], (trace.atrapadoEn || []).slice(0, 8).map(function (l) { return { locator: l, name: "" }; })));
+    }
+
+    /* 2.1.1 sobre los controles INTERACTIVOS que no son enfocables.
+     *
+     * Es el fallo de libro del criterio y no se estaba mirando: el driver enumeraba
+     * lo que YA era enfocable, así que un `div role="button"` sin `tabindex` no
+     * entraba en la lista, no había nada «sin alcanzar», y el análisis emitía 2.1.1
+     * `cumple` con la frase «Todos los controles interactivos se alcanzan con Tab».
+     * Cinco barreras reales invisibles, y la afirmación hecha sin haber mirado uno.
+     *
+     * Los de un widget compuesto con su parada de tabulación (tablist, listbox…) NO
+     * son barrera: el patrón ARIA correcto es una sola parada y las flechas por
+     * dentro. Pero esta prueba no recorre las flechas, así que tampoco puede firmar
+     * que ese widget se opere con teclado: se dice, y el criterio no se cierra. */
+    if (sueltos.length) {
+      out.push(F("2.1.1", "falla", "grave", [
+        sueltos.length + " control(es) con rol de widget no pueden recibir el foco: no son alcanzables con teclado de ninguna manera (sin `tabindex`, y sin un widget compuesto que gestione el foco por ellos). " +
+        sueltos.slice(0, 6).map(function (x) { return x.locator + " (role=" + x.rol + ")"; }).join(", ") + (sueltos.length > 6 ? "…" : "")
+      ], nodesOf(sueltos)));
+    }
+
+    if (!focusables.length && !sueltos.length && !enCompuesto.length) return out;
+
+    // ¿Se ha medido la tabulación? Si la fase se cayó, lo que falta NO se ha comprobado.
+    if (trace.medida === false) {
+      out.push(F("2.1.1", "revisar", null, [
+        "La prueba de tabulación no llegó a ejecutarse (la fase falló), así que de los " + focusables.length +
+        " control(es) enfocables de la página no se sabe si se alcanzan: no es que no se alcancen. Mira los errores de la ejecución y repítela."
+      ], nodesOf(focusables)));
+      return out;
+    }
+
+    if (!unreached.length && !sueltos.length) {
+      if (enCompuesto.length) {
+        out.push(F("2.1.1", "cumple-parcial", null, [
+          "Todos los controles enfocables se alcanzan con Tab (" + focusables.length + "). Además hay " + enCompuesto.length +
+          " control(es) dentro de widgets compuestos (" + enCompuesto.slice(0, 3).map(function (x) { return x.compuesto; }).join(", ") +
+          ") que por diseño no son tabulables y se operan con las flechas: el patrón es el correcto, pero esta prueba no recorre las flechas, así que esa parte queda por comprobar a mano."
+        ], nodesOf(enCompuesto)));
+        return out;
+      }
+      out.push(F("2.1.1", "cumple", null, ["Todos los controles enfocables se alcanzan con Tab (" + focusables.length + "), y no hay ningún control con rol de widget que no pueda recibir el foco."]));
+      return out;
+    }
+    if (!unreached.length) return out;   // lo de `sueltos` ya se ha dicho arriba
+    // No se alcanzaron todos. ¿Es una barrera o es que no terminamos de mirar?
+    // Si la tabulación se cortó (trampa de foco o presupuesto agotado), lo que falta
+    // NO está comprobado: pedir revisión en vez de declarar falla.
+    if (trace.trapped || trace.exhausted) {
+      out.push(F("2.1.1", "revisar", null, [
+        "La tabulación se interrumpió " + (trace.trapped ? "por una trampa de foco" : "al agotar el presupuesto de " + (trace.tabs || "?") + " pulsaciones") +
+        " con " + unreached.length + " control(es) sin alcanzar: no se puede afirmar que sean inalcanzables. Repite la prueba con un presupuesto mayor o revisa a mano."
+      ], nodesOf(unreached)));
+      return out;
+    }
+    out.push(F("2.1.1", "falla", "grave", [
+      unreached.length + " controle(s) no se alcanzan tabulando: " +
+      unreached.slice(0, 6).map(function (u) { return u.locator; }).join(", ") + (unreached.length > 6 ? "…" : "")
+    ], nodesOf(unreached)));
+    return out;
+  }
+
+  /**
+   * Disclosure / expandible: al activar, ¿cambia aria-expanded y el contenido controlado?
+   * @param {Array<{locator:string, name?:string, clicked?:boolean, expandedBefore:string,
+   *                expandedAfter:string, targetShownBefore?:boolean, targetShownAfter?:boolean}>} events
+   */
+  function analyzeDisclosure(events) {
+    const out = [];
+    (events || []).forEach(function (e) {
+      const who = e.locator + (e.name ? " «" + e.name + "»" : "");
+      const nodes = [{ locator: e.locator, name: e.name || "" }];
+      // Si la activación no llegó a ocurrir, no hay nada medido: no inventamos una falla.
+      if (e.clicked === false) {
+        out.push(F("4.1.2", "revisar", null, [
+          who + ": no se pudo activar automáticamente (" + (e.reason || "el control no responde al clic sintético") +
+          "): el cambio de estado queda sin comprobar."
+        ], nodes));
+        return;
+      }
+      if (e.expandedBefore === e.expandedAfter) {
+        out.push(F("4.1.2", "falla", "grave", ["Al activar " + who + ", <code>aria-expanded</code> no cambia (" + e.expandedBefore + "): el estado no se expone tras la interacción."], nodes));
+      } else if (e.targetShownBefore != null && e.targetShownAfter != null && e.targetShownBefore === e.targetShownAfter) {
+        out.push(F("4.1.2", "revisar", null, [who + ": aria-expanded cambia (" + e.expandedBefore + "→" + e.expandedAfter + ") pero el contenido controlado no cambia de visibilidad."], nodes));
+      } else {
+        out.push(F("4.1.2", "cumple", null, [who + ": el estado y el contenido controlado cambian al activar (" + e.expandedBefore + "→" + e.expandedAfter + ")."], nodes));
+      }
+    });
+    return out;
+  }
+
+  /**
+   * Pestañas: al activar una pestaña, ¿se mueve aria-selected y se muestra su panel?
+   * @param {Array<{locator:string, clicked?:boolean, selectedAfter:string, othersSelected:number, panelShown?:boolean}>} events
+   */
+  function analyzeTabs(events) {
+    const out = [];
+    (events || []).forEach(function (e) {
+      const nodes = [{ locator: e.locator, name: e.name || "" }];
+      if (e.clicked === false) {
+        out.push(F("4.1.2", "revisar", null, [e.locator + ": no se pudo activar automáticamente (" + (e.reason || "sin respuesta al clic") + "): sin comprobar."], nodes));
+      } else if (e.selectedAfter !== "true") {
+        out.push(F("4.1.2", "falla", "grave", [e.locator + ": al activarla, aria-selected no pasa a true."], nodes));
+      } else if (e.othersSelected > 0) {
+        out.push(F("4.1.2", "revisar", null, [e.locator + ": hay " + e.othersSelected + " pestaña(s) más marcadas como seleccionadas a la vez."], nodes));
+      } else if (e.panelShown === false) {
+        out.push(F("1.3.1", "revisar", null, [e.locator + ": la pestaña se selecciona pero su tabpanel no se muestra."], nodes));
+      } else {
+        out.push(F("4.1.2", "cumple", null, [e.locator + ": selecciona y muestra su panel correctamente."], nodes));
+      }
+    });
+    return out;
+  }
+
+  /**
+   * Errores de formulario forzados: al enviar con datos inválidos, ¿se identifican
+   * en texto y se anuncian?
+   *
+   * `trace.intercepted` indica que el envío se bloqueó antes de salir a la red (modo
+   * seguro). No cambia el veredicto: la validación de cliente y el marcado ARIA se
+   * producen igual; solo evita tocar el servidor ajeno.
+   *
+   * @param {{ submitted:boolean, intercepted?:boolean, hasAlert?:boolean,
+   *           fields:Array<{locator:string, required:boolean, invalid:boolean,
+   *                         describedbyText?:string, hasAlert?:boolean}> }} trace
+   */
+  function analyzeErrorState(trace) {
+    const out = [];
+    if (!trace || !trace.submitted) return out;
+    const bad = (trace.fields || []).filter(function (f) { return f.required || f.invalid; });
+    if (!bad.length) return out;
+    /* 3.3.1 pide que el error se DESCRIBA EN TEXTO, no que esté asociado por ARIA.
+     *
+     * La técnica suficiente **G83** se satisface con texto de error visible junto al
+     * campo, sin asociación programática (eso es 1.3.1 y 4.1.2, que son otros
+     * criterios y tienen sus propias filas). Mirando solo `aria-describedby`, un
+     * formulario que hace lo que manda G83 —desocultar «Error: el correo es
+     * obligatorio» al lado del campo, más un `role="alert"` con el resumen— salía con
+     * un `falla` **grave** de 3.3.1. Una barrera inventada sobre contenido conforme,
+     * que es lo que destruye la credibilidad de un informe delante de un cliente.
+     *
+     * Así que el texto cuenta venga de donde venga: de `aria-describedby`, de
+     * `aria-errormessage` o del entorno del campo (`errorCercaText`, que el driver
+     * recoge). Si no hay texto en ninguna parte, entonces sí es 3.3.1; si hay texto
+     * pero sin asociar, es 4.1.2 a revisar. */
+    const textoDe = function (f) {
+      return [f.describedbyText, f.errormessageText, f.errorCercaText]
+        .map(function (t) { return String(t || "").trim(); }).filter(Boolean).join(" ");
+    };
+    const sinTexto = bad.filter(function (f) { return !textoDe(f); });
+    const textoSinAsociar = bad.filter(function (f) {
+      return textoDe(f) && !(f.describedbyText || f.errormessageText || "").trim();
+    });
+    const sinInvalid = bad.filter(function (f) { return !f.invalid; });
+    const hayAlerta = (trace.fields || []).some(function (f) { return f.hasAlert; }) || trace.hasAlert;
+    /* Y «se anuncian» hay que haberlo VISTO anunciar.
+     *
+     * `hasAlert` era la simple existencia de un `[role=alert]` o `[aria-live]` en
+     * cualquier parte del documento, vacío o no, relacionado con el error o no. Con
+     * eso se emitía `3.3.1 cumple` y la evidencia «los errores se identifican en
+     * texto, exponen aria-invalid **y se anuncian**»: tres afirmaciones, y ninguna
+     * comprobada. El driver compara ahora el contenido de las regiones live antes y
+     * después del envío (`liveCambio`); mientras no conste ese cambio, el criterio no
+     * se cierra como conforme. */
+    const anuncioVisto = trace.liveCambio === true;
+
+    if (sinTexto.length) out.push(F("3.3.1", "falla", "grave", [sinTexto.length + " campo(s) con error sin ninguna descripción en texto —ni asociada (aria-describedby/errormessage) ni visible junto al campo—: " + sinTexto.slice(0, 6).map(function (f) { return f.locator; }).join(", ") + "."], nodesOf(sinTexto)));
+    if (textoSinAsociar.length) out.push(F("4.1.2", "revisar", null, [textoSinAsociar.length + " campo(s) tienen el texto del error al lado pero sin asociar por ARIA: cumple 3.3.1 (técnica G83) y deja 4.1.2 y 1.3.1 por comprobar. Elementos: " + textoSinAsociar.slice(0, 6).map(function (f) { return f.locator; }).join(", ") + "."], nodesOf(textoSinAsociar)));
+    if (sinInvalid.length) out.push(F("4.1.2", "revisar", null, [sinInvalid.length + " campo(s) en error sin <code>aria-invalid=\"true\"</code>: el estado de error no se expone a la API."], nodesOf(sinInvalid)));
+    if (!hayAlerta) out.push(F("4.1.3", "revisar", null, ["No se detecta un mensaje de estado (role=alert / aria-live) al enviar: revisa que el error se anuncie sin mover el foco."]));
+    else if (!anuncioVisto) out.push(F("4.1.3", "revisar", null, ["Hay una región de estado (role=alert / aria-live) en la página, pero su contenido no ha cambiado al enviar: que exista el contenedor no quiere decir que el error se anuncie. Compruébalo con un lector."]));
+
+    if (!sinTexto.length && !sinInvalid.length) {
+      if (anuncioVisto && !textoSinAsociar.length) {
+        out.push(F("3.3.1", "cumple", null, ["Los errores se identifican en texto asociado al campo, exponen <code>aria-invalid</code>, y el anuncio se ha visto producirse: el contenido de la región de estado cambió al enviar."]));
+      } else {
+        /* Se ha medido lo medible y falta juicio: ni falla ni conforme.
+         *
+         * Y se dice QUÉ se ha medido, que no es lo mismo que lo que pide el criterio.
+         * Lo observado es que al enviar apareció texto nuevo junto al campo; que ese
+         * texto describa el error —y no sea otra cosa que salió a la vez— lo juzga una
+         * persona leyéndolo. Escribir «el error está descrito en texto» sería afirmar
+         * el criterio a partir de un indicio. */
+        out.push(F("3.3.1", "cumple-parcial", null, [
+          (textoSinAsociar.length
+            ? "Al enviar apareció texto nuevo junto a " + textoSinAsociar.length + " campo(s) en error, sin asociar por ARIA — que es lo que admite la técnica G83. Lee ese texto y comprueba que identifica el error: «" +
+              textoDe(textoSinAsociar[0]).slice(0, 120) + "»."
+            : "Cada campo en error tiene texto de error asociado por ARIA.") +
+          (anuncioVisto ? "" : " Y no se ha podido comprobar que el error se ANUNCIE: la región de estado no cambió de contenido al enviar, o no se pudo observar.")
+        ], nodesOf(textoSinAsociar.length ? textoSinAsociar : bad)));
+      }
+    }
+    return out;
+  }
+
+  /**
+   * 3.2.1 Al recibir el foco · 3.2.2 Al recibir entradas.
+   *
+   * Los dos criterios dicen lo mismo con dos disparadores distintos: enfocar un
+   * control (3.2.1) o cambiar su valor (3.2.2) NO puede provocar por sí solo un
+   * cambio de contexto —navegar a otra página, abrir una ventana, mover el foco a
+   * otro sitio, sustituir el contenido— si no se ha avisado antes.
+   *
+   * Esto es medible con lo que la capa dinámica ya hace: tabula y pulsa. Lo único
+   * que faltaba era mirar qué pasa DESPUÉS de enfocar y después de cambiar, y las
+   * tres señales son observables: la URL, dónde está el foco, y una huella del
+   * contenido visible.
+   *
+   * @param {Array<{locator:string, uid:string, disparador:"foco"|"entrada",
+   *                navego:boolean, focoMovido:boolean, contenidoCambio:boolean}>} eventos
+   */
+  function analyzeContextChange(eventos, noSondados, censo) {
+    const out = [];
+    /* Lo que NO se ha sondado sale en la evidencia y, cuando no hay nada que
+     * reprochar, también en el veredicto.
+     *
+     * El driver recorta la lista de candidatos con un tope (veinte por defecto) y
+     * antes no se lo contaba a nadie: en una página de sesenta controles se sondaban
+     * veinte y el criterio salía `pasa`, que `esConforme()` trata como conformidad.
+     * Cuarenta controles sin tocar y 3.2.1 exportado como conforme en el IRA.
+     *
+     * `cumple-parcial` es la palabra exacta para esto —la parte medida está bien, el
+     * resto no se ha mirado— y `esConforme()` ya la excluye. */
+    const fuera = (censo && censo.total > censo.sondados) ? censo.total - censo.sondados : 0;
+    const cola = (noSondados
+      ? " " + noSondados + " control(es) no se pudieron sondar (la página se recargó o cambió durante la prueba): quedan sin comprobar."
+      : "") + (fuera
+      ? " Quedan " + fuera + " de " + censo.total + " control(es) sin sondar por el tope de la prueba (súbelo con `maxContexto`): de esos no se sabe nada."
+      : "");
+    const porCrit = { foco: "3.2.1", entrada: "3.2.2" };
+    ["foco", "entrada"].forEach(function (disp) {
+      const crit = porCrit[disp];
+      const propios = (eventos || []).filter(function (e) { return e.disparador === disp; });
+      if (!propios.length) return;
+
+      const graves = propios.filter(function (e) { return e.navego; });
+      const medios = propios.filter(function (e) { return !e.navego && (e.focoMovido || e.contenidoCambio); });
+      const verbo = disp === "foco" ? "al recibir el foco" : "al cambiar su valor";
+
+      if (graves.length) {
+        out.push(F(crit, "falla", "grave", [
+          graves.length + " control(es) provocan una NAVEGACIÓN " + verbo + ", sin que medie ninguna acción de la persona: " +
+          graves.slice(0, 5).map(function (e) { return e.locator; }).join(", ") +
+          ". Es el caso que " + crit + " prohíbe expresamente." + cola
+        ], graves.slice(0, 8).map(function (e) { return { locator: e.locator, name: "", path: e.uid }; })));
+      }
+      if (medios.length) {
+        out.push(F(crit, "revisar", null, [
+          medios.length + " control(es) cambian algo " + verbo + " sin activarlos: " +
+          medios.slice(0, 5).map(function (e) {
+            const q = [];
+            if (e.focoMovido) q.push("el foco salta a otro sitio");
+            if (e.contenidoCambio) q.push("cambia el contenido visible");
+            return e.locator + " (" + q.join(" y ") + ")";
+          }).join(" · ") +
+          ". " + crit + " lo permite si se ha avisado antes de que iba a pasar: comprueba si hay ese aviso."
+        ], medios.slice(0, 8).map(function (e) { return { locator: e.locator, name: "", path: e.uid }; })));
+      }
+      if (!graves.length && !medios.length) {
+        // Sin nada que reprochar, el veredicto depende de si se miró TODO.
+        const completo = !fuera && !noSondados;
+        out.push(F(crit, completo ? "pasa" : "cumple-parcial", null, [
+          "Se han probado " + propios.length + " control(es) y ninguno provoca navegación, salto de foco ni sustitución de contenido " + verbo + "." + cola
+        ]));
+      }
+    });
+    return out;
+  }
+
+  /**
+   * 2.2.2 Poner en pausa, detener u ocultar — a partir de lo OBSERVADO.
+   *
+   * La medición sobre el render ve lo que el CSS declara: `animationName`,
+   * `animationIterationCount`, `<marquee>`, `video[autoplay][loop]`. Lo que mueve
+   * JavaScript no declara nada, y es la mayoría: medido en un sitio real, el
+   * carrusel de la portada pasaba sin que el agente lo viera y en su lugar se acusó
+   * a un icono con `fadeInDown`, que era lo único escrito en el CSS.
+   *
+   * Aquí el dato viene de un MutationObserver que ha estado mirando la página sin
+   * tocarla, así que lo que se afirma es lo que pasó: tal elemento cambió N veces
+   * entre el segundo X y el segundo Y sin que nadie hiciera nada.
+   *
+   * Los dos umbrales son los del criterio. Repartido más de CINCO segundos es lo que
+   * 2.2.2 llama «lasts more than five seconds», y entonces, si no hay ningún control
+   * para pararlo en toda la página, es una falla de nivel A. Entre 2,5 y 5 segundos
+   * se observó movimiento pero no se llegó al umbral: eso se dice y se deja a
+   * revisar, porque la ventana de observación se acabó, no el movimiento.
+   */
+  function analyzeAutoMovement(obs) {
+    if (!obs || obs.error || !Array.isArray(obs.movidos)) return [];
+    /* Haber mirado y no haber visto nada NO es lo mismo que no haber mirado, y
+     * callarse hace que se parezcan.
+     *
+     * Esto devolvía lista vacía cuando la observación no encontraba movimiento, así que
+     * en el informe no quedaba ni rastro de que se hubiera observado. Medido contra un
+     * sitio real: 2.2.2 salió «sin determinar» en las diez páginas y lo único que había
+     * escrito era un icono con `fadeInDown` que vio la capa de CSS — leyendo eso no hay
+     * forma de saber si la observación miró ocho segundos y la página estaba quieta, o
+     * si no llegó a correr. Ahora lo dice, con los segundos que miró y con lo que queda
+     * fuera por haber mirado solo esa ventana. */
+    if (!obs.movidos.length) {
+      const seg0 = ((obs.ms || 0) / 1000).toFixed(1);
+      return [F("2.2.2", "cumple-parcial", null, [
+        "Observada la página " + seg0 + " s SIN tocar nada: ningún elemento cambia por su cuenta de forma repetida.",
+        "Queda fuera lo que tarde más de " + seg0 + " s en empezar a moverse, lo que solo se mueva al interactuar, lo que se mueva dentro de un marco o un vídeo —que no emiten cambios en este documento— y el movimiento pintado en un <canvas>. Por eso es `cumple-parcial` y no `cumple`."
+      ])];
+    }
+    const controles = obs.controles || [];
+    const seg = function (ms) { return (ms / 1000).toFixed(1); };
+    const comoSeLlama = function (x) {
+      return x.loc + " (" + x.n + " cambios de «" + x.tipo + "» entre el segundo " + seg(x.primero) + " y el " + seg(x.ultimo) + ")";
+    };
+    /* «Dura más de cinco segundos» no es «el primero y el último cambio distan cinco
+     * segundos»: es que SIGA moviéndose cuando dejamos de mirar.
+     *
+     * Lo escribí como la distancia entre el primer y el último cambio y la sonda lo
+     * cazó enseguida: un carrusel que pasa de diapositiva cada 1,2 s observado durante
+     * 7 s tiene su primer cambio en el segundo 1,2 y el último en el 6,0 —4,8 s de
+     * distancia— y salía clasificado como movimiento que «no llega al umbral». No es
+     * que no llegara: es que se acabó la ventana. Lo que distingue los dos casos es si
+     * el último cambio cae junto al final de la observación, contando con que entre dos
+     * cambios pasa un intervalo. */
+    const sigueAlFinal = function (x) {
+      const intervalo = x.n > 1 ? (x.ultimo - x.primero) / (x.n - 1) : (x.ultimo - x.primero);
+      return x.ultimo >= obs.ms - intervalo - 500;
+    };
+    const sostenidos = obs.movidos.filter(function (x) { return x.ultimo >= 5000 && sigueAlFinal(x); });
+    const breves = obs.movidos.filter(function (x) { return !(x.ultimo >= 5000 && sigueAlFinal(x)); });
+    const out = [];
+    const nodos = function (lista) { return lista.slice(0, 8).map(function (x) { return { locator: x.loc, name: "", path: x.uid }; }); };
+    const conQue = controles.length
+      ? " En la página hay " + controles.length + " control(es) que podrían servir para pararlo (" +
+        controles.slice(0, 3).map(function (c) { return c.loc + ": «" + c.motivo + "»"; }).join(", ") +
+        "): comprueba que de verdad paren ESTO y que se alcancen con el teclado."
+      : " No se ha encontrado en toda la página ningún control de pausa, parada u ocultación (ni por nombre, ni por clase, ni controles nativos de vídeo o audio).";
+    if (sostenidos.length) {
+      out.push(F("2.2.2", controles.length ? "revisar" : "falla", controles.length ? null : "grave", [
+        "Observando la página " + seg(obs.ms) + " s SIN tocar nada, " + sostenidos.length +
+        " elemento(s) cambian solos de forma sostenida: " + sostenidos.slice(0, 4).map(comoSeLlama).join(" · ") + ".",
+        "El movimiento arranca solo y se mantiene más de cinco segundos, que es el umbral de 2.2.2." + conQue
+      ], nodos(sostenidos)));
+    }
+    if (breves.length) {
+      out.push(F("2.2.2", "revisar", null, [
+        "Se ha observado movimiento automático que NO llega al umbral de cinco segundos dentro de la ventana de observación (" +
+        seg(obs.ms) + " s): " + breves.slice(0, 4).map(comoSeLlama).join(" · ") + ".",
+        "Puede ser contenido que se carga al entrar y se queda quieto —y entonces 2.2.2 no dice nada— o movimiento que sigue más allá de lo que se miró. Lo distingue mirar la página unos segundos más." + conQue
+      ], nodos(breves)));
+    }
+    return out;
+  }
+
+  /**
+   * 2.1.4 Atajos de teclado de un carácter — a partir de lo PULSADO.
+   *
+   * El detector del ámbito de página solo ve los manejadores en línea
+   * (`onkeydown="…"`), y hoy nadie los escribe así: un `addEventListener` dentro de un
+   * bundle no está en el marcado. Resultado medido contra un sitio real: 2.1.4 era uno
+   * de los siete criterios que no miraba ninguna capa, ni para bien ni para mal.
+   *
+   * Aquí el dato viene de pulsar la tecla con el foco en el cuerpo del documento —fuera
+   * de cualquier campo— y mirar si pasa algo. Y lo que se puede concluir es exactamente
+   * una de las tres salidas del criterio: si la tecla actúa con el foco en el cuerpo,
+   * el atajo NO está limitado a un control. Las otras dos salidas —poder desactivarlo y
+   * poder reasignarlo— viven en las preferencias del sitio y no se pueden comprobar
+   * desde fuera, así que el veredicto es `revisar` y no `falla`: queda dicho qué tecla
+   * hace qué, que es lo que una persona necesita para ir a buscar el interruptor.
+   */
+  function analyzeCharKeyShortcuts(res) {
+    if (!res || !Array.isArray(res.probadas) || !res.probadas.length) return [];
+    const probadas = res.probadas.map(function (t) { return "«" + t + "»"; }).join(", ");
+    const cola = " Se han probado " + res.probadas.length + " tecla(s) (" + probadas +
+      "), no todas: un atajo con otra tecla no se habría visto, así que esto no cierra el criterio por sí solo.";
+    const activas = res.activas || [];
+    if (!activas.length) {
+      return [F("2.1.4", "cumple-parcial", null, [
+        "Con el foco en el cuerpo del documento, ninguna de las teclas sueltas probadas hace nada: ni navega, ni mueve el foco, ni cambia lo que se ve, ni desplaza la página." + cola
+      ])];
+    }
+    return [F("2.1.4", "revisar", null, [
+      activas.length + " tecla(s) suelta(s) actúan con el foco en el CUERPO del documento, sin exigir Ctrl, Alt, Cmd ni Mayúsculas: " +
+      activas.slice(0, 6).map(function (a) { return "«" + a.tecla + "» " + a.cambios.join(" y "); }).join(" · ") + ".",
+      "Eso descarta una de las tres salidas que da 2.1.4: el atajo no está limitado al foco de un control, actúa en toda la página. Quedan las otras dos —que se pueda desactivar o reasignar—, y eso vive en las preferencias del sitio: compruébalo ahí. Si no hay ni interruptor ni reasignación, es una falla de nivel A." + cola
+    ], activas.slice(0, 8).map(function (a) { return { locator: "tecla «" + a.tecla + "»", name: a.cambios.join("; ") }; }))];
+  }
+
+  /**
+   * 4.1.3 Mensajes de estado — a partir del texto que APARECE al interactuar.
+   *
+   * El criterio ya se dictaminaba para un caso: el error de formulario, con el envío
+   * forzado y la comparación de las regiones live antes y después. Pero en un sitio sin
+   * formularios con error eso no emite nada, y 4.1.3 cubre mucho más: «información
+   * sobre el éxito o el resultado de una acción, el estado de espera, el progreso de un
+   * proceso o la existencia de errores». Medido contra un sitio real: 4.1.3 fue uno de
+   * los siete criterios de los que no se dijo ni una palabra.
+   *
+   * Aquí el dato viene de los clics que la prueba dinámica ya hacía sobre los
+   * `[aria-expanded]`: texto que apareció en OTRO sitio de la página —descontando el
+   * panel que el propio control declara con `aria-controls`, que es contenido y no un
+   * mensaje de estado—, sin que el foco se mueva hasta él y sin que ninguna región live
+   * cambie de contenido. Ese es exactamente el patrón que 4.1.3 prohíbe.
+   *
+   * El veredicto es `revisar`, no `falla`, y el motivo es honesto: que ese texto SEA un
+   * mensaje de estado —y no un trozo de interfaz que salió a la vez— lo decide alguien
+   * leyéndolo. Lo que se afirma es lo observado: apareció, el foco no fue ahí, y ninguna
+   * región de estado se enteró.
+   */
+  function analyzeStatusMessages(eventos, ctx) {
+    const list = eventos || [];
+    const c = ctx || {};
+    if (!list.length) {
+      /* No haber tenido nada que pulsar no es «no hay mensajes de estado».
+       *
+       * Es la tercera vez que aparece el mismo defecto —primero en 2.2.2, luego al dejar
+       * 1.2.1 y 1.2.3 en blanco— y aquí se vio medido: la página de vídeos del sitio
+       * real no tiene NI UN `[aria-expanded]`, así que la fase no pulsó nada, no hubo
+       * candidatos, y 4.1.3 salió en blanco. Blanco no es «comprobado».
+       *
+       * Si no se sondeó nada, se dice. Y se dice también cuántas regiones de estado
+       * declara la página, que es el dato que de verdad orienta: cero regiones en un
+       * sitio con filtros y formularios es una pista fuerte, aunque no sea un veredicto. */
+      if (c.expandibles === 0 || c.expandibles == null) {
+        if (c.regiones == null) return [];
+        return [F("4.1.3", "revisar", null, [
+          "No se ha podido observar ningún mensaje de estado: la prueba dinámica no encontró controles expandibles que pulsar" +
+          (c.expandibles === 0 ? " (0 elementos con `aria-expanded`)" : "") + ".",
+          c.regiones
+            ? "La página declara " + c.regiones + " región(es) de estado (`role=status` / `role=alert` / `aria-live`): comprueba con un lector que lo que anuncian es lo que la persona necesita oír cuando algo cambia."
+            : "Y la página NO declara ninguna región de estado. Si al filtrar, buscar, enviar un formulario o navegar aparece algún mensaje de resultado, progreso o error, no hay nada que lo anuncie: eso sí sería una falla de 4.1.3. Compruébalo interactuando."
+        ])];
+      }
+      return [F("4.1.3", "cumple-parcial", null, [
+        "Se pulsaron " + c.expandibles + " control(es) expandible(s) y ninguno hizo aparecer texto nuevo fuera de su propio panel: no hay mensajes de estado desatendidos en lo que se ha podido probar.",
+        "Queda fuera lo que aparezca al filtrar, buscar, enviar un formulario o navegar, que esta prueba no recorre." +
+        (c.regiones ? " La página declara " + c.regiones + " región(es) de estado." : " La página no declara ninguna región de estado.")
+      ])];
+    }
+    const mudos = list.filter(function (e) { return !e.liveCambio && !e.focoDentro; });
+    if (!mudos.length) {
+      const conLive = list.filter(function (e) { return e.liveCambio; }).length;
+      return [F("4.1.3", "cumple-parcial", null, [
+        "Al pulsar los controles expandibles apareció texto nuevo en " + list.length + " caso(s), y en todos ellos o cambió el contenido de una región de estado (" +
+        conLive + ") o el foco se movió hasta el texto nuevo: ninguno queda sin anunciar.",
+        "Queda por juzgar si ese texto es de verdad un mensaje de estado y si lo que anuncia la región es lo que la persona necesita oír; eso se comprueba con un lector de pantalla."
+      ])];
+    }
+    const sinRegiones = mudos.every(function (e) { return !e.regiones; });
+    return [F("4.1.3", "revisar", null, [
+      mudos.length + " caso(s) en los que, al pulsar un control, apareció texto nuevo FUERA del panel que ese control gobierna, sin que el foco se moviera hasta él y sin que cambiara ninguna región de estado: " +
+      mudos.slice(0, 4).map(function (e) {
+        return "«" + e.locator + "» → «" + (e.textos || []).slice(0, 2).join(" / ").slice(0, 100) + "»";
+      }).join(" · ") + ".",
+      "Si ese texto informa del resultado de la acción, del progreso o de un error, es un mensaje de estado y 4.1.3 exige que se exponga con `role=\"status\"`, `role=\"alert\"` o `aria-live`, para que se anuncie sin robar el foco. Si es otra cosa —un trozo de interfaz que salió a la vez—, el criterio no dice nada: lo decide leerlo." +
+      (sinRegiones ? " En estas páginas no hay NINGUNA región de estado declarada, así que si hay mensajes de estado, no se anuncian." : "")
+    ], mudos.slice(0, 8).map(function (e) { return { locator: e.locator, name: (e.textos || [])[0] || "", path: (e.uids || [])[0] }; }))];
+  }
+  NS.analyzeTabTrace = analyzeTabTrace;
+  NS.analyzeDisclosure = analyzeDisclosure;
+  NS.analyzeTabs = analyzeTabs;
+  NS.analyzeErrorState = analyzeErrorState;
+  NS.analyzeContextChange = analyzeContextChange;
+  NS.analyzeAutoMovement = analyzeAutoMovement;
+  NS.analyzeCharKeyShortcuts = analyzeCharKeyShortcuts;
+  NS.analyzeStatusMessages = analyzeStatusMessages;
+})(A11Y);
+
+/* ── axe-map.js ── */
+(function (NS) {
+  /**
+   * Mapeo de resultados de axe-core a criterios WCAG.
+   *
+   * axe etiqueta cada regla con tags del tipo `wcag412`, `wcag143`, `wcag1410`…
+   * de los que se deriva el número de criterio sin necesidad de una tabla manual.
+   * Los tags de nivel (`wcag2a`, `wcag2aa`, `wcag21aa`…) y de categoría se ignoran.
+   */
+
+  // "wcag412" → "4.1.2" · "wcag1410" → "1.4.10" · "wcag2a" → null (nivel, no criterio)
+  function scFromAxeTag(tag) {
+    const m = /^wcag(\d)(\d)(\d+)$/.exec(tag);
+    if (!m) return null;
+    return m[1] + "." + m[2] + "." + m[3];
+  }
+
+  // Todos los criterios WCAG referenciados por los tags de una regla de axe.
+  function scFromAxeTags(tags) {
+    const out = [];
+    (tags || []).forEach(function (t) {
+      const sc = scFromAxeTag(t);
+      if (sc && out.indexOf(sc) === -1) out.push(sc);
+    });
+    return out;
+  }
+
+  /**
+   * Indexa las violaciones de axe por criterio WCAG.
+   * Devuelve un Map: SC → { sc, rules: [{ id, impact, help, sc, nodes }] }.
+   */
+  function axeViolationsBySC(violations) {
+    const bySC = new Map();
+    (violations || []).forEach(function (v) {
+      const scs = scFromAxeTags(v.tags);
+      scs.forEach(function (sc) {
+        if (!bySC.has(sc)) bySC.set(sc, { sc: sc, rules: [] });
+        bySC.get(sc).rules.push({
+          id: v.id,
+          impact: v.impact || null,
+          help: v.help || "",
+          sc: sc,
+          nodes: (v.nodes || []).length
+        });
+      });
+    });
+    return bySC;
+  }
+  NS.scFromAxeTag = scFromAxeTag;
+  NS.scFromAxeTags = scFromAxeTags;
+  NS.axeViolationsBySC = axeViolationsBySC;
 })(A11Y);
 
 /* ── oaw-letters.js ── */

@@ -10,6 +10,7 @@
  * lo parsea con el DOMParser dado (linkedom en Node, nativo en navegador).
  */
 import { WCAG22, enClause } from "./engine.js";
+import { EMBEBIDOS, NO_MEDIOS, alternativaCerca } from "./cuaderno.js";
 
 const IX = {};
 WCAG22.forEach(function (c) { IX[c.n] = { t: c.t, lvl: c.lvl }; });
@@ -117,9 +118,17 @@ const IDREF_ATTRS = ["aria-labelledby", "aria-describedby", "aria-controls", "ar
  * contenido no se ve desde aquí, así que se listan para que una persona los
  * abra, no se dictaminan.
  */
-const EMBEBIDOS = /(youtube\.com|youtu\.be|vimeo\.com|dailymotion|wistia|brightcove|jwplayer|spotify\.com|ivoox|soundcloud)/i;
+/* La lista de reproductores es UNA, y vive en `cuaderno.js`.
+ *
+ * Aquí había otra: nueve dominios occidentales, sin ninguna plataforma china. Cuando
+ * se arregló el inventario de medios para que reconociera Youku, Bilibili, iQiyi y
+ * compañía, el arreglo entró en `cuaderno.js` —que decide 1.2.4 y 1.2.5— y NO en este
+ * archivo, que decide 1.2.1, 1.2.2 y 1.2.3. Así que el mismo sitio chino tenía sus
+ * reproductores reconocidos para dos criterios y no para los otros tres, y esos tres
+ * salían en blanco. El fallo no era la lista corta: era tener dos listas.
+ */
 function inventarioMedios(doc) {
-  const propios = [], externos = [];
+  const propios = [], externos = [], enlaces = [];
   Array.prototype.forEach.call(doc.querySelectorAll("video,audio"), function (el) {
     if (ocultoEl(el)) return;
     const tag = el.tagName.toLowerCase();
@@ -133,16 +142,48 @@ function inventarioMedios(doc) {
       pistas: pistas,
       autoplay: el.hasAttribute("autoplay"),
       controles: el.hasAttribute("controls"),
-      silenciado: el.hasAttribute("muted")
+      silenciado: el.hasAttribute("muted"),
+      alternativa: alternativaCerca(el, doc)
     });
   });
+  /* Y los marcos DUDOSOS, que es lo que el cuaderno ya hacía para 1.2.4 y 1.2.5.
+   *
+   * Un marco que no se reconoce ni como reproductor ni como otra cosa (un mapa, un
+   * captcha, una analítica) puede ser un reproductor que no está en la lista. El
+   * cuaderno lo trata así desde que se arregló el inventario; aquí no, y el efecto era
+   * que en una página cuyo único medio es un marco desconocido, 1.2.1, 1.2.2 y 1.2.3
+   * no emitían NADA — fila en blanco, que no es lo mismo que «no aplica». */
+  const dudosos = [];
   Array.prototype.forEach.call(doc.querySelectorAll("iframe[src],embed[src],object[data]"), function (el) {
     const src = el.getAttribute("src") || el.getAttribute("data") || "";
-    if (!EMBEBIDOS.test(src)) return;
-    if (ocultoEl(el)) return;
-    externos.push({ locator: loc(el), src: src.slice(0, 120), nombre: (el.getAttribute("title") || "").slice(0, 60) });
+    if (ocultoEl(el) || !src) return;
+    const ficha = { locator: loc(el), src: src.slice(0, 120), nombre: (el.getAttribute("title") || "").slice(0, 60) };
+    if (EMBEBIDOS.test(src)) externos.push(ficha);
+    else if (!NO_MEDIOS.test(src)) dudosos.push(ficha);
   });
-  return { propios: propios, externos: externos };
+  /* Y los ENLACES a un reproductor o a un archivo de medios.
+   *
+   * Esto lo añadió una medición, no una idea: la página de vídeos de un sitio real no
+   * tiene ni un `<video>` ni un `<iframe>`. Los vídeos son enlaces a un reproductor
+   * externo que se abre en una caja de luz al pulsarlos, así que en el DOM no hay
+   * ningún medio hasta que alguien hace clic — y los cuatro criterios de medios
+   * salían EN BLANCO justamente en la página que más medios tiene de toda la muestra.
+   *
+   * Cuenta el enlace cuyo destino es un reproductor reconocido o un archivo de medios
+   * por extensión. Un enlace a una página que lleve «video» en la ruta no cuenta: eso
+   * es adivinar. */
+  const ARCHIVO_MEDIA = /\.(mp4|m4v|webm|ogv|mov|avi|mkv|mp3|m4a|ogg|oga|wav|flac|m3u8|mpd)(\?|#|$)/i;
+  Array.prototype.forEach.call(doc.querySelectorAll("a[href]"), function (el) {
+    const href = el.getAttribute("href") || "";
+    if (!href || ocultoEl(el)) return;
+    if (!EMBEBIDOS.test(href) && !ARCHIVO_MEDIA.test(href)) return;
+    enlaces.push({
+      locator: loc(el), src: href.slice(0, 120),
+      nombre: (el.getAttribute("aria-label") || el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 60),
+      archivo: ARCHIVO_MEDIA.test(href)
+    });
+  });
+  return { propios: propios, externos: externos, dudosos: dudosos, enlaces: enlaces };
 }
 
 /**
@@ -287,26 +328,115 @@ export function auditPageDoc(doc) {
   if (banners.length > 1) out.push(F("1.3.1", "revisar", null, ["Hay " + banners.length + " landmarks banner: normalmente debe haber uno."], banners.map(function (e) { return { locator: loc(e) }; })));
   if (infos.length > 1) out.push(F("1.3.1", "revisar", null, ["Hay " + infos.length + " landmarks contentinfo: normalmente debe haber uno."], infos.map(function (e) { return { locator: loc(e) }; })));
 
-  // 2.4.1 Saltar bloques. Un enlace de salto de verdad apunta a un destino que
-  // EXISTE y está al principio del documento; antes valía cualquier `a[href^='#']`
-  // de la página —incluido `href="#"` de un botón falso o un ancla del pie—.
-  const anclas = visibles(doc.querySelectorAll("a[href^='#']")).slice(0, 8);
-  const salto = anclas.find(function (a) {
+  /* 2.4.1 Saltar bloques.
+   *
+   * Un enlace de salto de verdad cumple TRES cosas, y hasta ahora solo se
+   * comprobaba una. Que el destino exista ya se comprobaba —antes valía cualquier
+   * `a[href^='#']`, incluido el `href="#"` de un botón falso—. Faltaban las otras
+   * dos, y sin ellas el criterio se daba por casi cumplido con un ancla cualquiera:
+   *
+   *  - Tiene que estar al PRINCIPIO: si para llegar al enlace de salto hay que
+   *    tabular por el menú entero, no sirve de nada. Se exige que esté entre los
+   *    primeros controles enfocables del documento. El acordeón de una ficha o un
+   *    «volver arriba» del pie apuntan a destinos que existen y no son saltos.
+   *  - Tiene que SALTAR algo: el destino va después de parte del contenido
+   *    repetido. Un ancla cuyo destino está antes que el menú no se salta nada.
+   *
+   * `cumple-parcial` no es conforme, así que esto no era una conformidad falsa;
+   * pero sí una evidencia que afirmaba un mecanismo que la página no tiene. */
+  const enfocables = visibles(doc.querySelectorAll("a[href],button,input,select,textarea,summary,[tabindex]"))
+    .filter(function (el) { return (el.getAttribute("tabindex") || "0").charAt(0) !== "-"; });
+  const anclas = visibles(doc.querySelectorAll("a[href^='#']"));
+  const destinoDe = function (a) {
     const h = (a.getAttribute("href") || "").slice(1);
-    if (!h) return false;
-    let destino = null;
-    try { destino = doc.getElementById(h) || doc.querySelector('a[name="' + h.replace(/"/g, '\\"') + '"]'); } catch (e) {}
-    return !!destino;
+    if (!h) return null;
+    try { return doc.getElementById(h) || doc.querySelector('a[name="' + h.replace(/"/g, '\\"') + '"]') || null; } catch (e) { return null; }
+  };
+  /* ¿Cuánto hay que tabular para llegar? Se mide sobre la lista de enfocables, que
+   * es lo que de verdad recorre quien usa el teclado. Tres es holgado: lo normal es
+   * que el enlace de salto sea el primero. */
+  const ordenEnfocable = function (el) { return enfocables.indexOf(el); };
+  /* El orden del documento se saca de un índice propio, no de
+   * `compareDocumentPosition`.
+   *
+   * Lo escribí con `compareDocumentPosition` y la sonda lo cazó en el primer
+   * intento: en linkedom no está implementado, así que devolvía `undefined`, la
+   * máscara de bits daba 0 y TODO quedaba «antes de todo». El enlace de salto bueno
+   * se rechazaba y la cuenta de controles previos salía 0 siempre — un dato falso en
+   * la evidencia, que es peor que no darlo. El motor corre en linkedom y en el
+   * navegador, así que la comparación tiene que funcionar en los dos. */
+  const orden = new Map();
+  Array.prototype.forEach.call(doc.querySelectorAll("*"), function (el, i) { orden.set(el, i); });
+  const pos = function (el) { const v = orden.get(el); return v == null ? -1 : v; };
+  const anclasConDestino = anclas.map(function (a) { return { a: a, d: destinoDe(a) }; }).filter(function (x) { return !!x.d; });
+  const salto = anclasConDestino.find(function (x) {
+    const i = ordenEnfocable(x.a);
+    if (i < 0 || i > 2) return false;
+    // ¿Se salta algo? El destino va DESPUÉS del enlace, y con contenido enfocable
+    // por medio: un ancla que apunta a lo que tiene justo al lado no salta nada.
+    const pa = pos(x.a), pd = pos(x.d);
+    return pa >= 0 && pd > pa;
   });
-  const hayLandmarks = mains.length > 0 || visibles(doc.querySelectorAll("nav,[role=navigation]")).length > 0;
+  // Cuántos controles se ahorra quien lo usa: un dato, no una condición. Exigir que
+  // ahorrase al menos uno rechazaba un enlace de salto legítimo en una página sin
+  // bloque repetido por delante, que es justo la página donde 2.4.1 no pide nada.
+  const saltados = salto
+    ? enfocables.filter(function (el) { const p = pos(el); return p > pos(salto.a) && p < pos(salto.d); }).length
+    : 0;
+  /* Y el destino tiene que ser el CONTENIDO, no un sitio cualquiera más abajo.
+   *
+   * Estructuralmente, el `<a href="#panel">Desplegar</a>` que abre un acordeón al
+   * principio de una ficha es idéntico a un enlace de salto: primer enfocable, y su
+   * destino está detrás del menú. Lo comprobé y pasaba por enlace de salto. Por el
+   * nombre no se puede distinguir sin atarse a un idioma —este sitio está en chino—,
+   * así que se distingue por el destino: `cumple-parcial` solo si apunta al landmark
+   * `main` o a algo de dentro. Cualquier otro destino se nombra y se deja a revisar,
+   * que es lo que es: puede ser un salto a un `div#contenido` sin landmark, o puede
+   * ser un botón falso. */
+  const alContenido = salto && mains.some(function (m) { return m === salto.d || (m.contains && m.contains(salto.d)); });
+  const navs = visibles(doc.querySelectorAll("nav,[role=navigation]"));
   const headings = visibles(doc.querySelectorAll(HEADING_SEL)).map(function (h) {
     const n = tag(h);
     const lvl = /^h[1-6]$/.test(n) ? parseInt(n[1], 10) : parseInt(h.getAttribute("aria-level") || "2", 10);
     return { lvl: lvl, text: (h.textContent || "").trim().slice(0, 40), el: h };
   });
-  if (salto) out.push(F("2.4.1", "cumple-parcial", null, ["Hay un enlace de salto a un destino existente (" + salto.getAttribute("href") + "); confirma que sea visible al recibir el foco."], [{ locator: loc(salto) }]));
-  else if (hayLandmarks || headings.length) out.push(F("2.4.1", "revisar", null, ["Sin enlace de salto con destino válido; hay landmarks/encabezados como mecanismo alternativo (revisar que basten)."]));
-  else out.push(F("2.4.1", "falla", "moderada", ["No hay enlace de salto ni landmarks ni encabezados para saltar bloques repetidos."]));
+  if (salto && alContenido) {
+    out.push(F("2.4.1", "cumple-parcial", null, ["Hay un enlace de salto al contenido principal (" + salto.a.getAttribute("href") + "), entre los primeros controles enfocables; se ahorra " + saltados + " control(es). Confirma que sea visible al recibir el foco."], [{ locator: loc(salto.a) }]));
+  } else if (salto) {
+    out.push(F("2.4.1", "revisar", null, [
+      "Hay un ancla interna entre los primeros controles enfocables (" + salto.a.getAttribute("href") + ", se salta " + saltados + " control(es)), pero su destino no es el landmark `main` ni está dentro de él.",
+      "Puede ser un enlace de salto a un contenedor sin landmark —y entonces vale— o un control que despliega algo, que no tiene nada que ver con 2.4.1. Míralo: es lo único que separa las dos cosas."
+    ], [{ locator: loc(salto.a) }]));
+  } else if (mains.length || navs.length || headings.length) {
+    /* `revisar`, y con los datos puestos para que se pueda decidir en diez
+     * segundos. La evidencia decía «hay landmarks/encabezados» juntando las dos
+     * cosas: medido en un sitio real, cero `main`, cero `nav`, cero anclas internas
+     * y catorce encabezados — y el informe decía «landmarks», que la página no
+     * tiene. Lo que decide a mano este criterio son tres números y una advertencia,
+     * así que van los tres números y la advertencia. */
+    /* ¿Cuánto cuesta llegar al contenido? Hasta el `main` si lo hay, y si no hasta
+     * el primer encabezado, que es lo único que marca dónde empieza el contenido en
+     * una página sin landmarks. */
+    const ancla = mains.length ? mains[0] : (headings.length ? headings[0].el : null);
+    const pAncla = ancla ? pos(ancla) : -1;
+    const antesDelContenido = pAncla >= 0
+      ? enfocables.filter(function (el) { return pos(el) < pAncla; }).length
+      : enfocables.length;
+    const haciaDonde = mains.length ? "llegar al landmark main" : "llegar al primer encabezado";
+    const anclasNoSalto = anclasConDestino.length;
+    out.push(F("2.4.1", "revisar", null, [
+      "No hay enlace de salto utilizable" +
+      (anclasNoSalto ? " (hay " + anclasNoSalto + " ancla(s) interna(s) con destino válido, pero ninguna está entre los primeros controles enfocables apuntando hacia delante: no son enlaces de salto)" : "") +
+      ". Lo que hay como mecanismo alternativo: " +
+      [mains.length ? mains.length + " landmark main" : null,
+        navs.length ? navs.length + " landmark(s) de navegación" : null,
+        headings.length ? headings.length + " encabezado(s)" : null].filter(Boolean).join(", ") + ".",
+      "Hay que tabular por " + antesDelContenido + " control(es) para " + haciaDonde + ", de " + enfocables.length + " enfocables en la página.",
+      "WCAG admite los landmarks (ARIA11) y los encabezados (H69) como técnicas suficientes, así que esto no se firma como falla desde aquí. Pero decide tú: landmarks y encabezados solo se navegan con tecnología de apoyo, y quien usa el teclado sin lector de pantalla no tiene con qué saltar el bloque repetido. Es el motivo habitual para firmarlo como barrera."
+    ]));
+  } else {
+    out.push(F("2.4.1", "falla", "moderada", ["No hay enlace de salto ni landmarks ni encabezados para saltar bloques repetidos: " + enfocables.length + " control(es) enfocable(s) que hay que recorrer en cada página."]));
+  }
 
   // 2.4.6 / 1.3.1 Encabezados: existe h1 y sin saltos de nivel (solo los visibles)
   if (!headings.length) {
@@ -348,7 +478,8 @@ export function auditPageDoc(doc) {
 
   /* ── 1.2.x Medios ── */
   const medios = inventarioMedios(doc);
-  if (medios.propios.length || medios.externos.length) {
+  const dudosos = medios.dudosos || [], enlazados = medios.enlaces || [];
+  if (medios.propios.length || medios.externos.length || dudosos.length || enlazados.length) {
     const videos = medios.propios.filter(function (m) { return m.tag === "video"; });
     const audios = medios.propios.filter(function (m) { return m.tag === "audio"; });
     const sinSub = videos.filter(function (m) { return !m.subtitulos; });
@@ -366,16 +497,37 @@ export function auditPageDoc(doc) {
       ]));
     }
     if (sinDesc.length) {
+      /* «Ni se detecta una alternativa» era una afirmación que no se comprobaba.
+       *
+       * 1.2.3 se satisface con una alternativa en texto, y eso no vive dentro del
+       * `<video>`: es un enlace o un bloque al lado. Ahora se busca —en los mismos
+       * idiomas que el léxico de ayuda, chino incluido— y se distingue el vídeo que
+       * no tiene nada del que tiene algo que se anuncia como transcripción, que son
+       * dos sitios muy distintos a los que mandar a quien audita. */
+      const conTexto = sinDesc.map(function (m) { return { m: m, alt: m.alternativa }; }).filter(function (x) { return !!x.alt; });
+      const pelados = sinDesc.filter(function (m) { return !m.alternativa; });
       out.push(F("1.2.3", "revisar", null, [
-        sinDesc.length + " vídeo(s) no declaran pista de audiodescripción (<track kind=\"descriptions\">) ni se detecta una alternativa: " +
-        sinDesc.slice(0, 5).map(function (m) { return m.locator; }).join(", ") +
-        ". 1.2.3 admite una alternativa textual equivalente, que puede estar en la página sin marcado propio: compruébalo."
-      ], sinDesc.slice(0, 8).map(function (m) { return { locator: m.locator, name: "sin audiodescripción" }; })));
+        pelados.length
+          ? pelados.length + " vídeo(s) no declaran pista de audiodescripción (<track kind=\"descriptions\">) y NO se encuentra junto a ellos nada que se anuncie como transcripción o alternativa en texto: " +
+            pelados.slice(0, 5).map(function (m) { return m.locator; }).join(", ") + "."
+          : "Ningún vídeo se queda sin audiodescripción ni sin algo al lado que se anuncie como alternativa en texto.",
+        conTexto.length
+          ? conTexto.length + " vídeo(s) sin pista de descripciones pero con una alternativa anunciada al lado (" +
+            conTexto.slice(0, 4).map(function (x) { return x.m.locator + " → «" + x.alt.texto + "»"; }).join("; ") +
+            "): 1.2.3 se satisface con una alternativa en texto completa, así que lee eso y comprueba que cuenta lo que pasa en el vídeo."
+          : null
+      ].filter(Boolean), sinDesc.slice(0, 8).map(function (m) { return { locator: m.locator, name: m.alternativa ? "alternativa anunciada al lado" : "sin audiodescripción" }; })));
     }
     if (audios.length) {
+      const sinTranscripcion = audios.filter(function (m) { return !m.alternativa; });
       out.push(F("1.2.1", "revisar", null, [
-        audios.length + " elemento(s) de solo audio (" + audios.map(function (m) { return m.locator; }).join(", ") +
-        "): 1.2.1 exige una transcripción equivalente, que no se puede reconocer desde el marcado. Búscala en la página."
+        audios.length + " elemento(s) de solo audio (" + audios.map(function (m) { return m.locator; }).join(", ") + ").",
+        sinTranscripcion.length
+          ? sinTranscripcion.length + " de ellos no tienen al lado nada que se anuncie como transcripción (" +
+            sinTranscripcion.slice(0, 5).map(function (m) { return m.locator; }).join(", ") + "): 1.2.1 exige una alternativa en texto equivalente."
+          : "Todos tienen al lado algo que se anuncia como transcripción (" +
+            audios.slice(0, 4).map(function (m) { return m.locator + " → «" + m.alternativa.texto + "»"; }).join("; ") +
+            "): léela y comprueba que es equivalente."
       ], audios.slice(0, 8).map(function (m) { return { locator: m.locator, name: "solo audio" }; })));
     }
     if (medios.externos.length) {
@@ -386,8 +538,62 @@ export function auditPageDoc(doc) {
       ], medios.externos.slice(0, 8).map(function (m) { return { locator: m.locator, name: m.nombre || "medio incrustado" }; })));
     }
 
-    // 1.4.2 Control del audio: lo que suena solo y no se puede parar.
+    /* Lo que aplica a los tres criterios se dice en los TRES.
+     *
+     * Esta nota salía solo bajo 1.2.2 — y su propio texto dice «1.2.1, 1.2.2 y 1.2.3
+     * aplican». Medido en la cuarta pasada contra el sitio real: 1.2.2 apareció y
+     * 1.2.1 y 1.2.3 siguieron en blanco por la misma página y el mismo marco. Una
+     * fila en blanco no es «no aplica», que es el defecto que esto venía a arreglar. */
+    const notaMedios = function (texto, nodos) {
+      ["1.2.1", "1.2.2", "1.2.3"].forEach(function (c) { out.push(F(c, "revisar", null, [texto], nodos)); });
+    };
+    if (dudosos.length) {
+      notaMedios(
+        dudosos.length + " marco(s) no se reconocen ni como reproductor ni como otra cosa (" +
+        dudosos.slice(0, 4).map(function (m) { return m.locator + " → " + m.src.replace(/^https?:\/\//, "").slice(0, 45); }).join(", ") +
+        "): pueden ser reproductores que no están en la lista. Ábrelos: si llevan vídeo o audio, 1.2.1, 1.2.2 y 1.2.3 aplican y hay que comprobarlos ahí.",
+        dudosos.slice(0, 8).map(function (m) { return { locator: m.locator, name: m.nombre || "marco sin reconocer" }; }));
+    }
+    if (enlazados.length) {
+      const conArchivo = enlazados.filter(function (m) { return m.archivo; });
+      notaMedios(
+        enlazados.length + " enlace(s) llevan a un reproductor externo o a un archivo de medios (" +
+        enlazados.slice(0, 4).map(function (m) { return m.locator + (m.nombre ? " «" + m.nombre + "»" : "") + " → " + m.src.replace(/^https?:\/\//, "").slice(0, 55); }).join(", ") +
+        (enlazados.length > 4 ? ", …" : "") + "). " +
+        (conArchivo.length ? conArchivo.length + " apuntan a un archivo de medios directamente. " : "") +
+        "Son medios que la página ofrece aunque no haya ningún `<video>` en el DOM —se abren al pulsarlos—, así que 1.2.1, 1.2.2 y 1.2.3 aplican: ábrelos y comprueba ahí subtítulos, audiodescripción y transcripción.",
+        enlazados.slice(0, 8).map(function (m) { return { locator: m.locator, name: m.nombre || "enlace a medio" }; }));
+    }
+
+    /* 1.4.2 Control del audio: lo que suena solo y no se puede parar.
+     *
+     * Y cuando NO hay nada que suene solo, también se dice. Era el último «No
+     * evaluado» de los 55 subcriterios: solo hablaba al encontrar un medio con
+     * `autoplay`, así que en un sitio sin `<video>` ni `<audio>` en el DOM —el caso
+     * medido: 26 vídeos ofrecidos como enlaces a un reproductor externo— la fila
+     * quedaba vacía. El criterio sí se puede acotar: lo que 1.4.2 prohíbe es el audio
+     * que arranca SOLO al cargar, y un medio que se abre al pulsarlo no es automático.
+     * Eso es un `cumple-parcial` medido, no una fila en blanco. */
     const suenanSolos = medios.propios.filter(function (m) { return m.autoplay && !m.silenciado; });
+    if (medios.propios.length && !suenanSolos.length) {
+      /* Hay medios y ninguno arranca con sonido: eso también es un resultado. */
+      out.push(F("1.4.2", "cumple-parcial", null, [
+        "Los " + medios.propios.length + " medio(s) de la página (" + medios.propios.map(function (m) { return m.locator; }).join(", ") +
+        ") no arrancan solos con sonido: " +
+        (medios.propios.filter(function (m) { return m.autoplay; }).length
+          ? "los que llevan `autoplay` están silenciados."
+          : "ninguno declara `autoplay`.") +
+        " 1.4.2 prohíbe el audio que empieza solo al cargar, y aquí no empieza ninguno.",
+        "Queda fuera lo que arranque por JavaScript después de cargar (un `play()` diferido, un `muted = false`) y el audio que venga dentro de un marco: compruébalo cargando la página con el volumen puesto."
+      ]));
+    }
+    if (!medios.propios.length && (enlazados.length || medios.externos.length || dudosos.length)) {
+      out.push(F("1.4.2", "cumple-parcial", null, [
+        "No hay ningún `<video>` ni `<audio>` en la página, así que nada arranca con sonido al cargar: lo que 1.4.2 prohíbe es el audio automático, y los " +
+        (enlazados.length + medios.externos.length + dudosos.length) + " medio(s) que la página ofrece se abren al pulsarlos, lo que no es automático.",
+        "Queda por comprobar una cosa, y es la que importa: que al abrir ese reproductor el audio no empiece solo sin forma de pararlo —varios de estos enlaces llevan `autoplay` en la URL— y que el reproductor tenga sus controles alcanzables con el teclado. Eso se ve abriéndolo."
+      ]));
+    }
     if (suenanSolos.length) {
       const sinControl = suenanSolos.filter(function (m) { return !m.controles; });
       out.push(sinControl.length

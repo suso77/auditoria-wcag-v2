@@ -60,7 +60,13 @@ const CASOS = {
     "<script>var o = screen.orientation; try{ o.lock('portrait'); }catch(e){}</script></body>"),
   // Bloqueo de orientación por JavaScript.
   "/orientacion": BASE(`<main><h1>T</h1><p>${TEXTO}</p></main>`) .replace("</body>",
-    "<script>try{screen.orientation.lock('portrait')}catch(e){}</script></body>")
+    "<script>try{screen.orientation.lock('portrait')}catch(e){}</script></body>"),
+  // 2.2.1: un cierre de sesión a los 15 minutos, que es como se pone un límite de
+  // tiempo de verdad — no con <meta http-equiv="refresh">.
+  "/temporizador": BASE(`<main><h1>Área privada</h1><p>${TEXTO}</p></main>`) .replace("</body>",
+    "<script>function cerrarSesion(){ location.href='/salir'; } setTimeout(cerrarSesion, 900000); setTimeout(function(){}, 400);</script></body>"),
+  "/sin-temporizador": BASE(`<main><h1>T</h1><p>${TEXTO}</p></main>`) .replace("</body>",
+    "<script>setTimeout(function(){}, 300);</script></body>")
 };
 
 let server, base;
@@ -149,9 +155,30 @@ test("screen.orientation.lock() → falla 1.3.4", { skip }, async () => {
 
 /* ── La sonda de puntero de 1.4.13, en un navegador de verdad ────────────── */
 
-const TOOLTIP_MALO = `<style>.tip{position:relative}.tip .b{display:none;position:absolute;top:2.5em;left:0;
+/* Emergente que TAPA lo que hay debajo y no responde a Esc: la falla completa.
+ *
+ * El globo pega con el disparador (`top:100%`), así que el puntero llega hasta él —la
+ * condición de «señalable» se cumple— y hay un párrafo justo debajo al que tapa, así
+ * que la condición de «descartable» SÍ se exige. Antes este montaje tenía el globo a
+ * `top:2.5em` con un hueco de 18 px por medio, y con el viaje del puntero de verdad
+ * resultó que lo que incumplía era otra cosa: el puntero no llegaba. */
+const TOOLTIP_MALO = `<style>.tip{position:relative}.tip .b{display:none;position:absolute;top:100%;left:0;
   background:#000;color:#fff;padding:8px;width:220px}.tip:hover .b{display:block}</style>
-<p>Precio: <span class="tip">1.200 €<span class="b">IVA no incluido. No se cierra con Esc.</span></span></p>`;
+<p>Precio: <span class="tip">1.200 €<span class="b">IVA no incluido. No se cierra con Esc.</span></span></p>
+<p id="tapado">Condiciones de envío y plazos de entrega, que es lo que el globo tapa al desplegarse.</p>`;
+
+/* El mismo globo, pero con un HUECO entre el disparador y él: al cruzarlo el puntero
+ * no está sobre ninguno de los dos, el `:hover` se cae y el globo desaparece antes de
+ * que la mano llegue. Es el fallo clásico de «hoverable», y la aritmética de
+ * rectángulos lo absolvía porque el globo es descendiente del disparador. */
+const TOOLTIP_HUECO = `<style>.tip{position:relative}.tip .b{display:none;position:absolute;top:2.5em;left:0;
+  background:#000;color:#fff;padding:8px;width:220px}.tip:hover .b{display:block}</style>
+<p>Precio: <span class="tip">1.200 €<span class="b">IVA no incluido.</span></span></p>`;
+
+/* Y el que la excepción del criterio exime: no responde a Esc, pero no tapa nada. */
+const TOOLTIP_SIN_TAPAR = `<style>.tip{position:relative}.tip .b{display:none;position:absolute;top:100%;left:0;
+  background:#eee;padding:8px;width:220px}.tip:hover .b{display:block}</style>
+<p>Precio: <span class="tip">1.200 €<span class="b">IVA no incluido.</span></span></p>`;
 
 const TOOLTIP_BUENO = `<style>.tip2{position:relative}.tip2 .b{display:none;position:absolute;top:100%;left:0;
   background:#222;color:#fff;padding:8px;width:220px}.tip2:hover .b{display:block}
@@ -164,21 +191,48 @@ const unoCatorceTrece = async (html) => {
   return { f: r.findings.find((x) => x.c.n === "1.4.13"), t: r.trazas.hover };
 };
 
-test("1.4.13 real: un tooltip CSS que no se cierra con Esc es una falla", { skip }, async () => {
+test("1.4.13 real: un tooltip CSS que tapa contenido y no se cierra con Esc es una falla", { skip }, async () => {
   // Este es el caso que antes salía «cumple»: sin `title` y con `hovers` fijado
   // a [], el análisis lo leía como «no hay contenido emergente».
   const { f, t } = await unoCatorceTrece(TOOLTIP_MALO);
   assert.equal(f.verdict, "falla", JSON.stringify(t));
-  assert.match(f.evid[0], /no se descarta con Esc/);
+  assert.match(f.evid[0], /no se descarta con Esc y tapa contenido/);
   assert.equal(t.disparadores, 1, "la regla `.tip:hover .b` tiene que encontrarse en el CSSOM");
   assert.equal(t.hovers[0].aparece > 0, true, "al pasar el puntero tiene que aparecer contenido");
+  assert.equal(t.hovers[0].senalable, true, "pega con el disparador: el puntero llega");
+  assert.equal(t.hovers[0].tapa, true, "y tapa el párrafo de debajo");
+  assert.ok((f.nodes || [])[0] && f.nodes[0].path, "la barrera tiene que llevar selector: " + JSON.stringify(f.nodes));
+});
+
+test("1.4.13 real: un globo separado del disparador no se puede señalar, y eso se mide viajando", { skip }, async () => {
+  /* La comprobación era aritmética de rectángulos, con un atajo que daba por
+   * alcanzable todo lo que fuera descendiente del disparador. Un globo colocado 18 px
+   * por debajo ES descendiente y NO es alcanzable: al cruzar el hueco el `:hover` se
+   * cae. Ahora se mueve el ratón en pasos intermedios, como una mano, y se mira si al
+   * llegar sigue ahí. */
+  const { f, t } = await unoCatorceTrece(TOOLTIP_HUECO);
+  assert.equal(t.hovers[0].senalable, false, JSON.stringify(t.hovers[0]));
+  assert.equal(f.verdict, "falla");
+  assert.match(f.evid[0], /desaparece al llevar el puntero encima/);
+});
+
+test("1.4.13 real: un emergente que no responde a Esc pero no tapa nada está eximido", { skip }, async () => {
+  // La excepción es del propio criterio: «does not obscure or replace other content».
+  const { f, t } = await unoCatorceTrece(TOOLTIP_SIN_TAPAR);
+  assert.equal(t.hovers[0].tapa, false, JSON.stringify(t.hovers[0]));
+  assert.equal(f.verdict, "cumple-parcial", JSON.stringify(t));
+  assert.match(f.evid[0], /NO tapan ningún contenido/);
 });
 
 test("1.4.13 real: un emergente que sí se descarta con Esc cumple", { skip }, async () => {
+  /* Y aquí se ve por qué el viaje del puntero va ANTES del Esc: el manejador de este
+   * montaje deja el globo cerrado con una clase, así que después del Esc ya no se
+   * puede reabrir. Con el orden anterior, «¿se deja señalar?» quedaba sin comprobar
+   * justo en el emergente que se porta bien con el teclado. */
   const { f, t } = await unoCatorceTrece(TOOLTIP_BUENO);
+  assert.equal(t.hovers[0].senalable, true, JSON.stringify(t.hovers[0]));
+  assert.equal(t.hovers[0].descartableConEsc, true, JSON.stringify(t.hovers[0]));
   assert.equal(f.verdict, "cumple", JSON.stringify(t));
-  assert.equal(t.hovers[0].descartableConEsc, true);
-  assert.equal(t.hovers[0].senalable, true);
 });
 
 test("1.4.13 real: sin emergentes, el cumple dice cuántos disparadores se recorrieron", { skip }, async () => {
@@ -254,4 +308,28 @@ test("regresión: el bloqueo de orientación se OBSERVA, no se busca en el texto
   const l = limpio.findings.find((x) => x.c.n === "1.3.4");
   assert.notEqual(l.verdict, "falla", "una página sin bloqueo no puede salir señalada: " + l.evid[0]);
   assert.equal(limpio.trazas.orientation.bloqueoJS, false);
+});
+
+
+/* ── 2.2.1: el temporizador que sí se usa en la vida real ────────────────── */
+
+test("2.2.1 real: un setTimeout de 15 min se anota al programarse, con su origen", { skip }, async () => {
+  /* El único caso que se miraba era `<meta http-equiv="refresh">`, y en un sitio real
+   * eso no aparece: 2.2.1 no emitía nada. Envolviendo `setTimeout` antes de que la
+   * página cargue, da igual que la llamada esté en un bundle o minificada. */
+  const m = await ver("/temporizador");
+  const f = m["2.2.1"];
+  assert.ok(f, "2.2.1 tiene que dictaminarse: " + Object.keys(m).join(", "));
+  assert.equal(f.verdict, "revisar");
+  assert.match(f.evid[0], /setTimeout de 15 min/);
+  // Y el origen tiene que apuntar a la PÁGINA, no a la propia envoltura: la primera
+  // versión devolvía su propio marco («at deDonde (<anonymous>:40:29)») siempre.
+  assert.match(f.evid[0], /desde at http:\/\//, f.evid[0]);
+});
+
+test("2.2.1 real: con solo temporizadores cortos no se acusa, pero se dice qué queda fuera", { skip }, async () => {
+  const m = await ver("/sin-temporizador");
+  const f = m["2.2.1"];
+  assert.equal(f.verdict, "cumple-parcial");
+  assert.match(f.evid[1], /DESPUÉS del momento de mirar/);
 });

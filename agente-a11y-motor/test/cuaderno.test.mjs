@@ -498,3 +498,69 @@ test("regresión: con páginas sin auditar, «no aplica en el sitio» se queda e
   const conFalla = cuadernoDeMuestra([firmado], { sinAnalizar: ["https://ej.test/b"] });
   assert.equal(fichaDe(conFalla, "1.2.5").veredicto, "falla");
 });
+
+/* ── Regresión: «no aplica» es una AFIRMACIÓN, y era falsa ───────────────────
+ *
+ * Medido contra un sitio institucional español hecho para el mercado chino, con una
+ * página entera de vídeos: el cuaderno declaró «1.2.5 no aplica: la página no tiene
+ * ningún vídeo». Los vídeos estaban, en un reproductor que la lista blanca de
+ * plataformas no conocía — y no estar en la lista se interpretaba como no haber
+ * medios. Para un motor de fallo seguro el reparto es el contrario.
+ */
+
+test("regresión: los reproductores chinos cuentan como medios", () => {
+  ["https://player.youku.com/embed/XNTk=",
+   "https://player.bilibili.com/player.html?aid=1",
+   "https://v.qq.com/txp/iframe/player.html?vid=x",
+   "https://open.iqiyi.com/developer/player_js/coopPlayerIndex.html"
+  ].forEach((src) => {
+    const c = cuad('<main><h1>H</h1><iframe src="' + src + '"></iframe></main>', { url: "https://x.test/" });
+    assert.equal(fichaDe(c, "1.2.5").aplica, true, src + " tiene que hacer aplicar 1.2.5");
+    assert.equal(fichaDe(c, "1.2.4").aplica, true, src + " tiene que hacer aplicar 1.2.4");
+  });
+});
+
+test("regresión: un marco que no se identifica deja el criterio PENDIENTE, no «no aplica»", () => {
+  const c = cuad('<main><h1>H</h1><iframe src="https://travel.example.es/widget"></iframe></main>', { url: "https://x.test/" });
+  const f = fichaDe(c, "1.2.5");
+  assert.equal(f.aplica, true, "un marco desconocido puede ser un reproductor: no se puede afirmar que no aplique");
+  assert.equal(f.veredicto, null);
+  assert.ok((f.queMirar || []).some((m) => /NO se ha podido identificar/.test(m.detalle)),
+    "y se dice qué marco hay que abrir: " + JSON.stringify((f.queMirar || []).map((m) => m.detalle)));
+});
+
+test("un marco que claramente no es un medio no deja el criterio pendiente", () => {
+  // Dejar 1.2.5 pendiente por el iframe de Google Maps de la página de contacto es
+  // ruido, no prudencia.
+  ["https://maps.google.com/maps?q=madrid",
+   "https://www.google.com/recaptcha/api2/anchor",
+   "https://www.googletagmanager.com/ns.html?id=X"
+  ].forEach((src) => {
+    const c = cuad('<main><h1>H</h1><iframe src="' + src + '"></iframe></main>', { url: "https://x.test/" });
+    assert.equal(fichaDe(c, "1.2.5").aplica, false, src + " no es un reproductor");
+  });
+});
+
+test("regresión: el dominio de un reproductor se ancla a una frontera de host", () => {
+  /* `le.com` (LeTV) sin anclar casa dentro de «google.com», así que CUALQUIER URL de
+   * Google pasaba por reproductor reconocido y el iframe de Maps hacía aplicar 1.2.4
+   * y 1.2.5. Es el mismo error que el `\s` colapsado: un patrón que casa dentro de
+   * otra palabra. */
+  const comoMedio = (src) => fichaDe(cuad('<main><h1>H</h1><iframe src="' + src + '"></iframe></main>',
+    { url: "https://x.test/" }), "1.2.5");
+  // Google no es un reproductor por contener «le.com».
+  assert.equal(comoMedio("https://maps.google.com/maps").aplica, false);
+  // Pero LeTV de verdad sí.
+  const letv = comoMedio("https://le.com/ptv/vplay/1.html");
+  assert.equal(letv.aplica, true);
+  assert.ok(!(letv.queMirar || []).some((m) => /NO se ha podido identificar/.test(m.detalle)),
+    "y se reconoce como reproductor, no como marco dudoso");
+});
+
+test("sin ningún marco ni medio, «no aplica» sigue siendo «no aplica»", () => {
+  const c = cuad("<main><h1>H</h1><p>Solo texto.</p></main>", { url: "https://x.test/" });
+  ["1.2.4", "1.2.5"].forEach((n) => {
+    assert.equal(fichaDe(c, n).aplica, false);
+    assert.match((fichaDe(c, n).loQueYaSabemos || [])[0], /marco embebido de ninguna clase/);
+  });
+});

@@ -31,7 +31,7 @@
  * Además, cada fase va en su propio try/catch: un fallo en una no tira la
  * ejecución entera ni pierde lo ya medido.
  */
-import { analyzeTabTrace, analyzeDisclosure, analyzeTabs, analyzeErrorState, analyzeContextChange } from "./dynamic.js";
+import { analyzeTabTrace, analyzeDisclosure, analyzeTabs, analyzeErrorState, analyzeContextChange, analyzeAutoMovement, analyzeCharKeyShortcuts, analyzeStatusMessages } from "./dynamic.js";
 import { launchOptions } from "./playwright-launch.js";
 
 // Palabras que marcan un formulario como destructivo: no se tocan ni en modo real.
@@ -130,6 +130,115 @@ function __interactivosNoEnfocables(){
   return { sueltos: sueltos.slice(0,40), enCompuesto: enCompuesto.slice(0,40) };
 }
 function __el(uid){ try { return document.querySelector(uid); } catch(e) { return null; } }
+/* 4.1.3 Mensajes de estado: censo del texto visible, dentro y fuera de las regiones
+   live. Lo que interesa es el texto PROPIO de cada elemento (sus nodos de texto
+   directos), no el acumulado de sus antepasados: si no, un cambio dentro de un
+   <div> hace que aparezca como nuevo todo el árbol que lo contiene. */
+function __censoEstado(){
+  var LIVE='[role=alert],[role=status],[role=log],[role=progressbar],[aria-live]';
+  var regiones=Array.prototype.slice.call(document.querySelectorAll(LIVE));
+  var enLive=function(el){ for(var i=0;i<regiones.length;i++){ if(regiones[i]===el||regiones[i].contains(el)) return true; } return false; };
+  var fuera=[], live=[];
+  Array.prototype.forEach.call(document.querySelectorAll('body *'), function(el){
+    if(!__visible(el)) return;
+    var propio='';
+    for(var i=0;i<el.childNodes.length;i++) if(el.childNodes[i].nodeType===3) propio+=el.childNodes[i].nodeValue||'';
+    propio=propio.replace(/\\s+/g,' ').trim();
+    if(!propio) return;
+    if(enLive(el)) live.push(propio);
+    else fuera.push(__uid(el)+' \\u0000 '+propio.slice(0,90));
+  });
+  return { fuera: fuera, live: live.join(' | '), foco: document.activeElement?__uid(document.activeElement):null,
+    regiones: regiones.length };
+}
+/* 2.1.4 Atajos de teclado de un carácter: se pulsan y se mira.
+   El detector estático solo ve los manejadores EN LÍNEA (el atributo onkeydown), y
+   hoy nadie los escribe así: un document.addEventListener('keydown', …) dentro de un
+   bundle no está en el marcado, así que el criterio salía sin evaluar. Medido contra
+   un sitio real: 2.1.4 era uno de los siete que no miraba ninguna capa.
+   (Sin comillas invertidas en este comentario: vive dentro de una plantilla de
+   cadena, y una sola la cerraría. Ya pasó una vez.)
+   Lo que sí se puede hacer es lo que hace una persona auditando: poner el foco en el
+   cuerpo del documento —fuera de cualquier campo de texto— pulsar una tecla suelta y
+   ver si pasa algo. Si pasa, el atajo NO está limitado a un control, que es una de
+   las tres salidas que da el criterio. */
+function __huellaTeclado(){
+  var n=0;
+  Array.prototype.forEach.call(document.querySelectorAll('body *'), function(el){ if(__visible(el)) n++; });
+  var a=document.activeElement;
+  return { url: location.href, foco: a?__loc(a):null, y: Math.round(window.scrollY||0),
+    visibles: n, texto: (document.body?(document.body.innerText||''):'').replace(/\\s+/g,' ').length };
+}
+/* El foco al cuerpo, sin tocar el marcado: basta con quitárselo a quien lo tenga.
+   Poner tabindex="-1" en el body para poder enfocarlo cambiaría la página que se está
+   midiendo, y no hace falta: al llamar a blur(), activeElement vuelve al body solo. */
+function __focoAlCuerpo(){
+  try { if(document.activeElement && document.activeElement.blur) document.activeElement.blur(); } catch(e) {}
+  return document.activeElement ? __loc(document.activeElement) : null;
+}
+/* 2.2.2: movimiento automático que el CSS no delata.
+   \`animacionesPersistentes\` lee \`animationName\` y \`animationIterationCount\`, así
+   que ve los carruseles hechos con \`@keyframes\` y no ve los que mueve JavaScript
+   —que son la mayoría—. Medido en un sitio real: el agente no cazó el carrusel de
+   la portada y en su lugar acusó a un icono con \`fadeInDown\`, que es lo único que
+   el CSS declaraba. Un carrusel que pasa de diapositiva cada cuatro segundos no
+   declara nada: cambia clases, cambia \`style.transform\`, mete y quita nodos.
+   Eso se ve observando, no leyendo, así que se observa: un MutationObserver sin
+   tocar la página, y después se busca si hay algún control de pausa.
+   El filtro es lo que separa un carrusel de la carga de la página: hacen falta
+   VARIOS cambios REPARTIDOS en el tiempo. Una ráfaga en el primer segundo es el
+   \`lazy-load\` y la animación de entrada; un cambio único no es movimiento. */
+function __observarMovimiento(ms){
+  return new Promise(function(resolve){
+    var vistos = {}, t0 = Date.now();
+    var obs;
+    try {
+      obs = new MutationObserver(function(muts){
+        for (var i=0;i<muts.length;i++){
+          var m = muts[i];
+          var el = (m.target && m.target.nodeType===1) ? m.target : (m.target && m.target.parentElement);
+          if (!el || el===document.body || el===document.documentElement) continue;
+          if (!__visible(el)) continue;
+          var tipo = m.type + (m.attributeName ? ':'+m.attributeName : '');
+          var k = __loc(el) + ' [' + tipo + ']';
+          var ahora = Date.now() - t0;
+          if (!vistos[k]) vistos[k] = { loc:__loc(el), uid:__uid(el), tipo:tipo, n:1, primero:ahora, ultimo:ahora };
+          else { vistos[k].n++; vistos[k].ultimo = ahora; }
+        }
+      });
+      obs.observe(document.body, { subtree:true, childList:true, attributes:true,
+        attributeFilter:['class','style','hidden','aria-hidden','src','transform','aria-selected','aria-current','data-active'] });
+    } catch(e) { resolve({ error:String((e&&e.message)||e), movidos:[], ms:0, controles:[] }); return; }
+    setTimeout(function(){
+      try { obs.disconnect(); } catch(e) {}
+      var movidos = [];
+      for (var k in vistos) if (Object.prototype.hasOwnProperty.call(vistos,k)) movidos.push(vistos[k]);
+      movidos = movidos.filter(function(x){ return x.n >= 2 && (x.ultimo - x.primero) >= 2500; });
+      movidos.sort(function(a,b){ return (b.ultimo-b.primero) - (a.ultimo-a.primero) || b.n - a.n; });
+      resolve({ movidos: movidos.slice(0,8), ms: Date.now()-t0, controles: __controlesDePausa() });
+    }, ms);
+  });
+}
+/* ¿Hay con qué pararlo? 2.2.2 admite el mecanismo en CUALQUIER punto de la página,
+   así que se busca en toda ella, no solo junto a lo que se mueve. El léxico va en
+   varios idiomas por el mismo motivo que el de la ayuda: un sitio chino no dice
+   «pausa». */
+function __controlesDePausa(){
+  var RE = /(pausa|pausar|pause|detener|parar|stop|reproducir|play|暂停|暫停|停止|播放)/i;
+  var out = [];
+  Array.prototype.forEach.call(document.querySelectorAll('button,[role=button],a[href],input[type=button],input[type=image],video,audio'), function(el){
+    if (out.length >= 6) return;
+    var t = el.tagName.toLowerCase();
+    if (t==='video' || t==='audio') {
+      if (el.hasAttribute('controls') && __visible(el)) out.push({ loc:__loc(el), motivo:'controles nativos de <'+t+'>' });
+      return;
+    }
+    var cls = (el.className && typeof el.className==='string') ? el.className : '';
+    var txt = (el.getAttribute('aria-label')||'')+' '+(el.getAttribute('title')||'')+' '+(el.textContent||'')+' '+cls+' '+(el.id||'');
+    if (RE.test(txt) && __visible(el)) out.push({ loc:__loc(el), motivo:(el.getAttribute('aria-label')||el.textContent||cls||'').trim().replace(/\\s+/g,' ').slice(0,40) });
+  });
+  return out;
+}
 `;
 
 async function evalIn(page, body, arg) {
@@ -228,6 +337,22 @@ export async function dynamicAnalyze(target, opts) {
       }
       return route.continue();
     });
+
+    /* 0) OBSERVAR sin tocar: ¿se mueve algo por su cuenta?
+     *
+     * Va PRIMERO y antes de armar el cortafuegos, porque tiene que ver la página
+     * como la ve quien llega: si se observa después de tabular, de pulsar y de
+     * enviar formularios, lo que se mida puede ser consecuencia de la propia sonda,
+     * y entonces no vale para 2.2.2. Cuesta unos segundos de reloj por página; se
+     * apaga con `movimientoMs: 0`. */
+    const movimientoMs = opts.movimientoMs == null ? 8000 : opts.movimientoMs;
+    const movimiento = movimientoMs > 0
+      ? await fase("movimiento", function () { return evalIn(page, "return __observarMovimiento(__arg);", movimientoMs); }, null)
+      : null;
+    if (movimiento && movimiento.error) {
+      avisos.push("No se pudo observar el movimiento automático de la página (" + movimiento.error +
+        "): 2.2.2 se queda con lo que declare el CSS, que no ve los carruseles hechos con JavaScript.");
+    }
 
     // 1) Tabulación real
     const focusables = await fase("focusables", function () { return evalIn(page, "return __focusables();"); }, []);
@@ -455,17 +580,70 @@ export async function dynamicAnalyze(target, opts) {
     // 2) Disclosure / expandibles — resueltos por uid, no por índice: el DOM
     //    cambia al abrir un acordeón y el índice i deja de apuntar al mismo nodo.
     const discEvents = [];
+    const estadoEventos = [];
+    const estadoCenso = { expandibles: null, regiones: null };
     await fase("disclosure", async function () {
       armar();  // pulsar un expandible puede lanzar fetch/XHR: ver el cortafuegos
       const uids = await evalIn(page, "return Array.prototype.slice.call(document.querySelectorAll('[aria-expanded]')).slice(0," + (opts.maxWidgets || 15) + ").map(__uid);");
+      estadoCenso.expandibles = (uids || []).length;
+      estadoCenso.regiones = await evalIn(page, "return document.querySelectorAll('[role=alert],[role=status],[role=log],[role=progressbar],[aria-live]').length;");
       for (const uid of uids) {
         const before = await evalIn(page, "var el=__el(__arg); if(!el) return null; var c=el.getAttribute('aria-controls'); var tgt=c?document.getElementById(c.split(/\\s+/)[0]):null; return { locator:__loc(el), name:(el.getAttribute('aria-label')||el.textContent||'').trim().replace(/\\s+/g,' ').slice(0,40), expanded: el.getAttribute('aria-expanded'), shown: tgt?__visible(tgt):null };", uid);
         if (!before) continue;
+        const estadoAntes = await evalIn(page, "return __censoEstado();");
         let clicked = true, reason = null;
         armar();
         try { await page.locator(uid).first().click({ timeout: 2000 }); }
         catch (e) { clicked = false; reason = (e && e.message ? String(e.message).split("\n")[0] : "clic no realizado"); }
         desarmar();
+        /* 4.1.3: ¿apareció texto nuevo FUERA del panel que este control gobierna?
+         *
+         * Lo que revela un `[aria-expanded]` dentro de su propio panel es contenido,
+         * no un mensaje de estado, y acusarlo convertiría cualquier acordeón correcto
+         * en una barrera. Así que el texto del panel que el control declara con
+         * `aria-controls` —y el del propio control— se descuenta; lo que aparece en
+         * OTRO sitio de la página al pulsar es el candidato a mensaje de estado.
+         *
+         * El texto se compara por elemento, con su propia cadena: un reajuste de
+         * maquetación no inventa texto nuevo.
+         */
+        if (clicked) {
+          const estadoDespues = await evalIn(page, "return __censoEstado();");
+          const antesSet = {};
+          (estadoAntes.fuera || []).forEach(function (t) { antesSet[t] = true; });
+          const ambito = await evalIn(page,
+            "var el=__el(__arg); if(!el) return null; var c=el.getAttribute('aria-controls');" +
+            "var tgt=c?document.getElementById(c.split(/\\s+/)[0]):null;" +
+            "return { control: __uid(el), panel: tgt?__uid(tgt):null };", uid);
+          const dentroDe = function (uidTexto, raiz) { return !!raiz && uidTexto.indexOf(raiz) === 0; };
+          const nuevos = (estadoDespues.fuera || []).filter(function (t) {
+            if (antesSet[t]) return false;
+            const u = t.split(" \u0000 ")[0];
+            if (ambito && (dentroDe(u, ambito.panel) || dentroDe(u, ambito.control))) return false;
+            return true;
+          }).slice(0, 4);
+          /* También se anota cuando lo que cambió fue una REGIÓN LIVE.
+           *
+           * El censo mete el texto de dentro de las regiones live en su propio saco,
+           * así que un sitio que hace lo correcto —meter «3 resultados encontrados»
+           * en un `role="status"`— no producía ningún texto nuevo «fuera» y por tanto
+           * ningún evento: el informe volvía a quedarse callado sobre 4.1.3, que es
+           * justo el defecto que se acaba de arreglar en 2.2.2. Ahora el acierto
+           * también se anota, y se cuenta como anunciado. */
+          const liveCambio = (estadoAntes.live || "") !== (estadoDespues.live || "");
+          if (nuevos.length || liveCambio) {
+            estadoEventos.push({
+              locator: before.locator, name: before.name,
+              textos: nuevos.map(function (t) { return t.split(" \u0000 ")[1]; }),
+              uids: nuevos.map(function (t) { return t.split(" \u0000 ")[0]; }),
+              liveCambio: liveCambio,
+              // El foco «dentro» se decide por prefijo de la ruta, que es lo que hay
+              // desde fuera: la ruta de un descendiente empieza por la del ancestro.
+              focoDentro: nuevos.some(function (t) { return dentroDe(String(estadoDespues.foco || ""), t.split(" \u0000 ")[0]); }),
+              regiones: estadoDespues.regiones
+            });
+          }
+        }
         const after = await evalIn(page, "var el=__el(__arg); if(!el) return null; var c=el.getAttribute('aria-controls'); var tgt=c?document.getElementById(c.split(/\\s+/)[0]):null; return { expanded: el.getAttribute('aria-expanded'), shown: tgt?__visible(tgt):null };", uid);
         discEvents.push({
           locator: before.locator, name: before.name, clicked: clicked, reason: reason,
@@ -495,10 +673,51 @@ export async function dynamicAnalyze(target, opts) {
     desarmar();
     const tabWidgetFindings = analyzeTabs(tabEvents);
 
+    /* 2.1.4: teclas sueltas, con el foco en el cuerpo del documento.
+     *
+     * Va con el cortafuegos armado, como el resto de la interacción: un atajo de un
+     * carácter puede disparar una petición con efecto igual que un clic, y el
+     * cortafuegos es lo que impide que llegue al servidor del cliente.
+     *
+     * Las teclas son las que los sitios usan de verdad como atajo global —la barra y
+     * la interrogación para buscar, y las letras de navegación tipo j/k/n/p/g—. No se
+     * prueban todas: no es un barrido exhaustivo y el informe lo dice. */
+    const TECLAS = (opts.teclas || ["/", "?", "s", "f", "j", "k", "n", "p", "g", "1"]);
+    let teclado = null;
+    if (opts.teclas !== false) {
+      teclado = await fase("teclas de un carácter", async function () {
+        armar();
+        const activas = [], probadas = [];
+        for (const tecla of TECLAS) {
+          await evalIn(page, "return __focoAlCuerpo();");
+          const antes = await evalIn(page, "return __huellaTeclado();");
+          const blqAntes = bloqueadas.length;
+          await page.keyboard.press(tecla);
+          await page.waitForTimeout(260);
+          const despues = await evalIn(page, "return __huellaTeclado();");
+          probadas.push(tecla);
+          const cambios = [];
+          if (antes.url !== despues.url) cambios.push("navega a otra página");
+          if (bloqueadas.length > blqAntes) cambios.push("lanza una petición con efecto (abortada por el cortafuegos)");
+          if (antes.foco !== despues.foco) cambios.push("mueve el foco a «" + (despues.foco || "?") + "»");
+          if (Math.abs(antes.y - despues.y) > 8) cambios.push("desplaza la página " + Math.round(despues.y - antes.y) + " px");
+          if (antes.visibles !== despues.visibles) cambios.push("cambia qué se ve (" + (despues.visibles - antes.visibles > 0 ? "+" : "") + (despues.visibles - antes.visibles) + " elemento(s) visibles)");
+          else if (Math.abs(antes.texto - despues.texto) > 20) cambios.push("cambia el texto de la página");
+          if (cambios.length) {
+            activas.push({ tecla: tecla, cambios: cambios });
+            // Se intenta dejar la página como estaba antes de seguir.
+            try { await page.keyboard.press("Escape"); await page.waitForTimeout(120); } catch (e) {}
+            try { await page.evaluate(function (y) { window.scrollTo(0, y); }, antes.y); } catch (e) {}
+          }
+        }
+        return { probadas: probadas, activas: activas };
+      }, null);
+    }
+
     // 4) Errores de formulario forzados
     let errFindings = [], formInfo = { modo: formMode, probado: false };
     if (formMode !== "off") {
-      await fase("formulario", async function () {
+    await fase("formulario", async function () {
         const cand = await evalIn(page, `
           var fs = Array.prototype.slice.call(document.querySelectorAll('form'));
           for (var i=0;i<fs.length;i++){
@@ -711,7 +930,10 @@ export async function dynamicAnalyze(target, opts) {
         ((e && e.message) || e) + "): una petición diferida podría haber salido después de la prueba." });
     }
 
-    const findings = [].concat(tabFindings, ctxFindings, discFindings, tabWidgetFindings, errFindings);
+    const movFindings = analyzeAutoMovement(movimiento);
+    const teclaFindings = analyzeCharKeyShortcuts(teclado);
+    const estadoFindings = analyzeStatusMessages(estadoEventos, estadoCenso);
+    const findings = [].concat(movFindings, teclaFindings, estadoFindings, tabFindings, ctxFindings, discFindings, tabWidgetFindings, errFindings);
     return {
       url: target.url || null,
       findings: findings,
@@ -721,7 +943,11 @@ export async function dynamicAnalyze(target, opts) {
         tabsPresupuesto: maxTabs, tabsAgotado: exhausted,
         contextoProbados: ctxEventos.length,
         disclosures: discEvents.length, disclosuresSinClic: discEvents.filter(function (e) { return e.clicked === false; }).length,
-        tabs: tabEvents.length, formulario: formInfo
+        tabs: tabEvents.length, formulario: formInfo,
+        movimiento: movimiento ? { ms: movimiento.ms, movidos: (movimiento.movidos || []).length, controlesDePausa: (movimiento.controles || []).length } : null,
+        teclas: teclado ? { probadas: teclado.probadas.length, activas: teclado.activas.length } : null,
+        mensajesDeEstado: estadoEventos.length,
+        expandibles: estadoCenso.expandibles, regionesDeEstado: estadoCenso.regiones
       },
       avisos: avisos,
       errores: errores,

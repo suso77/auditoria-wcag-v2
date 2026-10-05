@@ -10,7 +10,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { auditSite } from "../../src/audit-run.js";
-import { chromiumDisponible } from "../../src/playwright-launch.js";
+import { chromiumDisponible, launchOptions } from "../../src/playwright-launch.js";
 
 const sonda = await chromiumDisponible();
 const skip = sonda.ok ? false : "sin navegador: " + sonda.motivo;
@@ -133,4 +133,37 @@ test("los hallazgos de sitio llegan al rollup y llevan su ámbito", { skip }, as
   assert.ok(r.coherencia.every((f) => f.scope === "sitio"));
   assert.ok(r.findings.some((f) => f.url === "(toda la muestra)"));
   assert.equal(r.procedencia.paginas, 2);
+});
+
+/* ── La huella tiene que sobrevivir a un pie con correo y teléfono ───────── */
+
+/**
+ * El caso que se escapó de la suite pura y que una página real trae de serie.
+ *
+ * `FN_SRC` serializaba a mano las constantes del módulo y no llevaba
+ * `COMPARTIR_RE`, que `tipoAyuda` usa en la primera línea de la rama de
+ * `mailto:`/`tel:`. En Node no se nota —ahí la función se llama con el módulo
+ * entero cargado—; dentro de la página es un `ReferenceError`, así que la huella
+ * reventaba en cuanto el pie tenía un correo enlazado. El error se recogía en
+ * `errores`, la huella quedaba en `null`, y sin huellas la comparación entre
+ * páginas no compara nada: 2.4.5, 3.2.3, 3.2.4 y 3.2.6 salían del informe sin que
+ * nadie lo dijera. Comprobado en Chromium: «ReferenceError: COMPARTIR_RE is not
+ * defined».
+ */
+test("huella real: un pie con mailto y tel no rompe el código inyectado", { skip }, async () => {
+  const { chromium } = await import("playwright");
+  const { FINGERPRINT_BODY } = await import("../../src/coherence.js");
+  const b = await chromium.launch(launchOptions());
+  try {
+    const p = await b.newPage();
+    await p.setContent(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>t</title></head><body>
+      <header><a href="/">Inicio</a><a href="mailto:info@ejemplo.es">Contacto</a></header>
+      <main><h1>T</h1><p>x</p><a href="mailto:?subject=mira%20esto">Compartir por correo</a></main>
+      <footer><a href="tel:+34900000000">Teléfono de atención</a><a href="/sitemap.html">Mapa del sitio</a></footer>
+      </body></html>`);
+    const h = await p.evaluate(new Function("url", FINGERPRINT_BODY), "https://e.es/");
+    const tipos = (h.ayuda || []).map(function (a) { return a.tipo + "@" + a.region; });
+    assert.deepEqual(tipos, ["contacto@cabecera", "teléfono@pie"],
+      "el correo del pie y el teléfono cuentan; el «compartir por correo» del contenido no: " + JSON.stringify(tipos));
+  } finally { await b.close(); }
 });

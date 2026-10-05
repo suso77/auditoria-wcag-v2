@@ -212,7 +212,15 @@ test("2.4.11 real: una barra fija que tapa el control enfocado es una falla", { 
     const f = m.filter((x) => x.crit === "2.4.11");
     assert.equal(f.length, 1, JSON.stringify(m.filter((x) => x.crit === "2.4.11")));
     assert.equal(f[0].verdict, "falla");
-    assert.match(f[0].detail, /COMPLETAMENTE tapado/);
+    /* El hallazgo apunta al elemento que TAPA, no al tapado, y nombra a los
+     * afectados dentro. Antes apuntaba al control y se repetía por cada uno: con
+     * esta misma barra en una página alta salían 17 filas, y en un sitio real 165
+     * en 8 páginas, todas de la misma causa. El veredicto no ha cambiado —la
+     * barrera es real—; lo que ha cambiado es que se cuenta una vez. */
+    assert.match(f[0].node, /^div/, "el hallazgo señala la barra: " + f[0].node);
+    assert.match(f[0].detail, /tapa POR COMPLETO/);
+    assert.match(f[0].detail, /button/, "y nombra al control afectado: " + f[0].detail);
+    assert.match(f[0].detail, /scroll-padding-top/, "y dice cómo se arregla: " + f[0].detail);
     assert.ok(f[0].path, "la barrera tiene que llevar su selector");
   } finally { await b.close(); }
 });
@@ -234,6 +242,82 @@ test("2.4.11 real: un control DENTRO de la barra fija no se acusa a sí mismo", 
       <div style="position:fixed;top:0;left:0;right:0;height:60px;background:#222">
         <button>Cerrar aviso</button></div><p>contenido</p></body></html>`);
     assert.deepEqual(m.filter((x) => x.crit === "2.4.11"), []);
+  } finally { await b.close(); }
+});
+
+/* ── 2.4.11: una causa, un hallazgo, y las dos direcciones de tabulación ──── */
+
+/**
+ * Página alta con muchos controles y UN elemento fijo, que es el montaje con el
+ * que se vio el problema de verdad: la barra de cookies de un sitio real
+ * (`fixed`, al pie, 150 px, `rgba(255,255,255,.95)`) producía 165 filas de
+ * 2.4.11 en 8 páginas, todas de la misma causa. Las barreras eran ciertas; el
+ * recuento, inútil.
+ */
+const ALTA = (extra) => `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Alta</title><style>
+ body { margin:0; font:16px system-ui; color:#111; background:#fff; }
+ #barra { position: fixed; inset: auto 0 0; height: 150px; background: rgba(255,255,255,.95); z-index: 99; }
+ a { display:block; margin: 60px 20px; color:#0a3; }
+ ${extra || ""}
+</style></head><body>
+<div id="barra">Usamos cookies.</div>
+${Array.from({ length: 24 }, (_, i) => `<a href="/p${i}" id="e${i}">Enlace ${i}</a>`).join("")}
+</body></html>`;
+
+test("2.4.11 real: una barra que tapa a 17 controles es UN hallazgo con el recuento", { skip }, async () => {
+  const { chromium } = await import("playwright");
+  const b = await chromium.launch(launchOptions);
+  try {
+    const m = await medir(b, ALTA());
+    const f = m.filter((x) => x.crit === "2.4.11");
+    assert.equal(f.length, 1, "una causa, una fila; salieron " + f.length);
+    assert.equal(f[0].verdict, "falla");
+    assert.equal(f[0].node, "div#barra");
+    // El recuento está en la evidencia: es lo que mide la gravedad.
+    const n = Number(/: (\d+) control/.exec(f[0].detail)[1]);
+    assert.ok(n >= 10, "tiene que decir a cuántos controles afecta, dijo " + n);
+    assert.match(f[0].detail, /Es UNA causa, no \d+ barreras distintas/);
+    assert.match(f[0].detail, /scroll-padding-bottom` mayor que los 150 px/);
+  } finally { await b.close(); }
+});
+
+test("2.4.11 real: una cabecera pegajosa tapa el foco al subir con Mayús+Tab", { skip }, async () => {
+  /* Midiendo solo hacia abajo esto se escapaba casi entero: la alineación
+   * «nearest» deja el control pegado al borde por el que entra, y hacia arriba ese
+   * borde es el de la cabecera. Con 120 px de cabecera se acusaba UN control —el
+   * que ya nacía debajo— de los veinticuatro que oculta al subir. */
+  const { chromium } = await import("playwright");
+  const b = await chromium.launch(launchOptions);
+  try {
+    const m = await medir(b, ALTA("#barra { inset: 0 0 auto; height: 120px; }"));
+    const f = m.filter((x) => x.crit === "2.4.11");
+    assert.equal(f.length, 1, JSON.stringify(f));
+    assert.equal(f[0].verdict, "falla");
+    const n = Number(/: (\d+) control/.exec(f[0].detail)[1]);
+    assert.ok(n >= 10, "la dirección de subida tiene que contar, dijo " + n);
+    assert.match(f[0].detail, /scroll-padding-top/, "y el hueco se reserva por arriba");
+  } finally { await b.close(); }
+});
+
+test("2.4.11 real: si el sitio reserva el hueco, no se le acusa de lo que no es", { skip }, async () => {
+  /* Quien pone `scroll-padding-bottom` ha hecho los deberes, y el agente no puede
+   * cobrárselo igual. No se simula: se saca el control de la ventana y se deja que
+   * el navegador lo traiga, que es quien aplica el `scroll-padding`. */
+  const { chromium } = await import("playwright");
+  const b = await chromium.launch(launchOptions);
+  try {
+    const sin = await medir(b, ALTA());
+    const con = await medir(b, ALTA("html { scroll-padding-bottom: 170px; }"));
+    const nDe = (m) => {
+      const f = m.filter((x) => x.crit === "2.4.11");
+      return f.length ? Number(/: (\d+) control/.exec(f[0].detail)[1]) : 0;
+    };
+    assert.ok(nDe(con) < nDe(sin) / 3, "con hueco reservado " + nDe(con) + ", sin él " + nDe(sin));
+    /* Queda el último enlace, y es verdad: al final del documento no hay sitio
+     * donde seguir desplazando, así que ni con hueco reservado se aparta de la
+     * barra. Eso se dice con el arreglo que toca, no repitiendo el de siempre. */
+    const f = con.filter((x) => x.crit === "2.4.11");
+    if (f.length) assert.match(f[0].detail, /El hueco ya está reservado/);
   } finally { await b.close(); }
 });
 

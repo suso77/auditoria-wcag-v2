@@ -88,11 +88,91 @@ function textoVisible(doc) {
 
 /* ── Señales de aplicabilidad ─────────────────────────────────────────────── */
 
-// Reproductores embebidos. Igual que en la auditoría de página: si hay un
-// iframe de YouTube, hay medios, aunque el DOM no tenga <video>.
-const EMBEBIDOS = /youtube\.com|youtu\.be|vimeo\.com|dailymotion|ivoox|spotify\.com|soundcloud|twitch\.tv|kaltura|brightcove|jwplayer|wistia/i;
+/* Reproductores embebidos RECONOCIDOS. Si hay un iframe de YouTube, hay medios,
+ * aunque el DOM no tenga <video>.
+ *
+ * La lista incluye las plataformas chinas, y no por exotismo: esto se midió contra
+ * un sitio institucional español hecho para el mercado chino, con una página entera
+ * de vídeos, y el cuaderno declaró «1.2.5 no aplica: la página no tiene ningún
+ * vídeo». Los vídeos estaban ahí, en un reproductor que la lista no conocía.
+ */
+const DOMINIOS_MEDIA = [
+  // Occidentales
+  "youtube\\.com", "youtu\\.be", "vimeo\\.com", "dailymotion\\.com", "ivoox\\.com", "spotify\\.com",
+  "soundcloud\\.com", "twitch\\.tv", "kaltura\\.com", "brightcove\\.net", "brightcove\\.com",
+  "jwplayer\\.com", "jwpcdn\\.com", "wistia\\.(com|net)", "vidyard\\.com", "streamable\\.com",
+  "ted\\.com/talks", "facebook\\.com/plugins/video",
+  // Chinas: imprescindibles para cualquier sitio dirigido a ese mercado
+  "youku\\.com", "bilibili\\.com", "qq\\.com/x?tv", "v\\.qq\\.com", "iqiyi\\.com", "miaopai\\.com",
+  "weibo\\.com/tv", "ixigua\\.com", "douyin\\.com", "tudou\\.com", "letv\\.com", "le\\.com/ptv",
+  "mgtv\\.com", "sohu\\.com/v", "vzuu\\.com", "xinpianchang\\.com",
+  // Tencent Cloud VOD y su TCPlayer. Lo añadió una medición: la página de vídeos de
+  // un sitio real no tiene ni un `<video>` ni un iframe —los vídeos son ENLACES a
+  // `vod-player.html` en `vod2.myqcloud.com`, que se abren en una caja de luz— y con
+  // eso los cuatro criterios de medios salían en blanco en la página que más medios
+  // tiene de toda la muestra. Se nombra el reproductor, no todo `myqcloud.com`, que
+  // también sirve imágenes y CDN.
+  "vod2?\\.myqcloud\\.com", "vod-player", "tcplayer",
+  // Otras regiones
+  "rutube\\.ru", "vk\\.com/video", "nicovideo\\.jp", "tv\\.naver\\.com", "kakao\\.com", "tv\\.kakao"
+];
+/* Cada dominio se ancla a una frontera de host.
+ *
+ * Sin anclar, `le\.com` (LeTV) casa dentro de «goo**gle.com**» y cualquier URL de
+ * Google pasaba por reproductor de vídeo reconocido — incluido el iframe de Maps,
+ * que entonces hacía aplicar 1.2.4 y 1.2.5 en la página de contacto de cualquier
+ * sitio. Es el mismo error que el `\s` colapsado: un patrón que casa dentro de otra
+ * palabra. Lo cazó la sonda del propio arreglo, lo que dice bastante de por qué hay
+ * que probar cada cosa en vez de darla por buena.
+ */
+export const EMBEBIDOS = new RegExp(DOMINIOS_MEDIA.map(function (d) { return "(?:^|[/.])" + d; }).join("|"), "i");
 
-function medios(doc) {
+/* Y un marco que NO reconocemos puede ser un reproductor igual.
+ *
+ * Esta era la raíz del fallo, y no la lista: filtrando por lista blanca, «no está en
+ * la lista» se interpretaba como «no hay medios», y de ahí salía un `no-aplica` —que
+ * es una AFIRMACIÓN, no un hueco— sobre una página llena de vídeos. Para un motor de
+ * fallo seguro el reparto correcto es el contrario: lo reconocido se trata como
+ * medio, lo desconocido deja el criterio PENDIENTE diciendo qué marco hay que mirar,
+ * y solo se declara «no aplica» cuando no hay ni medios propios ni marcos de ninguna
+ * clase.
+ *
+ * Se descartan los marcos que claramente no son medios —mapas, publicidad, analítica,
+ * redes de comentarios— porque dejar el criterio pendiente por el iframe de Google
+ * Maps de la página de contacto es ruido, no prudencia. */
+export const NO_MEDIOS = /maps\.google|google\.com\/maps|openstreetmap|recaptcha|googletagmanager|google-analytics|doubleclick|adservice|disqus|hotjar|intercom|zendesk|facebook\.com\/plugins\/(like|page|comments)|platform\.twitter|about:blank/i;
+
+
+/* ¿Hay una alternativa en texto cerca del medio?
+ *
+ * 1.2.1 y 1.2.3 se satisfacen con una transcripción o una alternativa en texto, y eso
+ * no vive dentro del `<video>`: es un enlace o un bloque al lado. Lo que se puede
+ * medir es si existe algo que se anuncie como tal junto al medio; que ese texto sea
+ * una transcripción FIEL lo juzga una persona leyéndolo, y así se dice.
+ *
+ * El léxico va en los mismos idiomas que el de la ayuda, y por el mismo motivo: con
+ * «transcript» y «transcripción» a secas, un sitio chino no tiene ninguna.
+ */
+const TRANSCRIPCION_RE = /(?:(?:^|\b)(?:transcripci[oó]n|transcrici[oó]n|transcripci[oó]|transcri[çc][aã]o|transcript|texto alternativo|versi[oó]n en texto|audiodescripci[oó]n|audio\s?description|subt[ií]tulos?|subtitles?|captions?)\b)|(?:文字稿|字幕|文稿|音频描述|口述影像)/i;
+
+/** Lo que hay alrededor de un medio: un enlace o un texto que anuncie alternativa. */
+export function alternativaCerca(el, doc) {
+  let n = el, saltos = 0;
+  while (n && n.parentElement && saltos < 3) {
+    n = n.parentElement; saltos++;
+    const enlaces = Array.prototype.slice.call(n.querySelectorAll("a[href],button"));
+    for (let i = 0; i < enlaces.length; i++) {
+      const t = (enlaces[i].getAttribute("aria-label") || enlaces[i].textContent || "").replace(/\s+/g, " ").trim();
+      if (t && TRANSCRIPCION_RE.test(t)) return { como: "enlace", texto: t.slice(0, 60), locator: loc(enlaces[i]) };
+    }
+    const txt = (n.textContent || "").replace(/\s+/g, " ").trim();
+    if (TRANSCRIPCION_RE.test(txt)) return { como: "texto", texto: txt.slice(0, 60), locator: loc(n) };
+  }
+  void doc;
+  return null;
+}
+
+export function medios(doc) {
   const propios = visibles(doc, "video,audio").map(function (el) {
     const pistas = Array.prototype.slice.call(el.querySelectorAll("track")).map(function (t) {
       return (t.getAttribute("kind") || "subtitles").toLowerCase();
@@ -103,10 +183,15 @@ function medios(doc) {
       descripciones: pistas.indexOf("descriptions") !== -1
     };
   });
-  const externos = visibles(doc, "iframe[src],embed[src],object[data]").filter(function (el) {
-    return EMBEBIDOS.test(el.getAttribute("src") || el.getAttribute("data") || "");
+  const marcos = visibles(doc, "iframe[src],embed[src],object[data]");
+  const fuente = function (el) { return el.getAttribute("src") || el.getAttribute("data") || ""; };
+  const externos = marcos.filter(function (el) { return EMBEBIDOS.test(fuente(el)); });
+  const dudosos = marcos.filter(function (el) {
+    const u = fuente(el);
+    if (!u || EMBEBIDOS.test(u) || NO_MEDIOS.test(u)) return false;
+    return true;
   });
-  return { propios: propios, externos: externos };
+  return { propios: propios, externos: externos, dudosos: dudosos };
 }
 
 /* 1.3.3 · Instrucciones que dependen de la forma, el color o la posición.
@@ -221,20 +306,32 @@ function noAplica(n, porque, datos) {
   return ficha(n, { aplica: false, veredicto: "no-aplica", pregunta: "", comoDecidir: [], loQueYaSabemos: [porque], datos: datos || {} });
 }
 
+const refMarcoDudoso = function (el) {
+  return ref(el, "marco que NO se ha podido identificar (" +
+    (el.getAttribute("src") || el.getAttribute("data") || "").slice(0, 80) +
+    "): ábrelo y mira si es un reproductor");
+};
+
 const FICHAS = {
   "1.2.4": function (doc, ctx) {
     const m = ctx.medios;
-    if (!m.propios.length && !m.externos.length) {
-      return noAplica("1.2.4", "La página no tiene ningún <video>, <audio> ni reproductor embebido reconocido: no hay contenido en directo que subtitular.");
+    const dudosos = m.dudosos || [];
+    /* «No aplica» solo si no hay NADA que pueda ser un medio: ni propios, ni
+     * reconocidos, ni marcos sin identificar. Un marco desconocido puede ser un
+     * reproductor, y declarar que el criterio no viene al caso sin haberlo abierto es
+     * afirmar lo que no se sabe. */
+    if (!m.propios.length && !m.externos.length && !dudosos.length) {
+      return noAplica("1.2.4", "La página no tiene ningún <video>, <audio> ni marco embebido de ninguna clase: no hay contenido en directo que subtitular.");
     }
     return ficha("1.2.4", {
       pregunta: "¿Alguno de estos medios es una emisión EN DIRECTO? Si lo es, ¿lleva subtítulos en directo?",
       queMirar: m.propios.map(function (x) { return ref(x.el, "<" + x.tag + ">, pistas: " + (x.pistas.join(", ") || "ninguna")); })
-        .concat(m.externos.map(function (el) { return ref(el, "reproductor embebido: " + (el.getAttribute("src") || el.getAttribute("data") || "").slice(0, 80)); })),
+        .concat(m.externos.map(function (el) { return ref(el, "reproductor embebido: " + (el.getAttribute("src") || el.getAttribute("data") || "").slice(0, 80)); }))
+        .concat(dudosos.map(refMarcoDudoso)),
       loQueYaSabemos: [
         "Si es DIRECTO o grabado no se puede saber desde el marcado: un <video> y una emisión se escriben igual.",
         m.propios.filter(function (x) { return x.subtitulos; }).length + " de " + m.propios.length + " medio(s) propio(s) declaran pista de subtítulos."
-      ],
+      ].concat(dudosos.length ? [dudosos.length + " marco(s) de la página no se han podido identificar: si alguno es un reproductor, este criterio aplica."] : []),
       comoDecidir: [
         "Si ninguno es en directo → no aplica.",
         "Si alguno lo es y no lleva subtítulos sincronizados → falla.",
@@ -245,8 +342,9 @@ const FICHAS = {
 
   "1.2.5": function (doc, ctx) {
     const videos = ctx.medios.propios.filter(function (x) { return x.tag === "video"; });
-    if (!videos.length && !ctx.medios.externos.length) {
-      return noAplica("1.2.5", "La página no tiene ningún vídeo ni reproductor embebido reconocido: no hay nada que audiodescribir.");
+    const dudosos5 = ctx.medios.dudosos || [];
+    if (!videos.length && !ctx.medios.externos.length && !dudosos5.length) {
+      return noAplica("1.2.5", "La página no tiene ningún vídeo ni marco embebido de ninguna clase: no hay nada que audiodescribir.");
     }
     const sinDesc = videos.filter(function (x) { return !x.descripciones; });
     return ficha("1.2.5", {
@@ -254,7 +352,8 @@ const FICHAS = {
       queMirar: videos.map(function (x) { return ref(x.el, x.descripciones ? "declara <track kind=\"descriptions\">" : "sin pista de descripciones"); })
         .concat(ctx.medios.externos.map(function (el) {
           return ref(el, "reproductor embebido (" + (el.getAttribute("src") || el.getAttribute("data") || "").slice(0, 80) + "): hay que abrirlo para saberlo");
-        })),
+        }))
+        .concat(dudosos5.map(refMarcoDudoso)),
       loQueYaSabemos: [
         sinDesc.length + " de " + videos.length + " vídeo(s) propio(s) no declaran pista de audiodescripción.",
         "Que no la declaren no basta para fallar: la audiodescripción puede estar integrada en el propio audio, y eso solo se sabe viéndolo."

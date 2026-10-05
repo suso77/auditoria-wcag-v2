@@ -329,6 +329,28 @@ function indicadorDeFoco(base, foc, el, win) {
   // Fondo contra el que se dibuja el indicador: el del PADRE, porque el contorno
   // se pinta justo fuera de la caja del elemento.
   const detras = bgBehind(el.parentElement || el, win);
+  /* ¿SABEMOS de qué color es ese fondo? Porque si no, no se puede decir que el
+   * indicador no se distinga de él.
+   *
+   * `bgBehind` sube por los antepasados buscando un color opaco y, si no encuentra
+   * ninguno, **supone blanco**. En una cabecera cuyo oscuro viene de una imagen de
+   * fondo —un sitio de turismo, vamos— un contorno de foco blanco se comparaba
+   * contra ese blanco supuesto y salía «el indicador NO se ve». Medido contra un
+   * sitio real: 82 filas de 2.4.7, las 82 con el fondo `rgb(255,255,255)`, las 82
+   * falsas, y la barrera de verdad del sitio —campos de búsqueda con
+   * `outline:none`— perdida entre ellas.
+   *
+   * Es el mismo error que arreglé en `contrastOf` con `fondoRealCoincide` y que no
+   * traje aquí. Así que la comparación por color solo se hace cuando el fondo es
+   * FIABLE: lo puso un antepasado de verdad (`origen`), sin imagen por medio, sin
+   * notación que no sepamos leer y sin que algo se pinte encima.
+   *
+   * Y cuando no es fiable, el criterio manda: 2.4.7 pide que HAYA un indicador
+   * visible, no un contraste mínimo —eso es 2.4.11 y 2.4.13—. Un contorno con
+   * grosor y con alfa es un indicador; que además se distinga del fondo, si no se
+   * puede medir, no se afirma ni en un sentido ni en el otro. */
+  const fondoFiable = !!(detras && detras.origen && !detras.image && !detras.desconocido &&
+    !(detras.real && detras.real.ok === false));
   const nulos = [];
 
   // 1) Contorno.
@@ -336,22 +358,24 @@ function indicadorDeFoco(base, foc, el, win) {
   const hayContorno = foc.outlineStyle !== "none" && foc.outlineStyle !== "hidden" && foc.outlineWidth > 0;
   if (hayContorno) {
     if (!oc || oc.a === 0) nulos.push("el contorno es transparente (" + foc.outlineColor + ")");
-    else if (mismoColor(oc, detras)) nulos.push("el contorno es del mismo color que el fondo de detrás (" + foc.outlineColor + ")");
-    else return { visible: true, via: "contorno", motivo: "contorno de " + foc.outlineWidth + "px en " + foc.outlineColor };
+    else if (fondoFiable && mismoColor(oc, detras)) nulos.push("el contorno es del mismo color que el fondo de detrás (" + foc.outlineColor + ")");
+    else return { visible: true, via: "contorno",
+      motivo: "contorno de " + foc.outlineWidth + "px en " + foc.outlineColor +
+        (fondoFiable ? "" : " (no se ha podido medir contra qué fondo se dibuja: comprueba a ojo que contrasta)") };
   } else if (base && (base.outlineStyle !== foc.outlineStyle || base.outlineWidth !== foc.outlineWidth)) {
     nulos.push("el contorno cambia pero queda sin grosor o con estilo «" + foc.outlineStyle + "»");
   }
 
   // 2) Sombra.
   if (foc.boxShadow && foc.boxShadow !== "none" && (!base || foc.boxShadow !== base.boxShadow)) {
-    const conAlfa = coloresDe(foc.boxShadow).filter(function (c) { return c.a > 0 && !mismoColor(c, detras); });
+    const conAlfa = coloresDe(foc.boxShadow).filter(function (c) { return c.a > 0 && !(fondoFiable && mismoColor(c, detras)); });
     if (conAlfa.length) return { visible: true, via: "sombra", motivo: "box-shadow visible (" + String(foc.boxShadow).slice(0, 60) + ")" };
     nulos.push("la sombra no se ve: " + String(foc.boxShadow).slice(0, 60));
   }
 
   // 3) Borde.
   if (base && foc.borderColor !== base.borderColor && foc.borderWidth > 0) {
-    const bc = coloresDe(foc.borderColor).filter(function (c) { return c.a > 0 && !mismoColor(c, detras); });
+    const bc = coloresDe(foc.borderColor).filter(function (c) { return c.a > 0 && !(fondoFiable && mismoColor(c, detras)); });
     if (bc.length) return { visible: true, via: "borde", motivo: "el borde cambia a " + foc.borderColor.split("/")[0] };
     nulos.push("el borde cambia a un color que no se distingue del fondo (" + foc.borderColor.split("/")[0] + ")");
   }
@@ -645,7 +669,38 @@ function elementosFlotantes(doc, win) {
     if (cs.pointerEvents === "none") continue;   // decorativo: no tapa de verdad
     const r = el.getBoundingClientRect();
     if (r.width < 8 || r.height < 8) continue;
-    out.push({ el: el, rect: r, z: parseInt(cs.zIndex, 10) || 0, loc: locatorM(el) });
+    /* Cuánto OCULTA de verdad, que no es lo mismo que estar encima.
+     *
+     * 2.4.11 pide que el elemento con el foco no quede «entirely hidden». Un velo de
+     * consentimiento con `background: rgba(0,0,0,.45)` se pinta encima de toda la
+     * página y NO la oculta: la atenúa, y el foco se sigue viendo a través. Sin esta
+     * cuenta, un aviso de cookies translúcido a pantalla completa acusaría a todos los
+     * controles del sitio.
+     *
+     * Aquí había escrito que esto era lo que explicaba las 165 filas medidas en un
+     * sitio real. No lo era, y conviene que quede dicho: aquel `div#cookieConsent` era
+     * `rgba(255,255,255,.95)` —opaco de hecho— y cubría el 21 % de la ventana, no la
+     * pantalla entera. Sus barreras eran CIERTAS; lo que estaba mal era contarlas una
+     * por control en vez de una por causa, y eso se arregla al emitir el hallazgo, no
+     * aquí. Esta cuenta sigue haciendo falta, pero para el velo translúcido de verdad.
+     *
+     * La opacidad efectiva es la del color de fondo por la del elemento (y la de sus
+     * antepasados). Una imagen de fondo o un `backdrop-filter` cuentan como opacos:
+     * ahí no se puede saber qué tapan y lo prudente es suponer que tapan. */
+    const col = coloresDe(cs.backgroundColor)[0];
+    const tieneImagen = cs.backgroundImage && cs.backgroundImage !== "none";
+    const filtro = (cs.backdropFilter && cs.backdropFilter !== "none") || (cs.webkitBackdropFilter && cs.webkitBackdropFilter !== "none");
+    const alfaFondo = tieneImagen || filtro ? 1 : (col ? col.a : 0);
+    const opacidad = opacidadAcumulada(el, win);
+    /* Un VELO es un flotante que cubre (casi) toda la pantalla: un aviso de
+     * consentimiento, un modal, una cortina de carga. No es un elemento más que
+     * tape a otro — es un ESTADO de la página, y hay que decirlo una vez y en voz
+     * alta, no repetirlo por cada control que queda debajo. */
+    const vw = win.innerWidth || 1, vh = win.innerHeight || 1;
+    const cubre = (Math.min(r.right, vw) - Math.max(r.left, 0)) * (Math.min(r.bottom, vh) - Math.max(r.top, 0));
+    out.push({ el: el, rect: r, z: parseInt(cs.zIndex, 10) || 0, loc: locatorM(el),
+      opaco: alfaFondo * opacidad, position: cs.position,
+      velo: cubre > vw * vh * 0.8 });
   }
   return out;
 }
@@ -795,6 +850,24 @@ function runChecksReal(doc, win, limit) {
   let porCss = 0, sinRegla = 0, hojasBloqueadas = 0;
   // Lo que flota por encima, una sola vez: se consulta por cada control enfocado.
   const flotantes = elementosFlotantes(doc, win);
+  /* 2.4.11 se acumula por CAUSA y se dice al final, no una vez por control.
+   *
+   * Una barra fija al pie oculta el control enfocado de TODOS los controles que
+   * quedan por debajo del pliegue, porque el navegador los desplaza hasta el borde
+   * inferior de la ventana —ahí es donde los deja— y ahí está la barra. Medido en un
+   * sitio real: 165 filas de 2.4.11, 8 páginas, todas de un mismo `div#cookieConsent`
+   * de 150 px opaco al 95 %. La barrera es REAL, no es un falso positivo; lo falso
+   * era el recuento, y 165 filas de una sola causa entierran los otros catorce
+   * criterios que fallan en el mismo informe. Así que se cuenta la causa una vez,
+   * con cuántos controles afecta y unos cuantos de ejemplo. */
+  const oscurecidos = [];
+  function anotaOscurecido(f, tipo, locControl, t) {
+    let r = null;
+    for (let i = 0; i < oscurecidos.length; i++) if (oscurecidos[i].f === f) { r = oscurecidos[i]; break; }
+    if (!r) { r = { f: f, tapa: [], parcial: [], atenua: [], fracMax: 0, opaco: f.opaco }; oscurecidos.push(r); }
+    r[tipo].push(locControl);
+    if (t > r.fracMax) r.fracMax = t;
+  }
   all.forEach(function (el) {
     const loc = locatorM(el);
     // Se sella al final del bloque en vez de repetir `path:` en las quince
@@ -854,9 +927,42 @@ function runChecksReal(doc, win, limit) {
            * devuelve el scroll a donde estaba, para no mover el suelo de las demás
            * comprobaciones. */
           const scrollX0 = win.scrollX, scrollY0 = win.scrollY;
-          try { if (el.scrollIntoView) el.scrollIntoView({ block: "nearest", inline: "nearest" }); } catch (e) {}
-          const rc = el.getBoundingClientRect();
-          if (rc.width > 0 && rc.height > 0) {
+          /* Y se mide en las DOS direcciones de tabulación, no solo bajando.
+           *
+           * La alineación «nearest» deja el control pegado al borde por el que entra:
+           * tabulando hacia abajo, al borde INFERIOR —donde está la barra de cookies—;
+           * con Mayús+Tab hacia arriba, al borde SUPERIOR, que es donde está la
+           * cabecera pegajosa, el ejemplo de manual de 2.4.11. Midiendo solo hacia
+           * abajo, una cabecera `sticky` que oculta el foco al subir se escapaba
+           * entera: comprobado con una cabecera de 120 px, un único control acusado
+           * (el que ya nacía debajo de ella) de los veinticuatro que oculta al subir.
+           * 2.4.11 no habla de la dirección: habla de recibir el foco.
+           *
+           * El control se saca de la ventana por el lado del que vendría el foco y se
+           * deja que el navegador lo traiga. Así se aplica el `scroll-padding` del
+           * sitio, que es quien de verdad decide dónde queda: una página que reserva
+           * el hueco no sale acusada, y eso no se puede simular a mano. */
+          const r0 = el.getBoundingClientRect();
+          const absTop = r0.top + win.scrollY, altoEl = r0.height;
+          /* Lo peor de las dos pasadas, por flotante: el mismo control tapado en las
+           * dos direcciones es UN hallazgo, no dos. */
+          const porFlotante = [];
+          const apunta = function (f, t, atenua) {
+            for (let i = 0; i < porFlotante.length; i++) {
+              if (porFlotante[i].f === f) {
+                if (t > porFlotante[i].t) { porFlotante[i].t = t; porFlotante[i].atenua = atenua; }
+                return;
+              }
+            }
+            porFlotante.push({ f: f, t: t, atenua: atenua });
+          };
+          [true, false].forEach(function (haciaAbajo) {
+            try {
+              win.scrollTo(0, haciaAbajo ? Math.max(0, absTop - (win.innerHeight || 0) - 1) : absTop + altoEl + 1);
+            } catch (e) {}
+            try { if (el.scrollIntoView) el.scrollIntoView({ block: "nearest", inline: "nearest" }); } catch (e) {}
+            const rc = el.getBoundingClientRect();
+            if (!(rc.width > 0 && rc.height > 0)) return;
             /* Primero se descarta lo que NO se pinta encima, y después se elige el peor.
              *
              * Al revés no sirve: una marca de agua `fixed; inset:0; z-index:-1` tapa el
@@ -866,7 +972,6 @@ function runChecksReal(doc, win, limit) {
              *
              * Quién se pinta encima lo dice `elementFromPoint` en un punto DENTRO de
              * la intersección, que es donde el tapado ocurriría. */
-            const tapan = [];
             flotantes.forEach(function (f) {
               if (f.el === el || f.el.contains(el)) return;   // está DENTRO del flotante: no lo tapa
               const fr = refrescar(f);
@@ -880,10 +985,16 @@ function runChecksReal(doc, win, limit) {
               // Solo cuenta si lo que se pinta ahí es el flotante (o algo suyo).
               if (!arriba) return;
               if (arriba !== f.el && !f.el.contains(arriba)) return;
-              tapan.push({ f: f, t: t });
+              /* Y tiene que OCULTAR, no solo atenuar. Un velo translúcido deja ver
+               * el foco a través; acusarlo es inventar la barrera en toda la página. */
+              if (f.velo) return;   // cubre la pantalla entera: se dice una vez, abajo
+              apunta(f, t, !!(f.opaco != null && f.opaco < 0.9));
             });
+          });
+          {
             let peor = null, frac = 0;
-            tapan.forEach(function (x) { if (x.t > frac) { frac = x.t; peor = x.f; } });
+            porFlotante.forEach(function (x) { if (!x.atenua && x.t > frac) { frac = x.t; peor = x.f; } });
+            const atenuan = porFlotante.filter(function (x) { return x.atenua; });
             /* Y que de verdad se pinte ENCIMA, no solo que los rectángulos se cruzen.
              *
              * El comentario de `elementosFlotantes` decía que se comprobaba «que de
@@ -896,12 +1007,16 @@ function runChecksReal(doc, win, limit) {
              *
              * El orden de pintado real lo dice `elementFromPoint`, y es lo que hay
              * que creer, no la aritmética de rectángulos. */
-            if (peor && frac >= 0.999) {
-              res.push({ crit: "2.4.11", label: "Foco no oscurecido", node: loc, path: ruta, verdict: "falla",
-                detail: "al recibir el foco queda COMPLETAMENTE tapado por «" + peor.loc + "» (" + win.getComputedStyle(peor.el).position + "): tabulando hasta aquí no se ve dónde está el foco" });
-            } else if (peor && frac > 0.02) {
-              res.push({ crit: "2.4.11", label: "Foco no oscurecido", node: loc, path: ruta, verdict: "revisar",
-                detail: "al recibir el foco queda tapado un " + Math.round(frac * 100) + " % por «" + peor.loc + "» (" + win.getComputedStyle(peor.el).position + "). El mínimo de 2.4.11 solo exige que no se oculte por completo, pero compruébalo" });
+            /* Aquí solo se ANOTA quién tapa a quién; el hallazgo se emite al final
+             * del barrido, agrupado por el elemento que tapa. */
+            if (peor && frac >= 0.999) anotaOscurecido(peor, "tapa", loc, frac);
+            else if (peor && frac > 0.02) anotaOscurecido(peor, "parcial", loc, frac);
+            else if (atenuan.length) {
+              // Encima hay algo translúcido. No oculta —2.4.11 pide «entirely
+              // hidden»— pero baja el contraste de todo lo que está debajo, foco
+              // incluido, y eso se dice en vez de callarlo o de acusar al criterio.
+              const peorAt = atenuan.reduce(function (m, x) { return x.t > m.t ? x : m; }, atenuan[0]);
+              anotaOscurecido(peorAt.f, "atenua", loc, peorAt.t);
             }
           }
           // El suelo se devuelve donde estaba: las demás comprobaciones miden sobre
@@ -1079,6 +1194,90 @@ function runChecksReal(doc, win, limit) {
    * —desde fuera no hay nada que mirar— y los marcos, que van en otro documento y los
    * audita `analyzeRendered` uno por uno. Un criterio que nadie ha comprobado no puede
    * parecerse a un criterio que cumple. */
+  /* 2.4.11: un hallazgo por CAUSA, con el recuento de controles afectados.
+   *
+   * Lo que se emitía era un hallazgo por control afectado, y eso convierte un
+   * descuido de CSS en una pared de filas: medido en un sitio real, 165 filas en 8
+   * páginas, todas del mismo `div#cookieConsent`. Reproducido en local con una barra
+   * equivalente (fija al pie, 150 px, `rgba(255,255,255,.95)`): 17 de 24 enlaces
+   * acusados, uno a uno. Las barreras eran ciertas —la barra tapa de verdad el
+   * control enfocado, porque `scrollIntoView` con alineación «nearest», que es lo que
+   * hace el navegador al tabular, deja el control pegado al borde inferior, justo
+   * debajo de la barra— pero son UNA, no diecisiete: se arregla en un sitio, y
+   * contarlas por separado entierra los otros catorce criterios que fallan.
+   *
+   * Lo que sí hay que decir es cuántos controles quedan afectados, porque eso mide la
+   * gravedad, y unos cuantos por su nombre, para poder reproducirlo. */
+  oscurecidos.forEach(function (o) {
+    const f = o.f;
+    const rutaF = rutaM(f.el);
+    const rf = refrescar(f);
+    const alto = Math.round(rf.height);
+    /* ¿Por dónde reservar el hueco? Lo dice dónde está el flotante en la ventana:
+     * una barra al pie se despeja con `scroll-padding-bottom`, una cabecera pegajosa
+     * con `scroll-padding-top`. Si está a media altura no se adivina y no se dice. */
+    const vh = win.innerHeight || 0;
+    const borde = vh && rf.bottom >= vh - 2 ? "bottom" : (vh && rf.top <= 2 ? "top" : null);
+    /* ¿Está el hueco ya reservado? Si lo está, el consejo de reservarlo sobra y
+     * además suena a que no se ha mirado. Lo que queda entonces es que al final
+     * (o al principio) del documento no hay sitio donde seguir desplazando, y eso
+     * se arregla con relleno en el contenido, no con `scroll-padding`. */
+    let reservado = 0;
+    if (borde) {
+      try {
+        const sc = doc.scrollingElement || doc.documentElement;
+        reservado = parseFloat(win.getComputedStyle(sc)["scrollPadding" + (borde === "top" ? "Top" : "Bottom")]) || 0;
+      } catch (e) { reservado = 0; }
+    }
+    const unaCausa = o.tapa.length + o.parcial.length > 1
+      ? " Es UNA causa, no " + (o.tapa.length + o.parcial.length) + " barreras distintas: el navegador deja el control enfocado justo donde se pinta «" + f.loc + "»."
+      : " El navegador deja el control enfocado justo donde se pinta «" + f.loc + "».";
+    const arreglo = unaCausa + (reservado >= alto
+      ? " El hueco ya está reservado (`scroll-padding-" + borde + ": " + Math.round(reservado) + "px`), así que lo que queda es que por ese lado del documento no hay sitio donde seguir desplazando: añade relleno al contenido (`padding-" + borde + "` en el `body`) para que el " + (borde === "bottom" ? "último" : "primer") + " control pueda apartarse del elemento fijo."
+      : " Se arregla reservando el hueco —" +
+        (borde ? "`scroll-padding-" + borde + "` mayor que los " + alto + " px de alto del elemento, en el contenedor de desplazamiento (normalmente `html`)"
+               : "`scroll-padding` en el contenedor de desplazamiento") +
+        "— o haciendo que el elemento fijo no solape al control que recibe el foco.");
+    const ejemplos = function (lista) {
+      return lista.slice(0, 5).join(", ") + (lista.length > 5 ? " y " + (lista.length - 5) + " más" : "");
+    };
+    if (o.tapa.length) {
+      res.push({ crit: "2.4.11", label: "Foco no oscurecido", node: f.loc, path: rutaF, verdict: "falla",
+        detail: "«" + f.loc + "» (" + f.position + ") tapa POR COMPLETO al control que recibe el foco: " +
+          o.tapa.length + " control(es) enfocable(s) de esta página quedan completamente ocultos al tabular hasta ellos (" +
+          ejemplos(o.tapa) + ")" +
+          (o.parcial.length ? ", y otros " + o.parcial.length + " quedan tapados en parte" : "") +
+          ". Tabulando hasta cualquiera de ellos no se ve dónde está el foco." + arreglo });
+    } else if (o.parcial.length) {
+      res.push({ crit: "2.4.11", label: "Foco no oscurecido", node: f.loc, path: rutaF, verdict: "revisar",
+        detail: "«" + f.loc + "» (" + f.position + ") tapa hasta un " + Math.round(o.fracMax * 100) + " % del control que recibe el foco en " +
+          o.parcial.length + " control(es) (" + ejemplos(o.parcial) + "). El mínimo de 2.4.11 solo exige que el control no quede oculto DEL TODO, así que esto no es todavía una barrera de este criterio, pero compruébalo: si lo que queda tapado es el propio indicador de foco, sí lo es." + arreglo });
+    } else if (o.atenua.length) {
+      res.push({ crit: "2.4.11", label: "Foco no oscurecido", node: f.loc, path: rutaF, verdict: "revisar",
+        detail: "«" + f.loc + "» (" + f.position + ", opacidad efectiva " + (o.opaco != null ? o.opaco.toFixed(2) : "?") +
+          ") se pinta sobre " + o.atenua.length + " control(es) enfocable(s) (" + ejemplos(o.atenua) +
+          ") y los atenúa sin ocultarlos: 2.4.11 exige que no queden ocultos del todo, así que no es una barrera de este criterio, pero comprueba que el indicador de foco siga distinguiéndose a través de él." });
+    }
+  });
+  /* Si la página se ha medido detrás de un VELO, eso va primero que cualquier
+   * criterio.
+   *
+   * Un aviso de cookies a pantalla completa, un modal abierto o una cortina de carga
+   * cambian lo que hay en pantalla, y todo lo medido se ha medido en ese estado, y eso
+   * hay que decirlo aunque ningún criterio concreto se queje: un contraste medido
+   * detrás de un velo opaco no es el contraste de la página. */
+  const velos = flotantes.filter(function (f) { return f.velo; });
+  if (velos.length) {
+    const v = velos.reduce(function (m, x) { return x.opaco > m.opaco ? x : m; }, velos[0]);
+    res.push({ crit: "__meta", label: "Medido detrás de un velo", node: v.loc, verdict: "revisar",
+      detail: "«" + v.loc + "» (" + v.position + ", opacidad efectiva " + (v.opaco != null ? v.opaco.toFixed(2) : "?") +
+        ") cubre la pantalla entera, así que TODO lo de esta página se ha medido con él puesto. " +
+        (v.opaco >= 0.9
+          ? "Y es opaco: lo que hay debajo no se ve, con lo que la medición de contraste, tamaño y foco de la página no vale."
+          : "Es translúcido, así que la página se ve a través y la medición sirve, pero el contraste real de todo lo de debajo es PEOR que el medido.") +
+        " Lo normal es que sea un aviso de consentimiento o un modal: acéptalo o ciérralo y vuelve a medir. Hasta entonces, esta página no está auditada en el estado en que la usa la gente." });
+  }
+
   const cerrados = shadowCerrados(doc);
   const marcos = todosM(doc, "iframe,frame").filter(function (f) { return renderedM(f, win); });
   if (cerrados.length) {

@@ -27,8 +27,18 @@ function F(n, verdict, sev, evid, nodes) {
   if (nodes && nodes.length) f.nodes = nodes;
   return f;
 }
+/* El `uid` de la sonda es un selector canónico, y viaja al hallazgo como `path`.
+ *
+ * Sin él, las barreras de esta capa salían al CSV con la columna «Selector» VACÍA y
+ * un locator que no distingue: cinco filas de 1.4.13 diciendo `li.float-left` y
+ * nada con que ir a buscarlas. Una barrera que no se puede localizar no se puede
+ * arreglar ni comprobar. */
 function nodesOf(list, max) {
-  return (list || []).slice(0, max || 10).map(function (x) { return { locator: x.locator, name: x.detalle || "" }; });
+  return (list || []).slice(0, max || 10).map(function (x) {
+    const n = { locator: x.locator, name: x.detalle || "" };
+    if (x.uid) n.path = x.uid;
+    return n;
+  });
 }
 
 /**
@@ -233,21 +243,60 @@ export function analyzeHoverContent(trace) {
   // `senalable` (sin eñe, que viaja mejor dentro del código inyectado).
   const noDescartable = function (h) { return h.descartable === false || h.descartableConEsc === false; };
   const noSenalable = function (h) { return h["señalable"] === false || h.senalable === false; };
-  const rotos = (trace.hovers || []).filter(function (h) { return noDescartable(h) || noSenalable(h); });
+  /* El requisito de «descartable» solo se incumple si el emergente TAPA algo.
+   *
+   * Lo dice el propio criterio: «except when the additional content ... does not
+   * obscure or replace other content». Un emergente hecho con `:hover` en CSS no
+   * responde a Esc por definición, así que sin esta condición TODOS salían como falla
+   * grave — incluido el tooltip que aparece en un hueco reservado y no tapa nada, que
+   * la excepción exime expresamente. Medido contra un sitio real: 47 filas de 1.4.13,
+   * y el informe hecho a mano no señalaba ninguna.
+   *
+   * `tapa` lo mide la sonda (fuera del flujo y con algo pintado debajo). Cuando el
+   * dato no está —una traza vieja, o una pasada donde no se pudo medir— se mantiene
+   * el criterio a prueba de fallos: se cuenta como que tapa, porque lo contrario es
+   * absolver sin haber mirado. */
+  const tapa = function (h) { return h.tapa !== false; };
+  const rotos = (trace.hovers || []).filter(function (h) { return (noDescartable(h) && tapa(h)) || noSenalable(h); });
+  const eximidos = (trace.hovers || []).filter(function (h) { return noDescartable(h) && !tapa(h) && !noSenalable(h); });
   if (rotos.length) {
     out.push(F("1.4.13", "falla", "grave", [
       rotos.length + " contenido(s) emergente(s) incumplen: " + rotos.slice(0, 6).map(function (h) {
         const q = [];
-        if (noDescartable(h)) q.push("no se descarta con Esc");
+        if (noDescartable(h) && tapa(h)) q.push("no se descarta con Esc y tapa contenido que había debajo" + (h.tapa === undefined ? " (o no se pudo comprobar que no lo tape)" : ""));
         if (noSenalable(h)) q.push("desaparece al llevar el puntero encima");
         return h.locator + " (" + q.join(" y ") + ")";
-      }).join(", ")
+      }).join(", ") + (rotos.length > 6 ? ", …" : "") + ".",
+      "Las tres condiciones de 1.4.13 son descartable sin mover el puntero ni el foco, señalable con el puntero sin que se cierre, y persistente. «Descartable» solo se exige cuando el emergente tapa o sustituye otro contenido, que es lo que se ha comprobado aquí."
     ], nodesOf(rotos)));
   }
-  const sanos = (trace.hovers || []).length - rotos.length;
-  if (!titles.length && !rotos.length) {
-    if (sanos > 0) {
-      out.push(F("1.4.13", "cumple", null, [sanos + " contenido(s) emergente(s) se descartan con Esc y se pueden señalar con el puntero."]));
+  if (eximidos.length) {
+    // No es una barrera: la excepción del criterio lo dice. Se cuenta, porque un
+    // emergente que no responde a Esc conviene conocerlo, y no se acusa.
+    out.push(F("1.4.13", "cumple-parcial", null, [
+      eximidos.length + " contenido(s) emergente(s) no responden a Esc pero NO tapan ningún contenido (" +
+      eximidos.slice(0, 5).map(function (h) { return h.locator; }).join(", ") +
+      "): la excepción de 1.4.13 los exime expresamente («does not obscure or replace other content»), así que no son barreras de este criterio. Si cambia la maquetación y llegan a solapar, pasan a serlo."
+    ], nodesOf(eximidos)));
+  }
+  /* Y lo que no se pudo medir no se cuenta como medido.
+   *
+   * La sonda devuelve `señalable: null` cuando el viaje del puntero no se pudo hacer
+   * (el emergente quedó fuera de la ventana, o la página se movió por debajo). Eso no
+   * es «se puede señalar»: es «no se ha comprobado», y mezclarlo con los sanos era
+   * firmar `cumple` sobre un emergente que nadie miró. */
+  const sinViaje = (trace.hovers || []).filter(function (h) {
+    const falta = h.senalable === null || h.descartableConEsc === null || h.descartable === null;
+    return falta && !noSenalable(h) && !(noDescartable(h) && tapa(h));
+  });
+  const sanos = (trace.hovers || []).length - rotos.length - eximidos.length - sinViaje.length;
+  if (!titles.length && !rotos.length && !eximidos.length) {
+    if (sanos > 0 || sinViaje.length) {
+      out.push(F("1.4.13", sinViaje.length ? "cumple-parcial" : "cumple", null, [
+        sanos + " contenido(s) emergente(s) se descartan con Esc y se pueden señalar con el puntero." +
+        (sinViaje.length ? " De otros " + sinViaje.length + " no se pudieron comprobar las dos condiciones (el puntero no llegó a viajar hasta ellos, o el emergente no se pudo volver a abrir para probar Esc): " +
+          sinViaje.slice(0, 4).map(function (h) { return h.locator; }).join(", ") + ". Eso queda sin comprobar, no aprobado." : "")
+      ], nodesOf(sinViaje)));
     } else if (!trace.hoverProbado) {
       // No haber encontrado `title` no es haber probado el contenido emergente.
       // Un tooltip hecho con `:hover` en CSS —que no se cierra con Esc y
@@ -275,6 +324,57 @@ export function analyzeViewport(traces) {
     analyzeResize(traces.resize),
     analyzeTextSpacing(traces.spacing),
     analyzeOrientation(traces.orientation),
-    analyzeHoverContent(traces.hover)
+    analyzeHoverContent(traces.hover),
+    analyzeTimeLimits(traces.tiempos)
   );
+}
+
+/**
+ * 2.2.1 Tiempo ajustable — los temporizadores largos, vistos al programarse.
+ *
+ * Lo único que se miraba era `<meta http-equiv="refresh">`, que es el fallo de libro
+ * y que hoy casi nadie usa: medido contra un sitio real, 2.2.1 no emitió nada. El
+ * límite de tiempo de verdad lo pone JavaScript —`setTimeout(cerrarSesion, 900000)`—
+ * y eso no está en el marcado. Envolviendo `setTimeout` y `setInterval` antes de que
+ * cargue la página se anota cada llamada con retardo de 20 s o más, con su retardo y
+ * la línea de pila de donde sale.
+ *
+ * El veredicto es `revisar`, y el motivo está en los datos: un temporizador largo
+ * puede ser un cierre de sesión —y entonces 2.2.1 exige poder apagarlo, ajustarlo o
+ * prorrogarlo— o puede ser un sondeo, una baliza de analítica o la caducidad de una
+ * caché, que al criterio no le importan. Lo que se afirma es lo observado: se programó
+ * un temporizador de tantos segundos, y sale de aquí.
+ */
+export function analyzeTimeLimits(t) {
+  if (!t || !Array.isArray(t.largos)) return [];
+  const seg = function (ms) { return ms >= 60000 ? Math.round(ms / 60000) + " min" : Math.round(ms / 1000) + " s"; };
+  if (!t.largos.length) {
+    return [F("2.2.1", "cumple-parcial", null, [
+      "Con la API de temporizadores envuelta desde antes de cargar, no se ha programado ningún `setTimeout` ni `setInterval` de 20 s o más (" +
+      (t.total || 0) + " temporizador(es) en total, todos por debajo del umbral).",
+      "Queda fuera lo que se programe DESPUÉS del momento de mirar —un cierre de sesión que arranca al iniciar sesión, por ejemplo—, los límites que imponga el servidor y los que vengan de un `<meta http-equiv=\"refresh\">`, que se comprueba aparte. Por eso es `cumple-parcial` y no `cumple`."
+    ])];
+  }
+  /* Y si el temporizador sale de una etiqueta de analítica, se dice.
+   *
+   * Medido contra el sitio real, el único temporizador largo de la muestra es un
+   * `setInterval` de 24 h programado por `gtm.js` de Google Tag Manager: no impone
+   * ningún límite a la persona. La fila es correcta —se programó, y eso es lo que se
+   * afirma— pero sin anotar la procedencia obliga a quien audita a ir a mirar un
+   * bundle de terceros para descartarla. Anotarlo no la esconde: la deja descartable
+   * de un vistazo. */
+  const ANALITICA = /(googletagmanager|google-analytics|gtag\/js|gtm\.js|doubleclick|hotjar|clarity\.ms|segment\.(com|io)|matomo|piwik|newrelic|sentry|intercom|zendesk|facebook\.net\/.*\/fbevents)/i;
+  const deAnalitica = t.largos.filter(function (x) { return ANALITICA.test(String(x.origen || "")); });
+  return [F("2.2.1", "revisar", null, [
+    t.largos.length + " temporizador(es) de 20 s o más programados mientras la página cargaba: " +
+    t.largos.slice(0, 5).map(function (x) {
+      return x.api + " de " + seg(x.ms) + (x.origen ? " (desde " + x.origen + ")" : "");
+    }).join(" · ") + ".",
+    deAnalitica.length === t.largos.length
+      ? "Todos salen de etiquetas de analítica o de herramientas de terceros, que no imponen ningún límite de tiempo a la persona: lo normal es que esto se descarte. Confírmalo y ciérralo."
+      : (deAnalitica.length ? deAnalitica.length + " de ellos salen de etiquetas de analítica o herramientas de terceros, que no imponen límites a la persona." : null),
+    "Si alguno impone un límite de tiempo a la persona —cerrar la sesión, caducar un carrito, pasar de paso en un formulario—, 2.2.1 exige poder apagarlo, ajustarlo hasta diez veces, o prorrogarlo con un aviso de al menos 20 s. Si es un sondeo, una baliza o una caché, el criterio no dice nada. Lo que se ha visto es que se programaron: lo que hacen al cumplirse lo decide quien audita."
+  ].filter(Boolean), t.largos.slice(0, 8).map(function (x) {
+    return { locator: x.api + "(" + seg(x.ms) + ")", name: x.origen || "" };
+  }))];
 }

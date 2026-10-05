@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { analyzeReflow, analyzeResize, analyzeTextSpacing, analyzeOrientation, analyzeHoverContent, analyzeViewport, EXENTOS_REFLUJO } from "../src/viewport.js";
+import { analyzeReflow, analyzeResize, analyzeTextSpacing, analyzeOrientation, analyzeHoverContent, analyzeViewport, analyzeTimeLimits, EXENTOS_REFLUJO } from "../src/viewport.js";
 
 const v = (fs) => fs.map((f) => f.c.n + "/" + f.verdict);
 
@@ -215,4 +215,106 @@ test("las hojas de otro origen ilegibles se declaran en el cumple", () => {
   const out = analyzeHoverContent({ titles: [], hovers: [], hoverProbado: true, disparadores: 2, hojasBloqueadas: 3 });
   assert.equal(out[0].verdict, "cumple");
   assert.match(out[0].evid[0], /3 hoja\(s\) de otro origen/);
+});
+
+/* ── 1.4.13: la excepción del criterio, y la barrera que se puede localizar ── */
+
+const hover = (hs) => analyzeHoverContent({ hovers: hs, hoverProbado: true, disparadores: hs.length });
+const emergente = (loc, extra) => Object.assign({ locator: loc, uid: "html > body > " + loc, descartableConEsc: false, senalable: true, tapa: true }, extra || {});
+
+test("1.4.13: un emergente que no responde a Esc pero NO tapa nada está eximido por el propio criterio", () => {
+  /* El requisito de «descartable» lleva su excepción escrita: «except when the
+   * additional content ... does not obscure or replace other content». Un emergente
+   * hecho con `:hover` en CSS no responde a Esc por definición, así que sin esta
+   * condición TODOS salían como falla grave — incluido el tooltip que aparece en un
+   * hueco reservado y no tapa nada. Medido contra un sitio real: 47 filas de 1.4.13,
+   * y el informe hecho a mano no señalaba ninguna. */
+  const f = hover([emergente("div.campo", { tapa: false })]);
+  assert.deepEqual(v(f), ["1.4.13/cumple-parcial"]);
+  assert.match(f[0].evid[0], /NO tapan ningún contenido/);
+  assert.match(f[0].evid[0], /does not obscure or replace other content/);
+});
+
+test("1.4.13: si tapa contenido, el mismo emergente sin Esc es falla grave", () => {
+  const f = hover([emergente("li.menu", { tapa: true })]);
+  assert.deepEqual(v(f), ["1.4.13/falla"]);
+  assert.equal(f[0].sev, "grave");
+  assert.match(f[0].evid[0], /tapa contenido que había debajo/);
+});
+
+test("1.4.13: si no se pudo medir si tapa, se cuenta como que tapa (a prueba de fallos)", () => {
+  const h = emergente("div.x");
+  delete h.tapa;
+  const f = hover([h]);
+  assert.deepEqual(v(f), ["1.4.13/falla"]);
+  assert.match(f[0].evid[0], /no se pudo comprobar que no lo tape/);
+});
+
+test("1.4.13: «desaparece al llevar el puntero encima» es falla aunque no tape nada", () => {
+  const f = hover([emergente("div.lejos", { tapa: false, descartableConEsc: true, senalable: false })]);
+  assert.deepEqual(v(f), ["1.4.13/falla"]);
+  assert.match(f[0].evid[0], /desaparece al llevar el puntero encima/);
+});
+
+test("1.4.13: lo que no se pudo señalar por no haber podido viajar no se firma como conforme", () => {
+  const f = hover([emergente("div.y", { descartableConEsc: true, senalable: null })]);
+  assert.deepEqual(v(f), ["1.4.13/cumple-parcial"]);
+  assert.match(f[0].evid[0], /no se pudieron comprobar las dos condiciones/);
+  assert.match(f[0].evid[0], /sin comprobar, no aprobado/);
+});
+
+test("1.4.13: la barrera lleva selector, no solo un locator que no distingue", () => {
+  /* Las barreras de esta capa salían al CSV con la columna «Selector» vacía y un
+   * locator repetido: cinco filas diciendo `li.float-left` y nada con que ir a
+   * buscarlas. El `uid` de la sonda ya era un selector canónico; solo no viajaba. */
+  const f = hover([emergente("li.float-left"), emergente("li.float-left")]);
+  assert.equal(f[0].nodes.length, 2);
+  f[0].nodes.forEach(function (n) { assert.ok(n.path && n.path.indexOf("body") !== -1, JSON.stringify(n)); });
+});
+
+/* ── 2.2.1: los temporizadores largos, anotados al programarse ───────────── */
+
+test("2.2.1: un setTimeout de 15 minutos se dice, con su retardo y de dónde sale", () => {
+  /* Lo único que se miraba era `<meta http-equiv="refresh">`, que es el fallo de
+   * libro y hoy casi nadie usa: medido contra un sitio real, 2.2.1 no emitió nada. El
+   * límite de tiempo de verdad lo pone JavaScript, y eso no está en el marcado. */
+  const f = analyzeTimeLimits({ total: 4, largos: [{ api: "setTimeout", ms: 900000, origen: "at https://s/app.js:12:3" }] });
+  assert.equal(f.length, 1);
+  assert.equal(f[0].c.n, "2.2.1");
+  assert.equal(f[0].verdict, "revisar");
+  assert.match(f[0].evid[0], /setTimeout de 15 min/);
+  assert.match(f[0].evid[0], /app\.js:12:3/);
+  // Y no se afirma que sea un límite de tiempo: eso lo decide quien audita.
+  assert.match(f[0].evid[1], /Si es un sondeo, una baliza o una caché, el criterio no dice nada/);
+  assert.equal(f[0].nodes[0].locator, "setTimeout(15 min)");
+});
+
+test("2.2.1: sin temporizadores largos es cumple-parcial, y dice qué queda fuera", () => {
+  const f = analyzeTimeLimits({ total: 7, largos: [] });
+  assert.equal(f[0].verdict, "cumple-parcial");
+  assert.match(f[0].evid[0], /7 temporizador\(es\) en total/);
+  assert.match(f[0].evid[1], /DESPUÉS del momento de mirar/);
+  assert.match(f[0].evid[1], /refresh/, "y recuerda que el meta refresh se comprueba aparte");
+});
+
+test("2.2.1: si la API no se pudo envolver, no se dice nada", () => {
+  assert.deepEqual(analyzeTimeLimits(null), []);
+  assert.deepEqual(analyzeTimeLimits({}), []);
+});
+
+test("2.2.1: un temporizador que sale de Google Tag Manager se marca como descartable", () => {
+  /* Medido contra el sitio real: el único temporizador largo de las diez páginas es un
+   * `setInterval` de 24 h programado por `gtm.js`. La fila es correcta —se programó—
+   * pero sin anotar la procedencia obliga a ir a mirar un bundle de terceros para
+   * descartarla. Anotarlo no la esconde. */
+  const f = analyzeTimeLimits({ total: 9, largos: [{ api: "setInterval", ms: 86400000, origen: "at pd (https://www.googletagmanager.com/gtm.js?id=GTM-X:171:304)" }] });
+  assert.equal(f[0].verdict, "revisar", "sigue saliendo: no se esconde");
+  assert.match(f[0].evid.join(" "), /Todos salen de etiquetas de analítica/);
+  assert.match(f[0].evid.join(" "), /lo normal es que esto se descarte/);
+});
+
+test("2.2.1: un temporizador del propio sitio NO se marca como descartable", () => {
+  const f = analyzeTimeLimits({ total: 3, largos: [{ api: "setTimeout", ms: 900000, origen: "at cerrarSesion (https://mi-sitio.es/app.js:12:3)" }] });
+  assert.ok(!/etiquetas de analítica/.test(f[0].evid.join(" ")), f[0].evid.join(" "));
+  assert.match(f[0].evid.join(" "), /cerrar la sesión/);
 });

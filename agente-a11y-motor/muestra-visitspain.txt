@@ -1,0 +1,12 @@
+# Muestra visitspain.com.cn — 10 páginas únicas
+# (la portada venía dos veces en la lista; se audita una)
+https://www.visitspain.com.cn/
+https://www.visitspain.com.cn/destination.html
+https://www.visitspain.com.cn/itineraries.html
+https://www.visitspain.com.cn/gallery.html
+https://www.visitspain.com.cn/videos.html
+https://www.visitspain.com.cn/destination/autonomous/madrid.html
+https://www.visitspain.com.cn/experience/monuments/teatro_real.html
+https://www.visitspain.com.cn/about_spain/visa-and-entry-requirements.html
+https://www.visitspain.com.cn/itineraries/route-monasteries-ribeira-sacra.html
+https://www.visitspain.com.cn/experience/shopping/shopping-guide-of-spain-main-cities.html

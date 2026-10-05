@@ -255,6 +255,57 @@ export async function viewportAnalyze(target, opts) {
           }
         } catch (e) {}
       });
+      /* 2.2.1 Tiempo ajustable: los temporizadores LARGOS, anotados al programarse.
+       *
+       * El único caso que se miraba era `<meta http-equiv="refresh">`, que es el
+       * fallo de libro y hoy casi nadie usa. El límite de tiempo de verdad lo pone
+       * JavaScript: `setTimeout(cerrarSesion, 900000)`. Eso no está en el marcado ni
+       * se puede leer desde fuera — pero sí se puede anotar envolviendo la API antes
+       * de que cargue la página, igual que con el bloqueo de orientación.
+       *
+       * Se anota el retardo y de dónde sale la llamada (la primera línea de pila que
+       * no es esta envoltura), que es lo que permite ir a buscarla. El umbral son 20
+       * segundos: por debajo no hay límite de tiempo que ajustar, y encima 20 s es el
+       * umbral que el propio criterio usa para el aviso de prórroga.
+       *
+       * La llamada se deja pasar al original: anotar no es bloquear. */
+      window.__a11yTemporizadores = { largos: [], total: 0 };
+      var UMBRAL = 20000;
+      /* De dónde sale la llamada: la primera línea de pila que pertenezca a la
+       * PÁGINA, no a esta envoltura.
+       *
+       * Filtrar por nombre no sirve —la envoltura es anónima, y la primera versión de
+       * esto devolvía su propio marco («at deDonde (<anonymous>:40:29)») en todos los
+       * casos: un dato inútil presentado como la procedencia del temporizador—. Lo
+       * que distingue los marcos es el origen: el código de este script inyectado no
+       * tiene URL, y el de la página sí (la del documento si es un script en línea, o
+       * la del bundle). Así que se devuelve el primer marco con URL. */
+      var deDonde = function () {
+        try {
+          var pila = String(new Error().stack || "").split("\n").slice(1);
+          for (var i = 0; i < pila.length; i++) {
+            var l = pila[i].trim();
+            if (l && /(https?:\/\/|\.m?js[:)])/.test(l)) return l.slice(0, 120);
+          }
+        } catch (e) {}
+        return null;
+      };
+      ["setTimeout", "setInterval"].forEach(function (api) {
+        try {
+          var orig = window[api];
+          if (typeof orig !== "function") return;
+          window[api] = function (fn, ms) {
+            try {
+              window.__a11yTemporizadores.total++;
+              var n = Number(ms);
+              if (isFinite(n) && n >= UMBRAL && window.__a11yTemporizadores.largos.length < 20) {
+                window.__a11yTemporizadores.largos.push({ api: api, ms: n, origen: deDonde() });
+              }
+            } catch (e) {}
+            return orig.apply(this, arguments);
+          };
+        } catch (e) {}
+      });
     });
 
     await abrir(page);
@@ -482,38 +533,183 @@ export async function viewportAnalyze(target, opts) {
       const hovers = [];
       for (const d of ((disp && disp.disparadores) || [])) {
         try {
+          /* Lo que APARECE se compara por elemento, no por elemento-y-rectángulo.
+           *
+           * `__visibleHuella()` devuelve `uid@x,y,ancho,alto`, y la comparación usaba
+           * la cadena entera. Con eso, cualquier reajuste de maquetación cuenta como
+           * contenido nuevo: al desplegarse una pista, el bloque de debajo baja treinta
+           * píxeles, cambia su clave y pasa por «emergente». Medido: el viaje del
+           * puntero se iba al centro de un bloque desplazado —no al emergente— y de
+           * ahí salía un «desaparece al llevar el puntero encima» sobre una pista que
+           * se comporta perfectamente.
+           *
+           * Y al revés, lo que SIGUE visible también se comparaba por la cadena
+           * entera: un emergente que se queda abierto tras el Esc pero se mueve un
+           * píxel parecía haberse cerrado, y el criterio lo daba por descartable. Esa
+           * era la peligrosa: absolvía sin haber comprobado nada. */
+          const soloUid = function (x) { return String(x).split("@")[0]; };
           const antes = await evalIn(page, "return __visibleHuella();");
+          const antesUid = {};
+          antes.forEach(function (x) { antesUid[soloUid(x)] = true; });
           await page.hover(d.uid, { timeout: 1500 });
           await page.waitForTimeout(220);
           const durante = await evalIn(page, "return __visibleHuella();");
-          const nuevos = durante.filter(function (x) { return antes.indexOf(x) === -1; });
+          const nuevos = durante.filter(function (x) { return !antesUid[soloUid(x)]; });
           if (!nuevos.length) { await page.mouse.move(0, 0); continue; }
+          const nuevosUid = nuevos.map(soloUid);
+          const sigueVisible = function (lista) {
+            const vis = {};
+            lista.forEach(function (x) { vis[soloUid(x)] = true; });
+            return nuevosUid.filter(function (u) { return vis[u]; });
+          };
 
-          // ¿Se descarta con Esc, sin mover el puntero?
-          await page.keyboard.press("Escape");
-          await page.waitForTimeout(180);
-          const trasEsc = await evalIn(page, "return __visibleHuella();");
-          const sigue = nuevos.filter(function (x) { return trasEsc.indexOf(x) !== -1; });
 
-          // ¿Se puede señalar? El emergente tiene que tocar o solapar al
-          // disparador: si hay un hueco, el puntero lo pierde al ir hacia él.
-          const senalable = await evalIn(page, `
-            var t=document.querySelector(__arg.uid); if(!t) return null;
-            var tr=t.getBoundingClientRect();
+          /* ¿TAPA algo? La condición está en el propio criterio y no se miraba.
+           *
+           * El requisito de «descartable» de 1.4.13 lleva su excepción escrita:
+           * «except when the additional content ... does not obscure or replace other
+           * content». Un tooltip que aparece en un hueco reservado debajo de un campo
+           * no tapa nada y no necesita Esc; un submenú desplegable sí tapa, y
+           * entonces Esc es obligatorio. Sin esta cuenta, cualquier emergente hecho
+           * con `:hover` en CSS —que por definición no responde a Esc— salía como
+           * falla grave, incluido el que la excepción exime.
+           *
+           * Se mide donde se puede medir: fuera del flujo (absolute/fixed/sticky, que
+           * es lo que permite solapar) y con algo pintado DEBAJO de su centro que no
+           * sea suyo ni el propio disparador.
+           *
+           * Va DESPUÉS del Esc a propósito, y es seguro: si el Esc cerró el emergente
+           * aquí no hay nada que medir, pero tampoco hace falta —«descartable» ya se
+           * cumple—; y si no lo cerró, sigue abierto y se mide bien. Donde `tapa`
+           * importa, el emergente está delante. */
+          const tapa = await evalIn(page, `
             var uids=__arg.nuevos.map(function(s){ return s.split('@')[0]; });
+            var t=document.querySelector(__arg.uid);
             for(var i=0;i<uids.length;i++){
               var e=document.querySelector(uids[i]); if(!e) continue;
-              if(t.contains(e)) return true;                       // dentro: se alcanza
+              var fuera=false, n=e;
+              while(n && n.nodeType===1){
+                var p=getComputedStyle(n).position;
+                if(p==='absolute'||p==='fixed'||p==='sticky'){ fuera=true; break; }
+                n=n.parentElement;
+              }
+              if(!fuera) continue;
               var r=e.getBoundingClientRect();
-              var gapX=Math.max(0, Math.max(tr.left-r.right, r.left-tr.right));
-              var gapY=Math.max(0, Math.max(tr.top-r.bottom, r.top-tr.bottom));
-              if(gapX<=2 && gapY<=2) return true;                  // adyacente
+              if(r.width<4||r.height<4) continue;
+              var cx=Math.min(Math.max(r.left+r.width/2,1), innerWidth-1);
+              var cy=Math.min(Math.max(r.top+r.height/2,1), innerHeight-1);
+              var pila=[];
+              try{ pila=document.elementsFromPoint(cx,cy)||[]; }catch(err){ pila=[]; }
+              for(var k=0;k<pila.length;k++){
+                var o=pila[k];
+                if(o===e||e.contains(o)||o.contains(e)) continue;
+                if(o===document.body||o===document.documentElement) continue;
+                if(t && (o===t||t.contains(o))) continue;
+                var txt=(o.textContent||'').trim();
+                if(txt || o.getClientRects().length) return true;
+              }
             }
             return false;`, { uid: d.uid, nuevos: nuevos.slice(0, 8) });
 
+          /* ¿Se puede SEÑALAR? Se mueve el puntero de verdad, paso a paso.
+           *
+           * Esto era aritmética de rectángulos: valía si el emergente tocaba al
+           * disparador o era descendiente suyo. Lo segundo es falso de una forma que
+           * la sonda cazó en el primer montaje: un globo `position:absolute` colocado
+           * 40 px por debajo de su disparador ES descendiente suyo, así que el atajo
+           * `t.contains(e)` lo daba por alcanzable — y no lo es, porque al cruzar el
+           * hueco el puntero no está sobre ninguno de los dos, el `:hover` se cae y el
+           * globo desaparece antes de llegar. Es el fallo clásico de 1.4.13 y el atajo
+           * lo absolvía.
+           *
+           * Ahora se viaja: se vuelve a abrir el emergente y se mueve el ratón hasta
+           * su centro en pasos intermedios, como lo movería una mano. Si al llegar
+           * sigue visible, se puede señalar. Eso no es una heurística: es la prueba. */
+          let senalable = null;
+          try {
+            await page.hover(d.uid, { timeout: 1500 });
+            await page.waitForTimeout(180);
+            /* Se entra por el punto del emergente MÁS CERCANO al disparador, no por
+             * su centro.
+             *
+             * Apuntar al centro traza una diagonal, y una diagonal se sale del
+             * disparador por el lado antes de entrar en el emergente. Medido paso a
+             * paso en Chromium sobre un globo que pega perfectamente con su
+             * disparador (`top:100%`, tocándose en y=36): al tercer paso el puntero
+             * iba por (101,34) —todavía a la altura del disparador pero 1 px pasado su
+             * borde derecho—, el `:hover` se caía y el globo desaparecía. Un emergente
+             * impecable salía como «no se puede señalar».
+             *
+             * Una mano no hace eso: baja al emergente y luego se mueve por dentro. Así
+             * que primero se entra por el punto más próximo (el centro del disparador
+             * recortado dentro del rectángulo del emergente) y después, ya dentro, se
+             * va al centro. */
+            const destino = await evalIn(page, `
+              var t=document.querySelector(__arg.uid);
+              var tr=t?t.getBoundingClientRect():null;
+              var uids=__arg.nuevos.map(function(s){ return s.split('@')[0]; });
+              for(var i=0;i<uids.length;i++){
+                var e=document.querySelector(uids[i]); if(!e) continue;
+                var r=e.getBoundingClientRect();
+                if(r.width<4||r.height<4) continue;
+                if(r.bottom<0||r.top>innerHeight||r.right<0||r.left>innerWidth) continue;
+                var ox=tr?tr.left+tr.width/2:r.left+r.width/2;
+                var oy=tr?tr.top+tr.height/2:r.top+r.height/2;
+                var ins=Math.min(3, r.width/3, r.height/3);
+                var clamp=function(v,a,b){ return Math.min(Math.max(v,a),b); };
+                return { uid: uids[i],
+                  ex: clamp(clamp(ox, r.left+ins, r.right-ins), 1, innerWidth-1),
+                  ey: clamp(clamp(oy, r.top+ins, r.bottom-ins), 1, innerHeight-1),
+                  cx: clamp(r.left+r.width/2, 1, innerWidth-1),
+                  cy: clamp(r.top+r.height/2, 1, innerHeight-1) };
+              }
+              return null;`, { uid: d.uid, nuevos: nuevos.slice(0, 8) });
+            if (destino) {
+              await page.mouse.move(destino.ex, destino.ey, { steps: 10 });
+              await page.waitForTimeout(140);
+              let vivo = sigueVisible(await evalIn(page, "return __visibleHuella();")).length > 0;
+              if (vivo) {
+                // Ya dentro: moverse por el emergente no debería cerrarlo.
+                await page.mouse.move(destino.cx, destino.cy, { steps: 6 });
+                await page.waitForTimeout(140);
+                vivo = sigueVisible(await evalIn(page, "return __visibleHuella();")).length > 0;
+              }
+              senalable = vivo;
+            }
+          } catch (e) { senalable = null; }
+
+          /* Y el Esc va DESPUÉS del viaje, reabriendo el emergente.
+           *
+           * Estaba al revés, y el orden importaba: hay sitios cuyo manejador de Esc
+           * deja el emergente cerrado con una clase («.cerrado .b{display:none}»), así
+           * que después del Esc ya no se puede volver a abrir y el viaje del puntero
+           * no se podía hacer — quedaba sin comprobar justo en los emergentes que SÍ
+           * se portan bien con el teclado. Haciendo el viaje primero y reabriendo
+           * después, las dos condiciones se miden sobre un emergente recién abierto.
+           *
+           * El Esc se prueba sin mover el puntero desde que el emergente aparece, que
+           * es lo que pide el criterio: «without moving pointer hover or keyboard
+           * focus». Si no se consigue reabrir, no se afirma nada: `null`. */
+          let descartable = null;
+          try {
+            await page.mouse.move(0, 0);
+            await page.waitForTimeout(140);
+            await page.hover(d.uid, { timeout: 1500 });
+            await page.waitForTimeout(200);
+            const reabierto = sigueVisible(await evalIn(page, "return __visibleHuella();"));
+            if (reabierto.length) {
+              await page.keyboard.press("Escape");
+              await page.waitForTimeout(180);
+              descartable = sigueVisible(await evalIn(page, "return __visibleHuella();")).length === 0;
+            }
+          } catch (e) { descartable = null; }
+
           hovers.push({
             locator: d.locator, uid: d.uid, regla: d.regla,
-            aparece: nuevos.length, descartableConEsc: sigue.length === 0, senalable: senalable === true
+            aparece: nuevos.length, descartableConEsc: descartable,
+            // `null` es «no se pudo viajar»: no se afirma ni que sí ni que no.
+            senalable: senalable === null ? null : senalable === true,
+            tapa: tapa === true
           });
           await page.mouse.move(0, 0);
           await page.waitForTimeout(120);
@@ -527,11 +723,19 @@ export async function viewportAnalyze(target, opts) {
       });
     }, null);
 
-    const findings = analyzeViewport({ reflow: reflow, resize: resize, spacing: spacing, orientation: orientation, hover: hover });
+    /* 2.2.1: lo que la API envuelta anotó mientras la página cargaba y se medía. */
+    const tiempos = await fase("temporizadores", function () {
+      return page.evaluate(function () {
+        var t = window.__a11yTemporizadores || null;
+        return t ? { largos: t.largos || [], total: t.total || 0 } : null;
+      });
+    }, null);
+
+    const findings = analyzeViewport({ reflow: reflow, resize: resize, spacing: spacing, orientation: orientation, hover: hover, tiempos: tiempos });
     return {
       url: target.url || null,
       findings: findings,
-      trazas: { reflow: reflow, resize: resize, spacing: spacing, orientation: orientation, hover: hover },
+      trazas: { reflow: reflow, resize: resize, spacing: spacing, orientation: orientation, hover: hover, tiempos: tiempos },
       errores: errores,
       summary: {
         falla: findings.filter(function (f) { return f.verdict === "falla"; }).length,

@@ -319,3 +319,191 @@ export function analyzeContextChange(eventos, noSondados, censo) {
   });
   return out;
 }
+
+/**
+ * 2.2.2 Poner en pausa, detener u ocultar — a partir de lo OBSERVADO.
+ *
+ * La medición sobre el render ve lo que el CSS declara: `animationName`,
+ * `animationIterationCount`, `<marquee>`, `video[autoplay][loop]`. Lo que mueve
+ * JavaScript no declara nada, y es la mayoría: medido en un sitio real, el
+ * carrusel de la portada pasaba sin que el agente lo viera y en su lugar se acusó
+ * a un icono con `fadeInDown`, que era lo único escrito en el CSS.
+ *
+ * Aquí el dato viene de un MutationObserver que ha estado mirando la página sin
+ * tocarla, así que lo que se afirma es lo que pasó: tal elemento cambió N veces
+ * entre el segundo X y el segundo Y sin que nadie hiciera nada.
+ *
+ * Los dos umbrales son los del criterio. Repartido más de CINCO segundos es lo que
+ * 2.2.2 llama «lasts more than five seconds», y entonces, si no hay ningún control
+ * para pararlo en toda la página, es una falla de nivel A. Entre 2,5 y 5 segundos
+ * se observó movimiento pero no se llegó al umbral: eso se dice y se deja a
+ * revisar, porque la ventana de observación se acabó, no el movimiento.
+ */
+export function analyzeAutoMovement(obs) {
+  if (!obs || obs.error || !Array.isArray(obs.movidos)) return [];
+  /* Haber mirado y no haber visto nada NO es lo mismo que no haber mirado, y
+   * callarse hace que se parezcan.
+   *
+   * Esto devolvía lista vacía cuando la observación no encontraba movimiento, así que
+   * en el informe no quedaba ni rastro de que se hubiera observado. Medido contra un
+   * sitio real: 2.2.2 salió «sin determinar» en las diez páginas y lo único que había
+   * escrito era un icono con `fadeInDown` que vio la capa de CSS — leyendo eso no hay
+   * forma de saber si la observación miró ocho segundos y la página estaba quieta, o
+   * si no llegó a correr. Ahora lo dice, con los segundos que miró y con lo que queda
+   * fuera por haber mirado solo esa ventana. */
+  if (!obs.movidos.length) {
+    const seg0 = ((obs.ms || 0) / 1000).toFixed(1);
+    return [F("2.2.2", "cumple-parcial", null, [
+      "Observada la página " + seg0 + " s SIN tocar nada: ningún elemento cambia por su cuenta de forma repetida.",
+      "Queda fuera lo que tarde más de " + seg0 + " s en empezar a moverse, lo que solo se mueva al interactuar, lo que se mueva dentro de un marco o un vídeo —que no emiten cambios en este documento— y el movimiento pintado en un <canvas>. Por eso es `cumple-parcial` y no `cumple`."
+    ])];
+  }
+  const controles = obs.controles || [];
+  const seg = function (ms) { return (ms / 1000).toFixed(1); };
+  const comoSeLlama = function (x) {
+    return x.loc + " (" + x.n + " cambios de «" + x.tipo + "» entre el segundo " + seg(x.primero) + " y el " + seg(x.ultimo) + ")";
+  };
+  /* «Dura más de cinco segundos» no es «el primero y el último cambio distan cinco
+   * segundos»: es que SIGA moviéndose cuando dejamos de mirar.
+   *
+   * Lo escribí como la distancia entre el primer y el último cambio y la sonda lo
+   * cazó enseguida: un carrusel que pasa de diapositiva cada 1,2 s observado durante
+   * 7 s tiene su primer cambio en el segundo 1,2 y el último en el 6,0 —4,8 s de
+   * distancia— y salía clasificado como movimiento que «no llega al umbral». No es
+   * que no llegara: es que se acabó la ventana. Lo que distingue los dos casos es si
+   * el último cambio cae junto al final de la observación, contando con que entre dos
+   * cambios pasa un intervalo. */
+  const sigueAlFinal = function (x) {
+    const intervalo = x.n > 1 ? (x.ultimo - x.primero) / (x.n - 1) : (x.ultimo - x.primero);
+    return x.ultimo >= obs.ms - intervalo - 500;
+  };
+  const sostenidos = obs.movidos.filter(function (x) { return x.ultimo >= 5000 && sigueAlFinal(x); });
+  const breves = obs.movidos.filter(function (x) { return !(x.ultimo >= 5000 && sigueAlFinal(x)); });
+  const out = [];
+  const nodos = function (lista) { return lista.slice(0, 8).map(function (x) { return { locator: x.loc, name: "", path: x.uid }; }); };
+  const conQue = controles.length
+    ? " En la página hay " + controles.length + " control(es) que podrían servir para pararlo (" +
+      controles.slice(0, 3).map(function (c) { return c.loc + ": «" + c.motivo + "»"; }).join(", ") +
+      "): comprueba que de verdad paren ESTO y que se alcancen con el teclado."
+    : " No se ha encontrado en toda la página ningún control de pausa, parada u ocultación (ni por nombre, ni por clase, ni controles nativos de vídeo o audio).";
+  if (sostenidos.length) {
+    out.push(F("2.2.2", controles.length ? "revisar" : "falla", controles.length ? null : "grave", [
+      "Observando la página " + seg(obs.ms) + " s SIN tocar nada, " + sostenidos.length +
+      " elemento(s) cambian solos de forma sostenida: " + sostenidos.slice(0, 4).map(comoSeLlama).join(" · ") + ".",
+      "El movimiento arranca solo y se mantiene más de cinco segundos, que es el umbral de 2.2.2." + conQue
+    ], nodos(sostenidos)));
+  }
+  if (breves.length) {
+    out.push(F("2.2.2", "revisar", null, [
+      "Se ha observado movimiento automático que NO llega al umbral de cinco segundos dentro de la ventana de observación (" +
+      seg(obs.ms) + " s): " + breves.slice(0, 4).map(comoSeLlama).join(" · ") + ".",
+      "Puede ser contenido que se carga al entrar y se queda quieto —y entonces 2.2.2 no dice nada— o movimiento que sigue más allá de lo que se miró. Lo distingue mirar la página unos segundos más." + conQue
+    ], nodos(breves)));
+  }
+  return out;
+}
+
+/**
+ * 2.1.4 Atajos de teclado de un carácter — a partir de lo PULSADO.
+ *
+ * El detector del ámbito de página solo ve los manejadores en línea
+ * (`onkeydown="…"`), y hoy nadie los escribe así: un `addEventListener` dentro de un
+ * bundle no está en el marcado. Resultado medido contra un sitio real: 2.1.4 era uno
+ * de los siete criterios que no miraba ninguna capa, ni para bien ni para mal.
+ *
+ * Aquí el dato viene de pulsar la tecla con el foco en el cuerpo del documento —fuera
+ * de cualquier campo— y mirar si pasa algo. Y lo que se puede concluir es exactamente
+ * una de las tres salidas del criterio: si la tecla actúa con el foco en el cuerpo,
+ * el atajo NO está limitado a un control. Las otras dos salidas —poder desactivarlo y
+ * poder reasignarlo— viven en las preferencias del sitio y no se pueden comprobar
+ * desde fuera, así que el veredicto es `revisar` y no `falla`: queda dicho qué tecla
+ * hace qué, que es lo que una persona necesita para ir a buscar el interruptor.
+ */
+export function analyzeCharKeyShortcuts(res) {
+  if (!res || !Array.isArray(res.probadas) || !res.probadas.length) return [];
+  const probadas = res.probadas.map(function (t) { return "«" + t + "»"; }).join(", ");
+  const cola = " Se han probado " + res.probadas.length + " tecla(s) (" + probadas +
+    "), no todas: un atajo con otra tecla no se habría visto, así que esto no cierra el criterio por sí solo.";
+  const activas = res.activas || [];
+  if (!activas.length) {
+    return [F("2.1.4", "cumple-parcial", null, [
+      "Con el foco en el cuerpo del documento, ninguna de las teclas sueltas probadas hace nada: ni navega, ni mueve el foco, ni cambia lo que se ve, ni desplaza la página." + cola
+    ])];
+  }
+  return [F("2.1.4", "revisar", null, [
+    activas.length + " tecla(s) suelta(s) actúan con el foco en el CUERPO del documento, sin exigir Ctrl, Alt, Cmd ni Mayúsculas: " +
+    activas.slice(0, 6).map(function (a) { return "«" + a.tecla + "» " + a.cambios.join(" y "); }).join(" · ") + ".",
+    "Eso descarta una de las tres salidas que da 2.1.4: el atajo no está limitado al foco de un control, actúa en toda la página. Quedan las otras dos —que se pueda desactivar o reasignar—, y eso vive en las preferencias del sitio: compruébalo ahí. Si no hay ni interruptor ni reasignación, es una falla de nivel A." + cola
+  ], activas.slice(0, 8).map(function (a) { return { locator: "tecla «" + a.tecla + "»", name: a.cambios.join("; ") }; }))];
+}
+
+/**
+ * 4.1.3 Mensajes de estado — a partir del texto que APARECE al interactuar.
+ *
+ * El criterio ya se dictaminaba para un caso: el error de formulario, con el envío
+ * forzado y la comparación de las regiones live antes y después. Pero en un sitio sin
+ * formularios con error eso no emite nada, y 4.1.3 cubre mucho más: «información
+ * sobre el éxito o el resultado de una acción, el estado de espera, el progreso de un
+ * proceso o la existencia de errores». Medido contra un sitio real: 4.1.3 fue uno de
+ * los siete criterios de los que no se dijo ni una palabra.
+ *
+ * Aquí el dato viene de los clics que la prueba dinámica ya hacía sobre los
+ * `[aria-expanded]`: texto que apareció en OTRO sitio de la página —descontando el
+ * panel que el propio control declara con `aria-controls`, que es contenido y no un
+ * mensaje de estado—, sin que el foco se mueva hasta él y sin que ninguna región live
+ * cambie de contenido. Ese es exactamente el patrón que 4.1.3 prohíbe.
+ *
+ * El veredicto es `revisar`, no `falla`, y el motivo es honesto: que ese texto SEA un
+ * mensaje de estado —y no un trozo de interfaz que salió a la vez— lo decide alguien
+ * leyéndolo. Lo que se afirma es lo observado: apareció, el foco no fue ahí, y ninguna
+ * región de estado se enteró.
+ */
+export function analyzeStatusMessages(eventos, ctx) {
+  const list = eventos || [];
+  const c = ctx || {};
+  if (!list.length) {
+    /* No haber tenido nada que pulsar no es «no hay mensajes de estado».
+     *
+     * Es la tercera vez que aparece el mismo defecto —primero en 2.2.2, luego al dejar
+     * 1.2.1 y 1.2.3 en blanco— y aquí se vio medido: la página de vídeos del sitio
+     * real no tiene NI UN `[aria-expanded]`, así que la fase no pulsó nada, no hubo
+     * candidatos, y 4.1.3 salió en blanco. Blanco no es «comprobado».
+     *
+     * Si no se sondeó nada, se dice. Y se dice también cuántas regiones de estado
+     * declara la página, que es el dato que de verdad orienta: cero regiones en un
+     * sitio con filtros y formularios es una pista fuerte, aunque no sea un veredicto. */
+    if (c.expandibles === 0 || c.expandibles == null) {
+      if (c.regiones == null) return [];
+      return [F("4.1.3", "revisar", null, [
+        "No se ha podido observar ningún mensaje de estado: la prueba dinámica no encontró controles expandibles que pulsar" +
+        (c.expandibles === 0 ? " (0 elementos con `aria-expanded`)" : "") + ".",
+        c.regiones
+          ? "La página declara " + c.regiones + " región(es) de estado (`role=status` / `role=alert` / `aria-live`): comprueba con un lector que lo que anuncian es lo que la persona necesita oír cuando algo cambia."
+          : "Y la página NO declara ninguna región de estado. Si al filtrar, buscar, enviar un formulario o navegar aparece algún mensaje de resultado, progreso o error, no hay nada que lo anuncie: eso sí sería una falla de 4.1.3. Compruébalo interactuando."
+      ])];
+    }
+    return [F("4.1.3", "cumple-parcial", null, [
+      "Se pulsaron " + c.expandibles + " control(es) expandible(s) y ninguno hizo aparecer texto nuevo fuera de su propio panel: no hay mensajes de estado desatendidos en lo que se ha podido probar.",
+      "Queda fuera lo que aparezca al filtrar, buscar, enviar un formulario o navegar, que esta prueba no recorre." +
+      (c.regiones ? " La página declara " + c.regiones + " región(es) de estado." : " La página no declara ninguna región de estado.")
+    ])];
+  }
+  const mudos = list.filter(function (e) { return !e.liveCambio && !e.focoDentro; });
+  if (!mudos.length) {
+    const conLive = list.filter(function (e) { return e.liveCambio; }).length;
+    return [F("4.1.3", "cumple-parcial", null, [
+      "Al pulsar los controles expandibles apareció texto nuevo en " + list.length + " caso(s), y en todos ellos o cambió el contenido de una región de estado (" +
+      conLive + ") o el foco se movió hasta el texto nuevo: ninguno queda sin anunciar.",
+      "Queda por juzgar si ese texto es de verdad un mensaje de estado y si lo que anuncia la región es lo que la persona necesita oír; eso se comprueba con un lector de pantalla."
+    ])];
+  }
+  const sinRegiones = mudos.every(function (e) { return !e.regiones; });
+  return [F("4.1.3", "revisar", null, [
+    mudos.length + " caso(s) en los que, al pulsar un control, apareció texto nuevo FUERA del panel que ese control gobierna, sin que el foco se moviera hasta él y sin que cambiara ninguna región de estado: " +
+    mudos.slice(0, 4).map(function (e) {
+      return "«" + e.locator + "» → «" + (e.textos || []).slice(0, 2).join(" / ").slice(0, 100) + "»";
+    }).join(" · ") + ".",
+    "Si ese texto informa del resultado de la acción, del progreso o de un error, es un mensaje de estado y 4.1.3 exige que se exponga con `role=\"status\"`, `role=\"alert\"` o `aria-live`, para que se anuncie sin robar el foco. Si es otra cosa —un trozo de interfaz que salió a la vez—, el criterio no dice nada: lo decide leerlo." +
+    (sinRegiones ? " En estas páginas no hay NINGUNA región de estado declarada, así que si hay mensajes de estado, no se anuncian." : "")
+  ], mudos.slice(0, 8).map(function (e) { return { locator: e.locator, name: (e.textos || [])[0] || "", path: (e.uids || [])[0] }; }))];
+}

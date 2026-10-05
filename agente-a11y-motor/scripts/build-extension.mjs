@@ -33,15 +33,19 @@ const MODULOS = [
   "verdicts.js",
   "engine.js",
   "measure.browser.js",
+  // El cuaderno va después del motor y de `verdicts`, que es de donde saca los
+  // criterios y el vocabulario, y ANTES de `page-audit`, que le pide la lista de
+  // reproductores y el detector de alternativas en texto. Ese orden lo impuso una
+  // corrección: había dos listas de plataformas de vídeo, una aquí y otra allí, y la
+  // que reconocía las chinas era solo la del cuaderno — con lo que 1.2.1, 1.2.2 y
+  // 1.2.3 salían en blanco en un sitio chino mientras 1.2.4 y 1.2.5 sí lo veían.
+  // Ahora la lista es una y vive en el cuaderno, así que tiene que cargarse primero.
+  "cuaderno.js",
   "page-audit.js",
   "coherence.js",
   "viewport.js",
   "dynamic.js",
   "axe-map.js",
-  // El cuaderno va después del motor y de `verdicts`, que es de donde saca los
-  // criterios y el vocabulario. En la extensión sirve para lo mismo que fuera:
-  // decir qué criterios de juicio no vienen al caso en la página que se mira.
-  "cuaderno.js",
   "oaw-letters.js",
   "report-oaw.js",
   "sampling.js",

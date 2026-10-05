@@ -4,7 +4,7 @@ import { DOMParser } from "linkedom";
 import {
   normalizarHref, normalizarNombre, ordenRelativo, fingerprintPage,
   analyzeNavConsistency, analyzeIdConsistency, analyzeHelpConsistency, analyzeMultipleWays, analyzeCoherence,
-  FINGERPRINT_BODY
+  FINGERPRINT_BODY, FN_SRC, FN_FUENTES, FN_DECLARADAS
 } from "../src/coherence.js";
 
 const v = (fs) => fs.map((f) => f.c.n + "/" + f.verdict);
@@ -372,4 +372,149 @@ test("regresión: la ruta distingue mayúsculas; el host, no (3.2.4)", () => {
     huella(nav("Área privada", "/servicios"), "http://s/b")
   ]);
   assert.ok(mismo.some((f) => f.c.n === "3.2.4" && f.verdict === "falla"), JSON.stringify(v(mismo)));
+});
+
+/* ── El código que viaja a la página tiene que llevarse TODO lo que usa ──── */
+
+/**
+ * Este guard existe porque faltaba `COMPARTIR_RE`.
+ *
+ * `FN_SRC` declaraba a mano `AYUDA`, `MAPA_RE` e `INDICE_RE`, y `tipoAyuda` usa
+ * además `COMPARTIR_RE` en la primera línea de la rama de `mailto:`/`tel:`. Dentro
+ * de la página eso es un `ReferenceError`, así que la huella entera se caía en
+ * cuanto había un correo o un teléfono enlazado —el pie de casi cualquier sitio
+ * español—, el error se recogía en `errores` y la huella quedaba en `null`. Sin
+ * huellas, la comparación entre páginas no compara nada: 2.4.5, 3.2.3, 3.2.4 y
+ * 3.2.6 desaparecían del informe sin que nadie lo dijera.
+ *
+ * El fallo no era la constante que falta: era que la lista se escribía a mano. Esto
+ * lee los identificadores en MAYÚSCULAS de las funciones que se serializan y exige
+ * que cada uno esté declarado en el código inyectado o sea un global del navegador.
+ */
+test("el código inyectado de la huella no deja ningún identificador libre", () => {
+  const GLOBALES = ["URL", "JSON", "NaN", "RegExp", "Infinity", "Math", "Node", "Object", "Array", "String", "Number", "Boolean", "Promise", "Set", "Map", "DOCUMENT_POSITION_PRECEDING", "DOCUMENT_POSITION_FOLLOWING"];
+  const sinLiterales = (src) => src
+    .replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ")
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""').replace(/'(?:[^'\\]|\\.)*'/g, "''")
+    .replace(/`(?:[^`\\]|\\.)*`/g, "``");
+  const usados = new Set();
+  FN_FUENTES.forEach(function (f) {
+    (sinLiterales(f).match(/\b[A-Z][A-Z0-9_]{2,}\b/g) || []).forEach(function (n) { usados.add(n); });
+  });
+  const libres = [...usados].filter(function (n) {
+    if (GLOBALES.indexOf(n) !== -1) return false;
+    if (FN_DECLARADAS.indexOf(n) !== -1) return false;
+    return !new RegExp("\\b(?:var|let|const|function)\\s+" + n + "\\b").test(FN_SRC);
+  });
+  assert.deepEqual(libres, [], "el código inyectado usa identificadores que no declara: " + libres.join(", ") +
+    " — dentro de la página eso es un ReferenceError y la huella se cae entera");
+});
+
+/* ── El léxico de ayuda no es solo español ──────────────────────────────── */
+
+/**
+ * Medido en una auditoría real: la versión china del portal de turismo de España.
+ * El léxico de 3.2.6 solo tenía castellano e inglés, así que no se reconocía NINGÚN
+ * mecanismo de ayuda. En ese sitio resultó que de verdad no hay ninguno, así que el
+ * veredicto («no se ha detectado ayuda, confírmalo a mano») era correcto por
+ * casualidad; con un «联系我们» en el pie habríamos dicho lo mismo sobre una página
+ * que sí la tiene.
+ */
+test("el léxico de ayuda reconoce chino, gallego, catalán y portugués", () => {
+  const pie = (enlaces) => '<html lang="zh-CN"><head><title>t</title></head><body><main><h1>x</h1></main><footer>' +
+    enlaces.map(function (e) { return '<a href="' + e[1] + '">' + e[0] + "</a>"; }).join("") + "</footer></body></html>";
+  const tipos = (enlaces) => huella(pie(enlaces), "http://s/a").ayuda.map(function (a) { return a.tipo; });
+  assert.deepEqual(tipos([["联系我们", "/lianxi.html"]]), ["contacto"], "联系我们 es «contáctanos»");
+  assert.deepEqual(tipos([["帮助", "/bangzhu.html"]]), ["ayuda"]);
+  assert.deepEqual(tipos([["常见问题", "/wenti.html"]]), ["faq"]);
+  assert.deepEqual(tipos([["在线客服", "/kefu.html"]]), ["chat"]);
+  assert.deepEqual(tipos([["Axuda", "/axuda.html"]]), ["ayuda"], "gallego");
+  assert.deepEqual(tipos([["Contacte", "/contacte.html"]]), ["contacto"], "catalán");
+  assert.deepEqual(tipos([["Perguntas frequentes", "/pf.html"]]), ["faq"], "portugués");
+  // Y lo que NO es ayuda sigue sin serlo.
+  assert.deepEqual(tipos([["分享", "mailto:?subject=x"]]), [], "«compartir» en chino tampoco es un mecanismo de ayuda");
+});
+
+test("2.4.5: el mapa del sitio y el buscador se reconocen en chino", () => {
+  const doc = '<html lang="zh-CN"><head><title>t</title></head><body><main><h1>x</h1></main>' +
+    '<footer><a href="/zhantu.html">网站地图</a></footer>' +
+    '<form role="search"><input type="search" aria-label="搜索"></form></body></html>';
+  const h = huella(doc, "http://s/a");
+  const f = analyzeMultipleWays([h, huella(doc, "http://s/b")]);
+  const w = f.find(function (x) { return x.c.n === "2.4.5"; });
+  assert.ok(w, "2.4.5 tiene que dictaminarse");
+  assert.match(String((w.evid || [])[0]), /mapa web/, JSON.stringify(w.evid));
+});
+
+/* ── 3.2.4: el mismo destino no es siempre el mismo componente ───────────── */
+
+const pagina324 = (body, url) => huella('<html lang="es"><head><title>t</title></head><body>' + body + "</body></html>", url);
+const NAV324 = '<header><nav><a class="menus_item" href="/experience.html">Explorar España</a><a class="menus_item" href="/itineraries.html">Rutas</a></nav></header>';
+
+test("3.2.4: el menú y un «+ más» del contenido al mismo destino NO son una falla", () => {
+  /* El patrón más común de la web entera salía como falla: el menú llama a una
+   * página por su nombre y una tarjeta la enlaza con «+ más». Son dos componentes
+   * distintos que van al mismo sitio, no un componente identificado de dos maneras.
+   * Medido contra un sitio real: 7 destinos acusados, todos del mismo par —el nombre
+   * del menú y el «+ 更多» de una tarjeta— y el informe hecho a mano no señalaba
+   * ninguno. */
+  const f = analyzeIdConsistency([
+    pagina324(NAV324 + '<main><h1>Inicio</h1><section><h2>Experiencias</h2><a class="mas" href="/experience.html">+ más</a></section></main>', "http://s/"),
+    pagina324(NAV324 + "<main><h1>Rutas</h1><p>x</p></main>", "http://s/itineraries.html"),
+    pagina324(NAV324 + "<main><h1>Exp</h1><p>x</p></main>", "http://s/experience.html")
+  ]);
+  assert.ok(!f.some((x) => x.verdict === "falla"), JSON.stringify(f.map((x) => x.verdict + ": " + x.evid)));
+  // Y no se calla: se dice que ese destino se nombra distinto según desde dónde.
+  assert.match(f[0].evid.join(" "), /se nombran distinto según desde dónde se enlacen/);
+});
+
+test("3.2.4: el MISMO ítem del menú renombrado en otra página sigue siendo falla", () => {
+  const f = analyzeIdConsistency([
+    pagina324(NAV324 + "<main><h1>Inicio</h1><p>x</p></main>", "http://s/"),
+    pagina324('<header><nav><a class="menus_item" href="/experience.html">Qué hacer</a><a class="menus_item" href="/itineraries.html">Rutas</a></nav></header><main><h1>Rutas</h1><p>x</p></main>', "http://s/itineraries.html")
+  ]);
+  const falla = f.find((x) => x.verdict === "falla");
+  assert.ok(falla, JSON.stringify(f.map((x) => x.verdict)));
+  assert.match(falla.evid[0], /«Explorar España» \/ «Qué hacer»/);
+  assert.match(falla.evid[0], /\(a\.menus_item/, "y dice QUÉ componente es, que es lo que acota la comparación");
+});
+
+test("3.2.4: dos nombres que conviven en una misma página son dos enlaces, no una incoherencia", () => {
+  /* Esta comprobación ya estaba, con el comentario correcto y la pregunta
+   * equivocada: preguntaba si algún nombre se ve donde el otro no está —verdad en
+   * cuanto uno está en todas las páginas y el otro solo en la portada— en vez de si
+   * hay alguna página donde se vean los dos. */
+  const conDos = '<header><nav><a href="/a">Inicio</a><a href="/a">Portada</a></nav></header><main><h1>x</h1></main>';
+  const f = analyzeIdConsistency([
+    pagina324(conDos, "http://s/1"),
+    pagina324('<header><nav><a href="/a">Inicio</a></nav></header><main><h1>y</h1></main>', "http://s/2")
+  ]);
+  assert.ok(!f.some((x) => x.verdict === "falla"), JSON.stringify(f.map((x) => x.verdict + ": " + x.evid)));
+});
+
+test("3.2.4: sin ningún landmark, la comparación sigue acotada por el componente", () => {
+  /* La acoté primero por región, y contra el sitio real no sirvió de nada: no tiene
+   * NI UN landmark, así que `regionDe` devolvía «otra» para todo y el ítem del menú y
+   * el «+ más» de la tarjeta volvían a caer en el mismo grupo —3 filas que seguían
+   * siendo falsas—. Y peor: el mismo menú salía «cabecera» en unas páginas y «otra»
+   * en otras, lo que rompe también la comprobación de convivencia. Lo estable sin
+   * landmarks es la etiqueta y las clases. */
+  const SIN_LANDMARK = '<div class="top"><a class="menus_item" href="/experience.html">玩转西班牙</a></div>';
+  const f = analyzeIdConsistency([
+    pagina324(SIN_LANDMARK + '<div><h1>Inicio</h1><a class="moer" href="/experience.html">+ 更多</a></div>', "http://s/"),
+    pagina324(SIN_LANDMARK + "<div><h1>B</h1><p>x</p></div>", "http://s/b.html"),
+    pagina324(SIN_LANDMARK + "<div><h1>C</h1><p>x</p></div>", "http://s/c.html")
+  ]);
+  assert.ok(!f.some((x) => x.verdict === "falla"), JSON.stringify(f.map((x) => x.verdict + ": " + x.evid)));
+});
+
+test("3.2.4: el id no cuenta como componente, porque muchos sitios lo derivan del texto", () => {
+  /* Si el componente se identificara por el `id` y el sitio lo genera a partir del
+   * texto del enlace, el id cambiaría justo cuando cambia el nombre — y la falla que
+   * hay que detectar desaparecería sola. */
+  const f = analyzeIdConsistency([
+    pagina324('<header><nav><a id="explorar" class="menus_item" href="/e.html">Explorar</a></nav></header><main><h1>a</h1></main>', "http://s/a"),
+    pagina324('<header><nav><a id="que-hacer" class="menus_item" href="/e.html">Qué hacer</a></nav></header><main><h1>b</h1></main>', "http://s/b")
+  ]);
+  assert.ok(f.some((x) => x.verdict === "falla"), JSON.stringify(f.map((x) => x.verdict + ": " + x.evid)));
 });

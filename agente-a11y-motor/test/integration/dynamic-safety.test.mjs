@@ -52,7 +52,7 @@ before(async () => {
 after(async () => { if (server) await new Promise((r) => server.close(r)); });
 
 test("modo seguro: NADA sale a la red más allá de cargar la página", { skip: !disponible }, async () => {
-  const r = await dynamicAnalyze({ url: base }, { launchOptions, forms: "safe" });
+  const r = await dynamicAnalyze({ url: base }, { launchOptions, forms: "safe", movimientoMs: 0, teclas: false });
   const escritura = recibido.filter((l) => !l.startsWith("GET /") || l.includes("/enviar") || l.includes("/destruir"));
   assert.deepEqual(escritura, [], "el driver ha tocado el servidor: " + JSON.stringify(recibido));
   assert.ok(!recibido.some((l) => l.includes("/enviar")), "se envió el formulario");
@@ -86,26 +86,26 @@ test("modo seguro: los input[type=hidden] conservan su valor (CSRF, sesión)", {
 });
 
 test("modo seguro: se detectan los errores de formulario sin texto ni aria-invalid", { skip: !disponible }, async () => {
-  const r = await dynamicAnalyze({ url: base }, { launchOptions, forms: "safe" });
+  const r = await dynamicAnalyze({ url: base }, { launchOptions, forms: "safe", movimientoMs: 0, teclas: false });
   const cods = r.findings.map((f) => f.c.n + "/" + f.verdict);
   assert.ok(cods.includes("3.3.1/falla"), "debería detectar campos requeridos sin descripción de error: " + cods.join(", "));
 });
 
 test("forms:\"off\" ni se acerca al formulario", { skip: !disponible }, async () => {
-  const r = await dynamicAnalyze({ url: base }, { launchOptions, forms: "off" });
+  const r = await dynamicAnalyze({ url: base }, { launchOptions, forms: "off", movimientoMs: 0, teclas: false });
   assert.equal(r.trace.formulario.probado, false);
   assert.equal(r.findings.filter((f) => f.c.n === "3.3.1").length, 0);
 });
 
 test("un formulario que parece destructivo no se toca", { skip: !disponible }, async () => {
   const html = '<form action="/delete-account" method="post"><input name="x" required><button type="submit">Ok</button></form>';
-  const r = await dynamicAnalyze({ html }, { launchOptions, forms: "safe" });
+  const r = await dynamicAnalyze({ html }, { launchOptions, forms: "safe", movimientoMs: 0, teclas: false });
   assert.equal(r.trace.formulario.probado, false);
   assert.match(r.trace.formulario.motivo || "", /destructiv/);
 });
 
 test("la fase de disclosure se ejecuta y no pierde el resto si algo falla", { skip: !disponible }, async () => {
-  const r = await dynamicAnalyze({ url: base }, { launchOptions, forms: "off" });
+  const r = await dynamicAnalyze({ url: base }, { launchOptions, forms: "off", movimientoMs: 0, teclas: false });
   assert.equal(r.errores.length, 0, JSON.stringify(r.errores));
   assert.equal(r.trace.disclosures, 1);
   assert.ok(r.findings.some((f) => f.c.n === "4.1.2"));
@@ -150,7 +150,7 @@ document.querySelectorAll("button[aria-expanded]").forEach(function (b) {
       const url = "http://127.0.0.1:" + srv.address().port + "/";
 
       try {
-        const out = await dynamicAnalyze({ url }, { launchOptions });
+        const out = await dynamicAnalyze({ url }, { launchOptions, movimientoMs: 0, teclas: false });
         // Margen generoso: lo que se cuela, se cuela después de que la sonda acabe.
         await new Promise((r) => setTimeout(r, retardo + 900));
         /* El invariante es UNO: al servidor auditado no llega nada con efecto. Que

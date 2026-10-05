@@ -59,12 +59,27 @@ export function normalizarNombre(s) {
     .trim();
 }
 
-// Mecanismos de ayuda que reconoce 3.2.6.
+/* Mecanismos de ayuda que reconoce 3.2.6 — y en los idiomas en los que están.
+ *
+ * El léxico era solo español e inglés, y eso no es un detalle de cobertura: en una
+ * auditoría real de un sitio chino (la versión en chino del portal de turismo de
+ * España) no se reconoció NINGÚN mecanismo de ayuda. Ahí resultó que de verdad no
+ * hay ninguno —pie con «关于我们», «隐私政策», «Cookie 政策» y «网站地图», ni contacto
+ * ni correo ni teléfono—, así que el veredicto era correcto por casualidad. Con un
+ * «联系我们» en el pie habríamos dicho «no se ha detectado ayuda» sobre una página
+ * que la tiene, y eso es la clase de afirmación que no se puede permitir.
+ *
+ * Van los idiomas en los que se trabaja de verdad: castellano, gallego, catalán,
+ * euskera, portugués, inglés y chino (simplificado y tradicional). El chino va en
+ * una alternativa SIN `\b`: en JavaScript los ideogramas no son `\w`, así que `\b`
+ * detrás de «帮助» no casa nunca y toda la rama quedaría muerta sin que se note. */
 const AYUDA = [
-  { tipo: "contacto", re: /(^|\b)(contacto|contactar|contact|cont[aá]ctanos)\b/i },
-  { tipo: "ayuda", re: /(^|\b)(ayuda|help|soporte|support|asistencia)\b/i },
-  { tipo: "faq", re: /(^|\b)(faq|preguntas frecuentes|dudas)\b/i },
-  { tipo: "chat", re: /(^|\b)(chat|chatbot|habla con)\b/i },
+  // El orden decide: `tipoAyuda` devuelve el primero que casa, y «在线客服»
+  // (chat en línea) contiene «客服» (atención al cliente), así que el chat va antes.
+  { tipo: "contacto", re: /(?:(?:^|\b)(?:contacto|contactar|contacte|contato|contact|cont[aá]ctanos|kontaktua|harremanetarako)\b)|(?:联系|联络|聯絡|聯繫|連絡)/i },
+  { tipo: "chat", re: /(?:(?:^|\b)(?:chat|chatbot|habla con)\b)|(?:在线客服|線上客服|聊天)/i },
+  { tipo: "ayuda", re: /(?:(?:^|\b)(?:ayuda|axuda|ajuda|laguntza|help|soporte|support|asistencia|assist[eè]ncia)\b)|(?:帮助|幫助|客服|客户服务|客戶服務)/i },
+  { tipo: "faq", re: /(?:(?:^|\b)(?:faq|preguntas frecuentes|preguntes freq[üu]ents|perguntas frequentes|d[uú]bidas|dudas)\b)|(?:常见问题|常見問題|问答|問答)/i },
   { tipo: "teléfono", re: /^tel:/i },
   { tipo: "correo", re: /^mailto:/i }
 ];
@@ -82,7 +97,7 @@ const AYUDA = [
  * la cabecera o el pie, que es donde se ponen los datos de contacto. Un `mailto:`
  * en medio del contenido, con un nombre que habla de compartir, es otra cosa.
  */
-const COMPARTIR_RE = /(compartir|share|env[ií]a(r)? (esto|a un amigo)|tweet|whatsapp)/i;
+const COMPARTIR_RE = /(compartir|comparte|share|env[ií]a(r)? (esto|a un amigo)|tweet|whatsapp|分享)/i;
 function tipoAyuda(nombre, href, region) {
   const esquema = /^(mailto:|tel:)/i.test(String(href || ""));
   if (esquema) {
@@ -102,8 +117,8 @@ function tipoAyuda(nombre, href, region) {
   return null;
 }
 
-const MAPA_RE = /(mapa (del sitio|web)|sitemap|[ií]ndice del sitio)/i;
-const INDICE_RE = /(^|\b)([ií]ndice|a-z|directorio|listado alfab[eé]tico)\b/i;
+const MAPA_RE = /(mapa (del sitio|do sitio|del lloc|web)|mapa do s[ií]tio|sitemap|[ií]ndice del sitio|网站地图|網站地圖)/i;
+const INDICE_RE = /(?:(?:^|\b)(?:[ií]ndice|a-z|directorio|directori|listado alfab[eé]tico)\b)|(?:索引|目录|目錄)/i;
 
 /* ── Huella de una página ────────────────────────────────────────────────── */
 
@@ -140,6 +155,27 @@ function loc(el) {
   if (el.id) return t + "#" + el.id;
   const c = (el.getAttribute("class") || "").trim().split(/\s+/).filter(Boolean)[0];
   return c ? t + "." + c : t;
+}
+/**
+ * QUÉ componente es, para poder decir si dos enlaces son «el mismo» entre páginas.
+ *
+ * 3.2.4 compara componentes con la misma funcionalidad, y el ítem de un menú y el
+ * «+ más» de una tarjeta no lo son aunque vayan al mismo sitio. Lo intenté con la
+ * región (cabecera, pie, navegación, contenido) y contra el sitio real no sirvió de
+ * nada: no tiene NINGÚN landmark, así que `regionDe` devolvía «otra» para todo y los
+ * dos enlaces caían en el mismo grupo. Peor: el mismo menú salía «cabecera» en unas
+ * páginas y «otra» en otras, y una clasificación que cambia de página en página
+ * rompe también la comprobación de convivencia.
+ *
+ * Lo que sí es estable sin landmarks es la etiqueta y las clases: `a.menus_item` es
+ * el menú y `a.moer` es la tarjeta, en todas las páginas. El `id` se deja fuera a
+ * propósito: muchos sitios lo derivan del texto del enlace, y entonces cambiaría
+ * justo cuando el nombre cambia, que es lo que hay que detectar.
+ */
+function componenteDe(el) {
+  const t = tagOf(el);
+  const cs = (el.getAttribute("class") || "").trim().split(/\s+/).filter(Boolean).sort();
+  return cs.length ? t + "." + cs.join(".") : t;
 }
 /**
  * Región de la página donde vive un elemento: cabecera, navegación, contenido o
@@ -219,7 +255,7 @@ export function fingerprintPage(doc, url, win) {
     const raw = a.getAttribute("href");
     const href = normalizarHref(raw, url);
     if (!href) return;
-    enlaces.push({ href: href, raw: raw, name: nombreDe(a), locator: loc(a), region: regionDe(a), orden: enlaces.length });
+    enlaces.push({ href: href, raw: raw, name: nombreDe(a), locator: loc(a), comp: componenteDe(a), region: regionDe(a), orden: enlaces.length });
   });
 
   // Ayuda: mecanismos reconocibles, en el orden en que aparecen.
@@ -239,7 +275,7 @@ export function fingerprintPage(doc, url, win) {
     .some(function (el) { return !ocultoEl(el, win); }) ||
     Array.prototype.slice.call(doc.querySelectorAll("form")).some(function (f) {
       if (ocultoEl(f, win)) return false;
-      return /buscar|search|busqueda|búsqueda/i.test((f.getAttribute("action") || "") + " " + (f.id || "") + " " + (f.className || "") + " " + (f.getAttribute("role") || ""));
+      return /buscar|buscador|search|busqueda|búsqueda|procura|bilatu|搜索|搜寻|搜尋|查询|查詢/i.test((f.getAttribute("action") || "") + " " + (f.id || "") + " " + (f.className || "") + " " + (f.getAttribute("role") || ""));
     });
   const mapaWeb = enlaces.some(function (e) { return MAPA_RE.test(e.name) || MAPA_RE.test(e.href); });
   const indice = enlaces.some(function (e) { return INDICE_RE.test(e.name); });
@@ -347,15 +383,36 @@ export function analyzeNavConsistency(huellas) {
  * sin nada en común para el mismo destino sí es una falla.
  */
 export function analyzeIdConsistency(huellas) {
+  /* Se agrupa por destino Y POR REGIÓN, y no solo por destino.
+   *
+   * 3.2.4 habla de componentes con la MISMA funcionalidad. Comparando solo por
+   * destino, el patrón más común de la web entera salía como falla: el menú de
+   * cabecera llama a una página por su nombre y una tarjeta del contenido la enlaza
+   * con un «+ más» / «Leer más» / «Ver todo». Son dos componentes distintos que van
+   * al mismo sitio, no un componente identificado de dos maneras. Medido contra un
+   * sitio real: 7 destinos acusados, todos del mismo par —el nombre del menú y el
+   * «+ 更多» de una tarjeta—, y el informe hecho a mano no señalaba ninguno.
+   *
+   * Un enlace de la cabecera, uno del pie y uno del contenido no son el mismo
+   * componente, así que no se comparan entre sí. Dentro de una misma región sí:
+   * un ítem del menú que se llama distinto en otra página es exactamente lo que el
+   * criterio prohíbe, y eso se sigue cazando. */
   const porHref = {};
+  const clave = function (href, comp) { return href + " \u0000 " + (comp || "(sin componente)"); };
+  const regionesPorHref = {};
   (huellas || []).forEach(function (h) {
     (h.enlaces || []).forEach(function (e) {
       const nom = normalizarNombre(e.name);
       if (!nom) return;
-      if (!porHref[e.href]) porHref[e.href] = { nombres: {}, locator: e.locator };
-      if (!porHref[e.href].nombres[nom]) porHref[e.href].nombres[nom] = { crudo: e.name, paginas: [] };
-      const p = porHref[e.href].nombres[nom].paginas;
+      const k = clave(e.href, e.comp || e.locator);
+      if (!porHref[k]) porHref[k] = { href: e.href, region: e.region, comp: e.comp || e.locator, nombres: {}, locator: e.locator };
+      if (!porHref[k].nombres[nom]) porHref[k].nombres[nom] = { crudo: e.name, paginas: [] };
+      const p = porHref[k].nombres[nom].paginas;
       if (p.indexOf(h.url) === -1) p.push(h.url);
+      // Para poder decir, sin acusar, que un destino se nombra distinto según
+      // desde dónde se enlace: es normal, pero conviene saberlo.
+      if (!regionesPorHref[e.href]) regionesPorHref[e.href] = {};
+      regionesPorHref[e.href][(e.comp || e.locator) + "\u0000" + nom] = e.name;
     });
   });
 
@@ -372,26 +429,43 @@ export function analyzeIdConsistency(huellas) {
     });
     return Object.keys(paginas).length >= 2;
   });
-  comunes.forEach(function (href) {
-    const noms = Object.keys(porHref[href].nombres);
+  comunes.forEach(function (k) {
+    const g = porHref[k];
+    const noms = Object.keys(g.nombres);
     if (noms.length < 2) return;
-    // Las dos variantes tienen que verse en páginas DISTINTAS: si conviven en la
-    // misma página son dos enlaces distintos, no una identificación incoherente.
-    const enPaginasDistintas = noms.some(function (a) {
+    /* Dos nombres que CONVIVEN en una misma página no son una identificación
+     * incoherente: son dos enlaces distintos.
+     *
+     * Esta comprobación ya estaba, con el comentario correcto y la pregunta
+     * equivocada: preguntaba si algún nombre se ve en alguna página donde el otro no
+     * esté, y eso es verdad en cuanto un nombre está en todas las páginas y el otro
+     * solo en la portada — que es justo el caso del menú y la tarjeta. Lo que hay que
+     * preguntar es lo que decía el comentario: ¿hay ALGUNA página donde se vean los
+     * dos? Si la hay, son dos componentes, y comparar sus nombres no mide nada. */
+    const convivenEnAlguna = noms.some(function (a) {
       return noms.some(function (b) {
         if (a === b) return false;
-        return porHref[href].nombres[a].paginas.some(function (u) {
-          return porHref[href].nombres[b].paginas.indexOf(u) === -1;
-        });
+        return g.nombres[a].paginas.some(function (u) { return g.nombres[b].paginas.indexOf(u) !== -1; });
       });
     });
-    if (!enPaginasDistintas) return;
+    if (convivenEnAlguna) return;
     // ¿Uno contiene a otro? Entonces es matiz, no contradicción.
     const anidados = noms.every(function (a) {
       return noms.some(function (b) { return b !== a && (b.indexOf(a) !== -1 || a.indexOf(b) !== -1); });
     });
-    const detalle = href + " → " + noms.map(function (n) { return "«" + porHref[href].nombres[n].crudo + "»"; }).join(" / ");
-    (anidados ? revisiones : fallas).push({ href: href, detalle: detalle, locator: porHref[href].locator });
+    const donde = " (" + g.comp + (g.region && g.region !== "otra" ? ", en " + g.region : "") + ")";
+    const detalle = g.href + donde + " → " + noms.map(function (n) { return "«" + g.nombres[n].crudo + "»"; }).join(" / ");
+    (anidados ? revisiones : fallas).push({ href: g.href, detalle: detalle, locator: g.locator });
+  });
+  /* Un destino nombrado distinto SEGÚN DESDE DÓNDE se enlace no es una falla de
+   * 3.2.4 —son componentes distintos— pero sí es algo que conviene saber, así que se
+   * dice sin acusar y sin cambiar el veredicto. */
+  const porRegiones = Object.keys(regionesPorHref).filter(function (href) {
+    const claves = Object.keys(regionesPorHref[href]);
+    if (claves.length < 2) return false;
+    const regs = {}, noms = {};
+    claves.forEach(function (c) { const p = c.split("\u0000"); regs[p[0]] = true; noms[p[1]] = true; });
+    return Object.keys(regs).length >= 2 && Object.keys(noms).length >= 2;
   });
 
   const out = [];
@@ -405,10 +479,14 @@ export function analyzeIdConsistency(huellas) {
       [revisiones.length + " destino(s) usan variantes del mismo nombre (uno contiene al otro): " + revisiones.slice(0, 5).map(function (r) { return r.detalle; }).join(" · ") + ". Comprueba si la diferencia desorienta."],
       revisiones.slice(0, 8).map(function (r) { return { locator: r.locator, name: r.href }; })));
   }
+  const nota = porRegiones.length
+    ? " " + porRegiones.length + " destino(s) se nombran distinto según desde dónde se enlacen (menú, pie o contenido): son componentes distintos, no una identificación incoherente, pero ahí están: " +
+      porRegiones.slice(0, 3).join(", ") + "."
+    : "";
   if (!out.length) {
     out.push(comunes.length
-      ? F("3.2.4", "cumple", null, ["Los " + comunes.length + " destinos que aparecen en dos o más páginas de la muestra se identifican siempre con el mismo nombre."])
-      : F("3.2.4", "revisar", null, ["Ningún destino se repite entre las páginas de la muestra (" + (huellas || []).length + " página(s)): no hay nada que comparar, así que la coherencia de identificación NO se ha comprobado."]));
+      ? F("3.2.4", "cumple", null, ["Los " + comunes.length + " destino(s) que aparecen en dos o más páginas de la muestra, dentro de una misma región, se identifican siempre con el mismo nombre." + nota])
+      : F("3.2.4", "revisar", null, ["Ningún destino se repite entre las páginas de la muestra (" + (huellas || []).length + " página(s)): no hay nada que comparar, así que la coherencia de identificación NO se ha comprobado." + nota]));
   }
   return out;
 }
@@ -534,12 +612,30 @@ export function analyzeCoherence(huellas) {
 
 /* ── Código inyectable: la huella se toma DENTRO de la página real ───────── */
 
-const FN_SRC =
+/* Las constantes del módulo viajan a la página, y van en UNA lista.
+ *
+ * `COMPARTIR_RE` no viajaba. `tipoAyuda` la usa en la primera línea de la rama de
+ * `mailto:`/`tel:`, así que la huella lanzaba `ReferenceError` en cuanto la página
+ * tenía un correo o un teléfono enlazado — es decir, en el pie de casi cualquier
+ * sitio español. El error se recogía en `errores` y la huella quedaba en `null`, y
+ * sin huellas la comparación entre páginas no compara nada: 2.4.5, 3.2.3, 3.2.4 y
+ * 3.2.6 desaparecían del informe sin que nadie lo dijera. Comprobado en Chromium:
+ * «ReferenceError: COMPARTIR_RE is not defined».
+ *
+ * Que estuviera escrito a mano era el problema, así que ahora es una lista con
+ * nombre, y hay un test que extrae los identificadores en MAYÚSCULAS de las
+ * funciones serializadas y falla si alguno no está declarado aquí. */
+const CONSTANTES = { MAPA_RE: MAPA_RE, INDICE_RE: INDICE_RE, COMPARTIR_RE: COMPARTIR_RE };
+export const FN_SRC =
   "var AYUDA = [" + AYUDA.map(function (a) { return "{tipo:" + JSON.stringify(a.tipo) + ",re:" + String(a.re) + "}"; }).join(",") + "];\n" +
-  "var MAPA_RE = " + String(MAPA_RE) + ";\n" +
-  "var INDICE_RE = " + String(INDICE_RE) + ";\n" +
-  [normalizarHref, tipoAyuda, tagOf, ocultoEl, loc, regionDe, nombreDe, fingerprintPage]
+  Object.keys(CONSTANTES).map(function (k) { return "var " + k + " = " + String(CONSTANTES[k]) + ";"; }).join("\n") + "\n" +
+  [normalizarHref, tipoAyuda, tagOf, ocultoEl, loc, componenteDe, regionDe, nombreDe, fingerprintPage]
     .map(function (f) { return String(f).replace(/^export\s+/, ""); }).join("\n");
+/** Los nombres que se declaran en el código inyectado; el guard los compara. */
+export const FN_DECLARADAS = ["AYUDA"].concat(Object.keys(CONSTANTES));
+/** Las funciones que se serializan, para que el guard pueda leer su fuente. */
+export const FN_FUENTES = [normalizarHref, tipoAyuda, tagOf, ocultoEl, loc, componenteDe, regionDe, nombreDe, fingerprintPage]
+  .map(function (f) { return String(f); });
 
 /**
  * Cuerpo para `page.evaluate(new Function("url", FINGERPRINT_BODY))`.
