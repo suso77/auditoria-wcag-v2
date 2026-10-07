@@ -57,7 +57,7 @@ const sitio = await auditSite(sel.muestra.map((m) => ({ url: m.url })), {
   onPage: (r) => process.stderr.write("  · " + r.url + " — " + r.findings.filter((f) => f.verdict === "falla").length + " barreras\n")
 });
 
-const out = oawExport(sitio.findings);
+const out = oawExport(sitio.findings, { muestra: sitio.rollup });
 await writeFile("barreras.csv", out.csv.barreras, "utf8");
 await writeFile("seguimiento.csv", out.csv.seguimiento, "utf8");
 await writeFile("auditoria.json", JSON.stringify({

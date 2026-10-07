@@ -190,6 +190,30 @@ test("regresión: 2.4.11 no acusa a lo que se pinta DETRÁS, y sí ve lo que tap
     "y la barra de cookies sí tapa el último enlace al tabular hasta él: " + JSON.stringify(m.map((x) => x.verdict + " " + x.detail.slice(0, 60))));
 });
 
+test("2.4.11 también habla cuando NADA tapa el foco (v0.37.0)", { skip }, async () => {
+  /* El criterio solo se pronunciaba al encontrar algo que tapaba, así que una
+   * página sin barras fijas salía «No evaluado» en la hoja de seguimiento —
+   * indistinguible de un criterio que nadie ha mirado. Y es una afirmación
+   * determinable: se ha recorrido cada control enfocable contra cada elemento
+   * superpuesto, en las dos direcciones de tabulación. */
+  const limpia = `<style>body{background:#fff;color:#111;font:16px/1.6 system-ui;margin:0}
+    a:focus{outline:3px solid #000}</style><main><h1>Limpia</h1>
+    <p><a href="/a">Uno</a> <a href="/b">Dos</a> <a href="/c">Tres</a></p></main>`;
+  const m = (await analyzeRendered({ html: limpia }, { launchOptions })).measurements
+    .filter((x) => x.crit === "2.4.11");
+  assert.equal(m.length, 1, JSON.stringify(m.map((x) => x.verdict + " " + x.detail.slice(0, 60))));
+  assert.equal(m[0].verdict, "pasa");
+  assert.match(m[0].detail, /3 controles enfocables/);
+
+  // Sin ningún control enfocable no se declara conforme: no hay nada medido.
+  const vacia = "<main><h1>Solo texto</h1><p>Un párrafo y nada más.</p></main>";
+  const mv = (await analyzeRendered({ html: vacia }, { launchOptions })).measurements
+    .filter((x) => x.crit === "2.4.11");
+  assert.equal(mv.length, 1);
+  assert.equal(mv[0].verdict, "revisar");
+  assert.match(mv[0].detail, /ning[uú]n control enfocable/);
+});
+
 /* ── Regresión: la cuarta tanda — lo que la medición no miraba ni declaraba ─── */
 
 test("regresión: 2.4.3 compara la tabulación con el orden VISUAL", { skip }, async () => {

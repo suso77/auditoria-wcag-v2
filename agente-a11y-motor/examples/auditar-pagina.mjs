@@ -35,7 +35,7 @@ const sitio = await auditSite(urls.map((u) => ({ url: u })), {
     (r.errores || []).forEach((e) => process.stderr.write("      ! " + (e.capa || e.fase) + ": " + e.error + "\n"));
   }
 });
-const out = oawExport(sitio.findings);
+const out = oawExport(sitio.findings, { muestra: sitio.rollup });
 
 await writeFile("barreras.csv", out.csv.barreras, "utf8");
 await writeFile("seguimiento.csv", out.csv.seguimiento, "utf8");

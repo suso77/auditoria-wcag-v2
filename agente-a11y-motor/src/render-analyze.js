@@ -101,6 +101,7 @@ export async function analyzeRendered(target, opts) {
         docPagina = null;
         errores.push({ capa: "página", error: "no se pudo reparsear el DOM renderizado: " + ((e && e.message) || e) });
         coberturasPropias.push({ crit: "__meta", label: "Ámbito de página sin comprobar", node: "(documento)", verdict: "revisar",
+          limita: ["2.4.1", "2.4.2", "3.1.1", "1.3.1"],
           detail: "el DOM renderizado no se pudo volver a parsear, así que NO se han comprobado los criterios de ámbito de página (2.4.1, 2.4.2, 3.1.1, 1.3.1 estructural) ni el cuaderno de juicio. No es que cumplan: es que no se han mirado." });
       }
       if (docPagina) {
@@ -109,6 +110,7 @@ export async function analyzeRendered(target, opts) {
           pageAudit = [];
           errores.push({ capa: "página", error: "auditPageDoc lanzó: " + ((e && e.message) || e) });
           coberturasPropias.push({ crit: "__meta", label: "Ámbito de página sin comprobar", node: "(documento)", verdict: "revisar",
+            limita: ["2.4.1", "2.4.2", "3.1.1", "1.3.1"],
             detail: "la auditoría de página falló (" + ((e && e.message) || e) + "): los criterios de ámbito de página —title, idioma, landmarks, saltar bloques— NO se han comprobado en esta ejecución." });
         }
         /* El cuaderno de juicio, sobre el MISMO documento y con el CSS ya
@@ -127,27 +129,48 @@ export async function analyzeRendered(target, opts) {
            * entero: se monta sin CSS, se dice que 2.3.1 va corto, y los otros diez
            * criterios siguen en el informe. Antes, un fallo al leer las hojas se
            * llevaba los once por delante. */
-          let css = null;
+          /* Y las hojas que NO se pueden leer se cuentan, no se devuelven como vacías.
+           *
+           * El `catch` interior devolvía `""` por hoja, así que `css` no era `null` y la
+           * nota de cobertura de abajo no se emitía NUNCA. Resultado medido con la misma
+           * página servida de dos formas: con la animación en un `<style>` propio, 2.3.1
+           * sale `humano`; con esa misma regla en una hoja de OTRO origen, 2.3.1 sale
+           * `no-aplica` diciendo «no hay nada que pueda destellar», con `errores: []` y
+           * sin una sola nota de cobertura. 2.3.1 es el criterio cuyo incumplimiento
+           * puede provocar una crisis epiléptica: ahí no se puede firmar «no aplica»
+           * sobre un CSS que nadie ha leído. */
+          let css = null, cssBloqueadas = 0;
           try {
-            css = await page.evaluate(function () {
-              return Array.prototype.map.call(document.styleSheets, function (s) {
+            const lectura = await page.evaluate(function () {
+              let bloqueadas = 0;
+              const texto = Array.prototype.map.call(document.styleSheets, function (s) {
                 try { return Array.prototype.map.call(s.cssRules, function (r) { return r.cssText; }).join("\n"); }
-                catch (e) { return ""; }   // hoja de otro origen: no se puede leer
+                catch (e) { bloqueadas++; return ""; }   // hoja de otro origen: no se puede leer
               }).join("\n");
+              return { texto: texto, bloqueadas: bloqueadas };
             });
+            css = lectura.texto;
+            cssBloqueadas = lectura.bloqueadas || 0;
+            if (cssBloqueadas) {
+              coberturasPropias.push({ crit: "__meta", label: "CSS parcialmente ilegible", node: "(hojas de estilo)", verdict: "revisar",
+                limita: ["2.3.1", "1.3.4", "1.4.1", "2.4.7"],
+                detail: cssBloqueadas + " hoja(s) de estilo de otro origen no se han podido leer. Lo que declaren esas hojas —animaciones, reglas por orientación, revelados— NO se ha visto: 2.3.1 y 1.3.4 se han decidido con el CSS que sí era legible." });
+            }
           } catch (e) {
             css = null;
             errores.push({ capa: "cuaderno", error: "no se pudieron leer las hojas de estilo: " + ((e && e.message) || e) });
             coberturasPropias.push({ crit: "__meta", label: "CSS no legible", node: "(hojas de estilo)", verdict: "revisar",
+              limita: ["2.3.1", "1.3.4", "1.4.1", "2.4.7"],
               detail: "las hojas de estilo de la página no se pudieron leer (" + ((e && e.message) || e) +
                 "): el cuaderno se ha montado sin ellas, así que 2.3.1 solo ha visto las animaciones declaradas en el marcado. Comprueba a mano si hay animaciones en un CSS aparte." });
           }
           try {
-            cuaderno = cuadernoDeJuicio(docPagina, { url: target.url || null, css: css || "" });
+            cuaderno = cuadernoDeJuicio(docPagina, { url: target.url || null, css: css || "", cssBloqueadas: cssBloqueadas, cssLeido: css != null });
           } catch (e) {
             cuaderno = null;
             errores.push({ capa: "cuaderno", error: "cuadernoDeJuicio lanzó: " + ((e && e.message) || e) });
             coberturasPropias.push({ crit: "__meta", label: "Cuaderno de juicio sin montar", node: "(documento)", verdict: "revisar",
+              limita: CRITERIOS_DE_JUICIO.slice(),
               detail: "el cuaderno de juicio falló (" + ((e && e.message) || e) + "): los once criterios que resuelve (" +
                 CRITERIOS_DE_JUICIO.join(", ") + ") se quedan como los deja el motor, sin el expediente que dice qué mirar en cada uno. " +
                 "Ninguno está comprobado por esta vía." });
@@ -191,6 +214,7 @@ export async function analyzeRendered(target, opts) {
           // Otro origen, o el marco se fue a mitad: se dice, no se calla.
           errores.push({ capa: "marco", error: "no se pudo medir " + url.slice(0, 80) + ": " + ((e && e.message) || e) });
           coberturasPropias.push({ crit: "__meta", label: "Marco no medible", node: url.slice(0, 60), verdict: "revisar",
+            limita: ["1.4.3", "1.4.11", "2.4.7", "2.5.8", "2.1.1"],
             detail: "el marco « " + url.slice(0, 80) + " » no se puede medir desde aquí (lo más probable: es de otro origen y el navegador no deja entrar). " +
               "Su contenido NO está comprobado: audítalo por su propia URL." });
         }

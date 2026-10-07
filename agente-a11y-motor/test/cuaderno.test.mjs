@@ -33,9 +33,22 @@ test("pero un iframe de YouTube basta para que 1.2.4 y 1.2.5 vuelvan a aplicar",
   assert.match(JSON.stringify(fichaDe(c, "1.2.5").queMirar), /youtube/);
 });
 
-test("un vídeo oculto no cuenta: no hay nada que ver", () => {
+test("un vídeo oculto no absuelve el criterio: lo deja a revisión", () => {
+  // Este test afirmaba lo contrario hasta v0.37.0. Era una mentira cómoda:
+  // `hidden` en el marcado inicial no significa que nadie lo vea nunca — un
+  // carrusel, una pestaña o un modal lo enseñan en cuanto se interactúa, y el
+  // motor estático no ejecuta ese guion. Decir "no aplica" sobre contenido
+  // que no se ha podido mirar es exactamente lo que la regla de oro prohíbe.
   const c = cuad('<main><video hidden src="x.mp4"></video><p>Texto.</p></main>');
-  assert.equal(fichaDe(c, "1.2.5").aplica, false);
+  const f = fichaDe(c, "1.2.5");
+  assert.equal(f.aplica, true);
+  assert.equal(f.veredicto, "revisar");
+  assert.match(f.loQueYaSabemos.join(" "), /ocult/i);
+
+  // Y sin ningún candidato, ni visible ni oculto, sigue siendo "no aplica".
+  const vacio = cuad("<main><p>Solo texto.</p></main>");
+  assert.equal(fichaDe(vacio, "1.2.5").aplica, false);
+  assert.equal(fichaDe(vacio, "1.2.5").veredicto, "no-aplica");
 });
 
 test("sin nada que pueda destellar, 2.3.1 no aplica; con un GIF, sí", () => {
@@ -563,4 +576,39 @@ test("sin ningún marco ni medio, «no aplica» sigue siendo «no aplica»", () 
     assert.equal(fichaDe(c, n).aplica, false);
     assert.match((fichaDe(c, n).loQueYaSabemos || [])[0], /marco embebido de ninguna clase/);
   });
+});
+
+/* ── Lo oculto y el CSS que no se puede leer (v0.37.0) ─────────────────────── */
+test("un formulario oculto tampoco absuelve los criterios de formulario", () => {
+  // Control A/B: el MISMO formulario, visible y escondido. Daba `no-aplica` al
+  // esconderlo, que es declarar que en la página no hay nada a lo que el
+  // criterio se refiera cuando lo que pasa es que no se ha podido mirar.
+  const visible = '<form method="post" action="/alta"><input name="u" required><button>Enviar</button></form>';
+  const v = cuad("<main>" + visible + "</main>");
+  const o = cuad('<main><div style="display:none">' + visible + "</div></main>");
+  // 3.3.7 queda fuera a propósito: no aplica a un formulario de un solo campo
+  // por razones que no tienen que ver con que falten campos, y el censo de lo
+  // oculto no debe convertir ese «no aplica» correcto en una duda inventada.
+  ["3.3.3", "3.3.4"].forEach((n) => {
+    assert.equal(fichaDe(v, n).aplica, true, n + " visible");
+    assert.equal(fichaDe(o, n).aplica, true, n + " oculto: aplica, a revisión");
+    assert.equal(fichaDe(o, n).veredicto, "revisar", n);
+  });
+  // Y sin formulario de ninguna clase, sigue siendo «no aplica».
+  assert.equal(fichaDe(cuad("<main><p>Solo texto.</p></main>"), "3.3.3").veredicto, "no-aplica");
+  // Con el formulario a la vista, el «no aplica» de 3.3.7 se mantiene: el censo
+  // de lo oculto solo responde a «¿de verdad no hay nada de esto en la página?».
+  assert.equal(fichaDe(v, "3.3.7").veredicto, "no-aplica");
+});
+
+test("2.3.1 no afirma que nada puede destellar si no ha leído el CSS", () => {
+  const sinNada = cuad("<main><p>Texto.</p></main>", { cssLeido: true, cssBloqueadas: 0 });
+  assert.equal(fichaDe(sinNada, "2.3.1").veredicto, "no-aplica");
+
+  const conHojasCiegas = cuad("<main><p>Texto.</p></main>", { cssLeido: true, cssBloqueadas: 2 });
+  assert.equal(fichaDe(conHojasCiegas, "2.3.1").veredicto, "revisar");
+  assert.match(fichaDe(conHojasCiegas, "2.3.1").loQueYaSabemos.join(" "), /2 hoja/);
+
+  const sinCss = cuad("<main><p>Texto.</p></main>", { cssLeido: false });
+  assert.equal(fichaDe(sinCss, "2.3.1").veredicto, "revisar");
 });

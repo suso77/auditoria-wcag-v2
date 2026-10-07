@@ -400,3 +400,41 @@ test("4.1.3: sin censo —la fase no corrió— no se dice nada", () => {
   assert.deepEqual(analyzeStatusMessages(null), []);
   assert.deepEqual(analyzeStatusMessages([], { expandibles: null, regiones: null }), []);
 });
+
+/* ── 3.3.1: un campo OBLIGATORIO no es un campo en error (v0.37.0) ─────────── */
+test("un obligatorio correctamente rellenado no inventa una barrera de 3.3.1", () => {
+  // Esto emitía `falla` grave («1 campo con error sin descripción») sobre un
+  // formulario conforme: el analizador usaba `required` como sustituto de
+  // «habrá fallado la validación», y en cuanto el campo está relleno es falso.
+  const r = analyzeErrorState({
+    submitted: true, hasAlert: true, liveCambio: true,
+    fields: [{ locator: "input#n", required: true, invalid: false, nativoInvalido: false, vacio: false }]
+  });
+  const v = r.filter((f) => f.c.n === "3.3.1").map((f) => f.verdict);
+  assert.ok(!v.includes("falla"), JSON.stringify(r.map((f) => f.c.n + "=" + f.verdict)));
+  // Y tampoco se calla: el envío no disparó ninguna validación, y eso se dice.
+  assert.deepEqual(v, ["revisar"]);
+  assert.match(r.find((f) => f.c.n === "3.3.1").evid[0], /NINGÚN campo quedó en error/);
+  // Ni se le reclama `aria-invalid` a un campo que no tiene error que exponer.
+  assert.ok(!r.some((f) => f.c.n === "4.1.2" && /aria-invalid/.test(f.evid[0])));
+});
+
+test("el error de verdad sigue siendo una barrera, venga del navegador o de ARIA", () => {
+  const casos = [
+    { locator: "i#a", required: true, invalid: false, nativoInvalido: true, vacio: true },   // obligatorio vacío
+    { locator: "i#c", required: false, invalid: false, nativoInvalido: true, vacio: false }, // correo mal escrito
+    { locator: "i#d", required: false, invalid: true, nativoInvalido: false, vacio: false }, // aria-invalid
+  ];
+  casos.forEach((f) => {
+    const r = analyzeErrorState({ submitted: true, hasAlert: true, liveCambio: true, fields: [f] });
+    assert.ok(r.some((x) => x.c.n === "3.3.1" && x.verdict === "falla"), JSON.stringify(f));
+  });
+});
+
+test("una traza sin validez nativa conserva la inferencia por obligatorio vacío", () => {
+  // La extensión y las trazas antiguas no traen `nativoInvalido`: ahí un
+  // obligatorio tras un envío ha fallado seguro, y la inferencia es correcta.
+  const r = analyzeErrorState({ submitted: true, hasAlert: true, liveCambio: true,
+    fields: [{ locator: "i#a", required: true, invalid: false }] });
+  assert.ok(r.some((x) => x.c.n === "3.3.1" && x.verdict === "falla"));
+});

@@ -120,6 +120,10 @@ export function barreras(findings, ctx) {
  *   aparece en ningún hallazgo. Sin ella, la diferencia entre «comprobado y
  *   correcto» y «nadie lo miró» se perdía justo en el entregable: los criterios
  *   ausentes no generaban fila, y la rama «No evaluado» era código muerto.
+ * @param {{ todosLosCriterios?: boolean,
+ *           muestra?: { paginas?: number, paginasAnalizadas?: number, sinAnalizar?: Array } }} [opts]
+ *   `muestra` es el rollup de la muestra (`rollupSample`). Con él, la hoja de
+ *   Seguimiento sabe sobre CUÁNTAS páginas se está pronunciando.
  */
 export function seguimiento(findings, opts) {
   const by = {};
@@ -135,10 +139,31 @@ export function seguimiento(findings, opts) {
       if (!by[c.n]) by[c.n] = { criterio: c.n, nombre: c.t, nivel: c.lvl, worst: null, n: 0 };
     });
   }
+  /* La COBERTURA de la muestra entra en la hoja.
+   *
+   * Si tres de las diez páginas no se llegaron a analizar, un criterio que sale
+   * bien en las siete restantes se exportaba como «Correcto», a secas, en una
+   * hoja que no dice en ninguna parte que faltan tres páginas. El rollup sí lo
+   * dice («Incompleta: 3 de 10…»), pero eso vive en otro objeto y no viaja con
+   * la fila. Un «Correcto» sin cobertura al lado es una afirmación que el agente
+   * no puede sostener, así que mientras la muestra esté incompleta no se emite:
+   * la conformidad se queda en «No se puede comprobar», con el motivo. Las
+   * barreras NO se tocan: una barrera encontrada en siete páginas sigue siendo
+   * una barrera, y «No aplica» tampoco, que es una afirmación sobre lo que hay.
+   */
+  const m = (opts && opts.muestra) || null;
+  const totalPag = m && m.paginas != null ? m.paginas : null;
+  const vistas = m && m.paginasAnalizadas != null ? m.paginasAnalizadas : totalPag;
+  const incompleta = totalPag != null && vistas != null && vistas < totalPag;
+  const cobertura = totalPag == null ? "" : vistas + " de " + totalPag + " página(s) analizadas";
   return Object.keys(by).map(function (k) { return by[k]; })
     .sort(function (a, b) { return cmpSC(a.criterio, b.criterio); })
     .map(function (r) {
       const en = enClause(r.criterio);
+      let resultado = resultadoOAW(r.worst);
+      if (incompleta && (r.worst === "cumple" || r.worst === "pasa")) {
+        resultado = "No se puede comprobar (muestra incompleta: " + cobertura + ")";
+      }
       return {
         subcriterio: en || "",
         enEN: !!en,
@@ -146,7 +171,8 @@ export function seguimiento(findings, opts) {
         nombre: r.nombre,
         nivel: r.nivel,
         veredicto: r.worst,
-        resultado: resultadoOAW(r.worst),
+        resultado: resultado,
+        cobertura: cobertura,
         num_barreras: r.n
       };
     });
@@ -191,20 +217,25 @@ const COLS_SEGUIMIENTO = [
   { key: "subcriterio", label: "Subcriterio EN (9.X.Y.Z)" }, { key: "enEN", label: "En la EN vigente" },
   { key: "criterio", label: "Criterio WCAG" },
   { key: "nombre", label: "Nombre" }, { key: "nivel", label: "Nivel" }, { key: "resultado", label: "Resultado" },
+  // La cobertura, al lado del resultado: quien lee la hoja tiene que poder ver
+  // sobre cuántas páginas se está afirmando cada cosa sin salir de la fila.
+  { key: "cobertura", label: "Cobertura de la muestra" },
   { key: "num_barreras", label: "Nº barreras" }
 ];
 
 /**
  * Exporta los hallazgos a la forma OAW/IRA.
  * @param {Array} findings  hallazgos del agente (unificados)
- * @param {{ url?:string, overrides?:object }} [ctx]  `overrides` fija el
- *   subcriterio OAW a mano: por criterio (`"1.3.1"`) o por elemento
+ * @param {{ url?:string, overrides?:object, muestra?:object }} [ctx]  `overrides`
+ *   fija el subcriterio OAW a mano: por criterio (`"1.3.1"`) o por elemento
  *   (`"1.3.1|nav.principal"`), y gana sobre cualquier asignación automática.
+ *   `muestra` es el rollup (`rollupSample`): con él la hoja de Seguimiento
+ *   declara su cobertura y no exporta «Correcto» sobre una muestra incompleta.
  */
 export function oawExport(findings, ctx) {
   ctx = ctx || {};
   const b = barreras(findings, ctx);
-  const s = seguimiento(findings, { todosLosCriterios: ctx.todosLosCriterios !== false });
+  const s = seguimiento(findings, { todosLosCriterios: ctx.todosLosCriterios !== false, muestra: ctx.muestra || null });
   // Solo los EVALUADOS: desde que el Seguimiento emite fila para los 55
   // criterios, listar aquí los seis que no están en la EN vigente aunque nadie
   // los haya mirado convertía un dato útil («esto se ha evaluado y no cabe en el

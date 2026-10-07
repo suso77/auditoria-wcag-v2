@@ -73,3 +73,49 @@ export function esNoAplica(v) {
 export function esIndeterminado(v) {
   return !esConforme(v) && !esNoAplica(v) && v !== "falla";
 }
+
+/**
+ * Las notas de cobertura ATAN los veredictos de los criterios que limitan.
+ *
+ * La medición emite notas `__meta` cuando sabe que no ha llegado a mirar todo:
+ * un velo a pantalla completa, un shadow DOM cerrado, marcos que se auditan
+ * aparte, el límite de bloques de texto, el límite de controles, la ventana sin
+ * el foco del sistema, sondas de color sin restaurar. Hasta aquí esas notas
+ * viajaban a la lista de `avisos` del informe —prosa al final— y NO tocaban
+ * ningún veredicto: 2.4.3 podía salir `pasa` habiendo medido 20 de 500
+ * controles, y el aviso que lo decía estaba a cuatro páginas de distancia.
+ *
+ * La capa de adaptación ya hacía lo correcto con su propio recorte
+ * (`informeRecorte` baja a `revisar` cuando `cobertura.truncado`). Esto es la
+ * misma política, aplicada a la capa de render: un criterio cuya medición está
+ * incompleta no puede declararse conforme. Solo baja; nunca sube, nunca toca un
+ * `falla` —una barrera encontrada en la parte medida sigue siendo una barrera—
+ * y nunca toca un `no-aplica`, que es una afirmación sobre lo que HAY en la
+ * página, no sobre lo que se ha medido en ella.
+ *
+ * @param {Array<{c:{n:string}, verdict:string, evid?:Array<string>}>} findings
+ * @param {Array<{crit?:string, label?:string, detail?:string, limita?:Array<string>}>} coberturas
+ * @returns {{findings:Array, atados:Array<{n:string, de:string, por:string}>}}
+ */
+export function aplicaCoberturas(findings, coberturas) {
+  const limites = {};   // criterio → [etiqueta de la nota]
+  (coberturas || []).forEach(function (c) {
+    (c && c.limita || []).forEach(function (n) {
+      (limites[n] = limites[n] || []).push({ label: c.label || "cobertura", detail: c.detail || "" });
+    });
+  });
+  const atados = [];
+  const out = (findings || []).map(function (f) {
+    const n = f && f.c && f.c.n;
+    const notas = n && limites[n];
+    if (!notas || !esConforme(f.verdict)) return f;
+    atados.push({ n: n, de: f.verdict, por: notas.map(function (x) { return x.label; }).join(" · ") });
+    return Object.assign({}, f, {
+      verdict: "revisar",
+      evid: (f.evid || []).concat(notas.map(function (x) {
+        return "La medición de este criterio está INCOMPLETA (" + x.label + "), así que lo medido no basta para declararlo conforme: " + x.detail;
+      }))
+    });
+  });
+  return { findings: out, atados: atados };
+}

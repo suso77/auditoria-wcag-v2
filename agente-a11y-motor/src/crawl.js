@@ -114,7 +114,30 @@ function coincide(ruta, patron) {
 /* ── Extracción de señales, dentro de la página ──────────────────────────── */
 
 const EXTRAER = `
-function __vis(el){ if(!el||!el.getClientRects||!el.getClientRects().length) return false; var cs=getComputedStyle(el); return cs.visibility!=='hidden'&&cs.display!=='none'; }
+/* «Pintado» tiene que mirar también la OPACIDAD, y la acumulada.
+   Esta funcion miraba visibility y display y no opacity, al contrario que su gemela
+   de la capa de pixeles. Una sola propiedad CSS cambiaba el informe entero, medido en
+   Chromium con dos paginas identicas salvo esa propiedad:
+     · un emergente revelado con opacity 0 a 1 no se observaba NUNCA (1 disparador, 0
+       hovers) y 1.4.13 salia «cumple» diciendo «se ha pasado el puntero por 1
+       disparador y no ha aparecido ninguno problematico» — las dos mitades falsas;
+       el mismo emergente con display none a block salia «falla» grave.
+     · un bloque con opacity 0 y texto recortado producia una falla GRAVE de 1.4.10
+       sobre 564 px de texto que nadie puede ver; con visibility hidden, nada.
+   Y la opacidad tiene que ser la ACUMULADA: getComputedStyle(el).opacity es la del
+   propio elemento, asi que los HIJOS de un opacity 0 tambien pasaban el filtro.
+   (Sin comillas invertidas en este comentario: vive dentro de una plantilla.) */
+function __opacidadAcum(el){
+  var o = 1, n = el;
+  while (n && n.nodeType === 1) {
+    var v = parseFloat(getComputedStyle(n).opacity);
+    if (!isNaN(v)) o *= v;
+    if (o === 0) return 0;
+    n = n.parentElement;
+  }
+  return o;
+}
+function __vis(el){ if(!el||!el.getClientRects||!el.getClientRects().length) return false; var cs=getComputedStyle(el); if(cs.visibility==='hidden'||cs.display==='none') return false; return __opacidadAcum(el) > 0; }
 function __cls(el){ var c=(el.getAttribute('class')||'').trim().split(/\\s+/).filter(Boolean)[0]; return c||''; }
 /* Firma de PLANTILLA: la forma de la MAQUETACIÓN, no del contenido.
    Landmarks en orden + la clase de body y de main + las clases de los bloques de

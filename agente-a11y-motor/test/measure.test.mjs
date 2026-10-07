@@ -41,3 +41,33 @@ test("MEASURE_SRC: es código inyectable que expone window.__a11yMeasure", () =>
   assert.match(MEASURE_SRC, /window\.__a11yMeasure/);
   assert.match(MEASURE_SRC, /function runChecksReal/);
 });
+
+/* ── Qué notas de cobertura ATAN veredictos y cuáles no (v0.37.0) ───────────
+ *
+ * La distinción que importa: se aprieta un criterio cuando algo NO se ha
+ * podido mirar, nunca cuando algo simplemente existe. Las notas se declaran en
+ * el código inyectado al navegador, así que esto se comprueba sobre su fuente —
+ * es lo único que se puede leer sin un navegador delante, y basta para que un
+ * `limita` no vuelva a aparecer donde no toca.
+ */
+test("la nota de MARCOS es informativa: tener un iframe no tumba la medición", () => {
+  // Llevó `limita` durante una tarde y un A/B lo retiró: el orquestador entra
+  // en cada marco con Playwright —también en los de otro origen— y los mide, así
+  // que un solo reproductor incrustado bajaba cinco criterios de `pasa` a
+  // `revisar` con el marco medido entero. Eso es ruido, y el ruido tapa barreras.
+  const i = MEASURE_SRC.indexOf('label: "Marcos: se auditan aparte"');
+  assert.ok(i > 0, "la nota de marcos sigue emitiéndose");
+  // Dentro del objeto de esa nota no puede haber `limita`.
+  const obj = MEASURE_SRC.slice(i, MEASURE_SRC.indexOf("});", i));
+  assert.doesNotMatch(obj, /limita\s*:/, "la nota de marcos NO debe atar criterios");
+});
+
+test("las notas de lo que NO se ha podido medir sí atan criterios", () => {
+  ["Medido detrás de un velo", "Shadow DOM cerrado", "Cobertura del contraste",
+    "Cobertura de los controles", "Foco visible sin foco del sistema"].forEach(function (etq) {
+    const i = MEASURE_SRC.indexOf('label: "' + etq + '"');
+    assert.ok(i > 0, "sigue emitiéndose: " + etq);
+    const obj = MEASURE_SRC.slice(i, MEASURE_SRC.indexOf("});", i));
+    assert.match(obj, /limita\s*:\s*\[/, etq + " debe declarar qué criterios limita");
+  });
+});

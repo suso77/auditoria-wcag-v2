@@ -349,7 +349,39 @@ const TOKEN_RULES = {
 };
 // Estados REQUERIDOS por rol (ARIA 1.2). tab NO requiere aria-selected (es "supported",
 // con valor por defecto false), por eso no está aquí.
-const REQUIRED_STATE = { checkbox: "aria-checked", switch: "aria-checked", menuitemcheckbox: "aria-checked", radio: "aria-checked", menuitemradio: "aria-checked", combobox: "aria-expanded" };
+/* Estados y propiedades que un rol declarado NECESITA para exponer su estado.
+ *
+ * La tabla tenía solo la familia de `aria-checked` y `combobox` a medias, así
+ * que un `<div role="slider" tabindex="0">` sin `aria-valuenow` salía 4.1.2
+ * «cumple»: un deslizador que no dice en qué valor está, declarado conforme.
+ *
+ * La lista es la de «Required States and Properties» de WAI-ARIA 1.2, §5.2.2
+ * («Content authors MUST provide a non-empty value for required states and
+ * properties»), comprobada contra la propia especificación y contra
+ * `aria-query` 5.3.2, que la publica en forma de datos. Doce roles, y solo
+ * doce. En concreto NO están, y no se exigen por mucho que lo parezca:
+ *   · `spinbutton` y `tab` — ARIA 1.2 no les exige ningún estado;
+ *   · `progressbar` — `aria-valuenow` ausente es justamente cómo se expresa el
+ *     progreso INDETERMINADO (la barra que gira sin saber cuánto queda);
+ *   · `aria-valuemin`/`aria-valuemax` — tienen valor por defecto (0 y 100), así
+ *     que su ausencia no deja el estado sin exponer.
+ *
+ * Los valores son LISTAS: `combobox` y `scrollbar` exigen dos cosas cada uno, y
+ * con un solo campo de texto se comprobaba una y se callaba la otra. */
+const REQUIRED_STATE = {
+  checkbox: ["aria-checked"], switch: ["aria-checked"],
+  menuitemcheckbox: ["aria-checked"], menuitemradio: ["aria-checked"], radio: ["aria-checked"],
+  combobox: ["aria-controls", "aria-expanded"],
+  scrollbar: ["aria-controls", "aria-valuenow"],
+  slider: ["aria-valuenow"], meter: ["aria-valuenow"],
+  heading: ["aria-level"],
+  option: ["aria-selected"]
+};
+/* `treeitem` también lleva `aria-selected` entre los requeridos (lo hereda de
+ * `option`), pero la guía de patrones ARIA dice explícitamente que en un árbol
+ * de selección ÚNICA se puede omitir. Emitir `falla` ahí sería un falso
+ * positivo en un patrón correcto, así que va como sospecha. */
+const ESTADO_SOSPECHA = { treeitem: ["aria-selected"] };
 function ariaValidation(el, tag, role, explicitRole, implicit) {
   const obs = [];
   if (explicitRole) {
@@ -388,9 +420,23 @@ function ariaValidation(el, tag, role, explicitRole, implicit) {
   });
   // Un input nativo checkbox/radio ya expone el estado "checked" por el DOM: no exigir aria-checked.
   const type = (el.getAttribute("type") || "").toLowerCase();
-  const nativeChecked = REQUIRED_STATE[role] === "aria-checked" && tag === "input" && (type === "checkbox" || type === "radio");
-  if (explicitRole && REQUIRED_STATE[role] && !el.hasAttribute(REQUIRED_STATE[role]) && !nativeChecked) {
-    obs.push({ html: "Un <code>" + esc(role) + "</code> declarado con <code>role</code> necesita <code>" + REQUIRED_STATE[role] + "</code> para exponer su estado a la API de accesibilidad.", crit: "4.1.2", sev: "grave", type: "aria-missing-state" });
+  const nativeInput = tag === "input" && (type === "checkbox" || type === "radio");
+  // `aria-level` de un encabezado lo da el propio <h1>…<h6>: no se exige aparte.
+  const nativeHeading = /^h[1-6]$/.test(tag);
+  if (explicitRole) {
+    (REQUIRED_STATE[role] || []).forEach(function (attr) {
+      if (el.hasAttribute(attr)) return;
+      if (attr === "aria-checked" && nativeInput) return;
+      if (attr === "aria-level" && nativeHeading) return;
+      obs.push({ html: "Un <code>" + esc(role) + "</code> declarado con <code>role</code> necesita <code>" + attr + "</code> para exponer su estado a la API de accesibilidad.", crit: "4.1.2", sev: "grave", type: "aria-missing-state" });
+    });
+    (ESTADO_SOSPECHA[role] || []).forEach(function (attr) {
+      if (el.hasAttribute(attr)) return;
+      obs.push({
+        html: "Un <code>" + esc(role) + "</code> lleva <code>" + attr + "</code> entre los estados requeridos de ARIA. Se puede omitir si el árbol es de selección ÚNICA; si se puede seleccionar más de un nodo, falta el estado.",
+        crit: "4.1.2", sev: "moderada", type: "aria-missing-state-duda", nivel: "revisar"
+      });
+    });
   }
   return obs;
 }
@@ -447,7 +493,18 @@ const WCAG22 = [
   { n: "1.2.5", t: "Audiodescripción (grabado)", lvl: "AA", pr: "Perceptible", scope: "medios", det: "manual",
     d: "El vídeo grabado necesita audiodescripción.", ap: function (m) { return m.isMedia; } },
   { n: "1.3.1", t: "Información y relaciones", lvl: "A", pr: "Perceptible", scope: "componente", det: "auto",
-    d: "La estructura y las relaciones deben exponerse por código.", ap: function (m) { return m.isFormControl || m.isHeading || m.interactive || m.isImage || m.relations.length > 0; } },
+    /* Las tablas y las listas entran en el criterio por derecho propio.
+     *
+     * Sin ellas, una tabla CORRECTA (con `<th>` y `<caption>`) no recibía
+     * ningún veredicto de 1.3.1: el criterio no aparecía, y un criterio que no
+     * aparece se lee en el informe igual que uno conforme. Ahora una tabla bien
+     * marcada dice «cumple» y una sin encabezados dice «falla»: las dos cosas
+     * son afirmaciones, y eso es lo que se puede defender. */
+    d: "La estructura y las relaciones deben exponerse por código.",
+    ap: function (m) {
+      return m.isFormControl || m.isHeading || m.interactive || m.isImage || m.relations.length > 0 ||
+        ["table", "grid", "treegrid", "list", "rowheader", "columnheader"].indexOf(m.role) !== -1;
+    } },
   { n: "1.3.2", t: "Secuencia significativa", lvl: "A", pr: "Perceptible", scope: "página", det: "manual",
     d: "El orden de lectura debe ser correcto cuando el orden importa.", ap: function () { return false; } },
   { n: "1.3.3", t: "Características sensoriales", lvl: "A", pr: "Perceptible", scope: "contexto", det: "manual",
@@ -714,13 +771,26 @@ function nodeObservations(model) {
   // un manejador de teclado, y desde el marcado no se ve si lo hay (puede estar
   // en un addEventListener). Antes esto salía «2.1.1 cumple»: la barrera más
   // común de la web, declarada conforme.
-  if (model.role !== "(genérico)" && model.role !== "(sin rol)" &&
-      INTERACTIVE_ROLES.indexOf(model.role) !== -1 &&
+  /* El rol NO es lo que hace que algo sea un control: lo que lo hace es que
+   * responda al ratón. Esta comprobación estaba atada a `INTERACTIVE_ROLES`, así
+   * que el caso más vulgar de la web —`<div tabindex="0" onclick="…">` SIN rol—
+   * se escapaba entero y 2.1.1 salía «cumple». Y es el peor de los dos: un
+   * `role="button"` sin manejador de teclado al menos se anuncia como botón;
+   * este no se anuncia como nada Y tampoco se activa con el teclado.
+   *
+   * (Que además no tenga rol es una barrera de 4.1.2, y ahí ya se emite. Aquí lo
+   * que se dice es lo de 2.1.1: que recibir el foco no es ser operable.) */
+  const conRol = model.role !== "(genérico)" && model.role !== "(sin rol)" && INTERACTIVE_ROLES.indexOf(model.role) !== -1;
+  const porClic = model.hasClick && !conRol;
+  if ((conRol || porClic) &&
       NATIVOS_OPERABLES.indexOf(model.tag) === -1 &&
       model.focusable && !model.disabled) {
     const conTeclado = model.hasKeyHandler;
+    const quien = conRol
+      ? "Control no nativo (<code>&lt;" + esc(model.tag) + '&gt;</code> con <code>role="' + esc(model.role) + '"</code>)'
+      : "Elemento con <code>onclick</code> y <code>tabindex</code> pero SIN rol (<code>&lt;" + esc(model.tag) + "&gt;</code>)";
     obs.push({
-      html: "Control no nativo (<code>&lt;" + esc(model.tag) + '&gt;</code> con <code>role="' + esc(model.role) + '"</code>): recibe el foco, pero Enter y Espacio no lo activan solos como harían en un elemento nativo' +
+      html: quien + ": recibe el foco, pero Enter y Espacio no lo activan solos como harían en un elemento nativo" +
         (conTeclado ? ", y aunque declara un manejador de teclado en el marcado hay que comprobar que responde a las dos teclas" : ". No se ve ningún manejador de teclado en el marcado") +
         ". Compruébalo con el teclado.",
       crit: "2.1.1", sev: "crítica", type: "custom-control-keyboard", nivel: "revisar"
@@ -849,10 +919,13 @@ function buildLocator(el, tag) {
 }
 
 let NODE_SEQ = 0;
-function makeNode(el, doc, depth) {
+function makeNode(el, doc, depth, presentacionHeredada) {
   const tag = el.tagName.toLowerCase();
   const explicitRole = el.getAttribute("role");
-  const implicit = implicitRole(el);
+  // Un descendiente estructural de un contenedor con `role="presentation"`
+  // tampoco expone su rol implícito (ARIA 1.2): si no, el nodo seguiría
+  // apareciendo en el informe como `cell` o `row` de una tabla que ya no existe.
+  const implicit = presentacionHeredada ? "presentation" : implicitRole(el);
   const role = explicitRole ? explicitRole.split(/\s+/)[0] : implicit;
   const disabled = el.hasAttribute("disabled");
   const focusable = keyboardFocusable(el);
@@ -915,8 +988,40 @@ function isTransparent(el, role, name, interactive) {
   return stripped && !interactive && !name && !el.hasAttribute("aria-live");
 }
 
+/* `role="presentation"` SE HEREDA a los elementos estructurales obligatorios.
+ *
+ * WAI-ARIA 1.2: «When an explicit or inherited role of presentation is applied
+ * to an element with the implicit semantic of a WAI-ARIA role that has required
+ * owned elements, […] the user agent MUST apply an inherited role of
+ * presentation to any owned elements that do not have an explicit role
+ * defined», y la especificación pone de ejemplo exactamente este caso: «the
+ * implicit native semantics of an HTML table element's thead/tbody/tfoot/tr/
+ * th/td descendants will also be removed».
+ *
+ * El motor no lo hacía, y el resultado era un falso positivo grave en el
+ * marcado RECOMENDADO para una tabla de maquetación: `<table
+ * role="presentation">` perdía el rol de la tabla pero sus `<tr>` seguían
+ * siendo `row`, así que cada fila salía como «row huérfano» y el criterio 1.3.1
+ * se declaraba FALLA grave en una tabla correctamente marcada. Y lo mismo con
+ * `<ul role="presentation">` y sus `<li>`.
+ *
+ * Clave: el tag del contenedor; valor: los tags cuya semántica implícita se
+ * cae con él. La herencia es transitiva por la cadena (table → tr → td).
+ */
+const ESTRUCTURA_OBLIGADA = {
+  table: ["thead", "tbody", "tfoot", "tr", "th", "td", "caption", "colgroup", "col"],
+  tr: ["th", "td"], thead: ["tr", "th", "td"], tbody: ["tr", "th", "td"], tfoot: ["tr", "th", "td"],
+  ul: ["li"], ol: ["li"], menu: ["li"], dl: ["dt", "dd", "div"]
+};
+/** ¿Hereda este elemento la presentación del contenedor que la perdió? */
+function heredaPresentacion(el, tagsCaidos) {
+  if (!tagsCaidos || !tagsCaidos.length) return false;
+  if (el.getAttribute("role")) return false;   // un rol explícito corta la herencia
+  return tagsCaidos.indexOf(el.tagName.toLowerCase()) !== -1;
+}
+
 // Recorre el DOM y produce nodos expuestos; los contenedores genéricos vacíos se colapsan.
-function collectTree(el, doc, depth, ctx, ancestors) {
+function collectTree(el, doc, depth, ctx, ancestors, tagsCaidos) {
   ancestors = ancestors || [];
   const info = isExposedInfo(el);
   if (!info.exposed) {
@@ -927,24 +1032,30 @@ function collectTree(el, doc, depth, ctx, ancestors) {
     return [];
   }
   const explicitRole = el.getAttribute("role");
-  const role = explicitRole ? explicitRole.split(/\s+/)[0] : implicitRole(el);
+  const presentacionHeredada = heredaPresentacion(el, tagsCaidos);
+  const role = explicitRole ? explicitRole.split(/\s+/)[0]
+    : (presentacionHeredada ? "presentation" : implicitRole(el));
   const nameObj = accessibleName(el, doc, role);
   const focusable = keyboardFocusable(el);
   const interactive = focusable || INTERACTIVE_ROLES.indexOf(role) !== -1 || el.hasAttribute("onclick");
+  const tag = el.tagName.toLowerCase();
 
   if (isTransparent(el, role, nameObj.name, interactive)) {
+    // Si el que pierde la semántica es un contenedor con estructura obligada,
+    // sus descendientes estructurales la pierden también (ARIA 1.2).
+    const caen = (role === "none" || role === "presentation") ? (ESTRUCTURA_OBLIGADA[tag] || null) : null;
     let out = [];
-    childElements(el).forEach(function (c) { out = out.concat(collectTree(c, doc, depth, ctx, ancestors)); });
+    childElements(el).forEach(function (c) { out = out.concat(collectTree(c, doc, depth, ctx, ancestors, caen)); });
     return out;
   }
-  const node = makeNode(el, doc, depth);
+  const node = makeNode(el, doc, depth, presentacionHeredada);
   const req = REQUIRED_PARENT[node.role];
   if (req && !req.some(function (r) { return ancestors.indexOf(r) !== -1; })) {
     node.observations.push({ html: "Un <code>" + esc(node.role) + "</code> debe estar dentro de un <code>" + req.join("</code> o <code>") + "</code>; aquí aparece huérfano.", crit: "1.3.1", sev: "grave", type: "orphan-role" });
   }
   if (CONTAINER_ROLES.has(role)) {
     const childAnc = ancestors.concat(role);
-    childElements(el).forEach(function (c) { node.children = node.children.concat(collectTree(c, doc, depth + 1, ctx, childAnc)); });
+    childElements(el).forEach(function (c) { node.children = node.children.concat(collectTree(c, doc, depth + 1, ctx, childAnc, null)); });
   }
   return [node];
 }
@@ -1000,6 +1111,41 @@ function structuralObservations(all, ctx) {
     const owned = REQUIRED_OWNED[n.role];
     if (owned && n.children.length && !flatten(n.children).some(function (c) { return owned.indexOf(c.role) !== -1; })) {
       obs.push({ html: "Un <code>" + esc(n.role) + "</code> no contiene ningún <code>" + owned.join("</code>/<code>") + "</code>: la estructura del patrón está incompleta.", crit: "1.3.1", sev: "grave", node: nd, type: "owned-missing" });
+    }
+    /* Una tabla SIN NINGUNA celda de encabezado.
+     *
+     * Esto no se comprobaba en ninguna capa, y es la barrera clásica de 1.3.1:
+     * la tabla salía «cumple · Determinable desde el marcado y correcto», que en
+     * el IRA se lee «Correcto». Un lector de pantalla que recorre una tabla sin
+     * `<th>` canta los números sin decir de qué columna son, y la relación entre
+     * el dato y su cabecera —que es literalmente lo que pide el criterio— no
+     * está expuesta por código.
+     *
+     * Y da igual de qué tabla se trate: si son datos, le faltan los encabezados;
+     * si es una tabla de maquetación, no debería estar exponiendo rol de tabla
+     * (le falta `role="presentation"`). Las dos lecturas son el mismo defecto de
+     * 1.3.1, así que se dicen las dos y decide quien audita. */
+    if (n.role === "table" || n.role === "grid" || n.role === "treegrid") {
+      const dentro = flatten(n.children);
+      const cabeceras = dentro.filter(function (c) { return c.role === "columnheader" || c.role === "rowheader"; });
+      const filas = dentro.filter(function (c) { return c.role === "row"; });
+      const celdasPorFila = filas.map(function (f) {
+        return flatten(f.children).filter(function (c) { return c.role === "cell" || c.role === "gridcell" || c.role === "columnheader" || c.role === "rowheader"; }).length;
+      });
+      const anchoMax = celdasPorFila.length ? Math.max.apply(null, celdasPorFila) : 0;
+      if (!cabeceras.length && filas.length) {
+        // Con una sola fila o una sola columna puede ser cualquier cosa; con dos
+        // por dos, la forma ya es de tabla de datos.
+        const formaDeDatos = filas.length >= 2 && anchoMax >= 2;
+        obs.push({
+          html: "Una tabla de " + filas.length + "×" + anchoMax + " sin NINGUNA celda de encabezado (<code>&lt;th&gt;</code> o <code>role=\"columnheader\"/\"rowheader\"</code>): " +
+            "los datos se anuncian sin decir a qué columna o fila pertenecen. Si son datos, marca los encabezados con <code>&lt;th scope=\"col\"&gt;</code> o <code>scope=\"row\"</code>" +
+            (dentro.some(function (c) { return c.tag === "caption"; }) ? "" : " y pon un <code>&lt;caption&gt;</code>") +
+            "; si la tabla es solo de maquetación, quítale la semántica con <code>role=\"presentation\"</code>.",
+          crit: "1.3.1", sev: formaDeDatos ? "grave" : "moderada", node: nd,
+          type: "table-sin-cabeceras", nivel: formaDeDatos ? undefined : "revisar"
+        });
+      }
     }
   });
   return obs;

@@ -38,7 +38,30 @@ const HELPERS = `
 function __loc(el){ if(!el||el.nodeType!==1) return null; var t=el.tagName.toLowerCase(); if(el.id) return t+'#'+el.id; var c=(el.getAttribute('class')||'').trim().split(/\\s+/).filter(Boolean)[0]; if(c) return t+'.'+c; return t; }
 function __uid(el){ var p=[],n=el,t; while(n&&n.nodeType===1){ t=n.tagName.toLowerCase(); if(t==='html'||t==='body') break; var pa=n.parentElement; if(!pa){p.unshift(t);break;} var i=1,s=pa.firstElementChild; while(s&&s!==n){ if(s.tagName===n.tagName) i++; s=s.nextElementSibling; } p.unshift(t+':nth-of-type('+i+')'); n=pa; } return p.length?'html > body > '+p.join(' > '):'body'; }
 function __texto(el){ var s='',k=el.childNodes||[]; for(var i=0;i<k.length;i++) if(k[i].nodeType===3) s+=k[i].nodeValue||''; return s.replace(/\\s+/g,' ').trim(); }
-function __pintado(el){ if(!el.getClientRects||!el.getClientRects().length) return false; var cs=getComputedStyle(el); return cs.visibility!=='hidden'&&cs.display!=='none'; }
+/* «Pintado» tiene que mirar también la OPACIDAD, y la acumulada.
+   Esta funcion miraba visibility y display y no opacity, al contrario que su gemela
+   de la capa de pixeles. Una sola propiedad CSS cambiaba el informe entero, medido en
+   Chromium con dos paginas identicas salvo esa propiedad:
+     · un emergente revelado con opacity 0 a 1 no se observaba NUNCA (1 disparador, 0
+       hovers) y 1.4.13 salia «cumple» diciendo «se ha pasado el puntero por 1
+       disparador y no ha aparecido ninguno problematico» — las dos mitades falsas;
+       el mismo emergente con display none a block salia «falla» grave.
+     · un bloque con opacity 0 y texto recortado producia una falla GRAVE de 1.4.10
+       sobre 564 px de texto que nadie puede ver; con visibility hidden, nada.
+   Y la opacidad tiene que ser la ACUMULADA: getComputedStyle(el).opacity es la del
+   propio elemento, asi que los HIJOS de un opacity 0 tambien pasaban el filtro.
+   (Sin comillas invertidas en este comentario: vive dentro de una plantilla.) */
+function __opacidadAcum(el){
+  var o = 1, n = el;
+  while (n && n.nodeType === 1) {
+    var v = parseFloat(getComputedStyle(n).opacity);
+    if (!isNaN(v)) o *= v;
+    if (o === 0) return 0;
+    n = n.parentElement;
+  }
+  return o;
+}
+function __pintado(el){ if(!el.getClientRects||!el.getClientRects().length) return false; var cs=getComputedStyle(el); if(cs.visibility==='hidden'||cs.display==='none') return false; return __opacidadAcum(el) > 0; }
 /* Qué medir. Dos familias, y las dos hacen falta:
    1. Los elementos que pintan texto propio: son los que crecen al cambiar el
       espaciado o el tamaño.
@@ -482,9 +505,12 @@ export async function viewportAnalyze(target, opts) {
       const bloqueo = await evalIn(page, `
         var src='';
         Array.prototype.forEach.call(document.querySelectorAll('script:not([src])'), function(s){ src += s.textContent||''; });
-        var media=[];
+        var media=[], ilegibles=0;
         Array.prototype.forEach.call(document.styleSheets, function(ss){
-          var rules=null; try { rules=ss.cssRules; } catch(e) { return; }  // hoja de otro origen
+          /* Una hoja de otro origen lanza al tocar cssRules. Se CUENTA: si se
+             descartara en silencio, 1.3.4 podría decir "no hay bloqueo de
+             orientación" sobre un CSS que nunca se ha podido leer. */
+          var rules=null; try { rules=ss.cssRules; } catch(e) { ilegibles++; return; }
           if(!rules) return;
           Array.prototype.forEach.call(rules, function(r){
             if(r.type===4 && /orientation/i.test(r.conditionText||r.media&&r.media.mediaText||'')){
@@ -500,7 +526,7 @@ export async function viewportAnalyze(target, opts) {
         var observado = (window.__a11yOrientacion && window.__a11yOrientacion.llamadas) || [];
         var enTexto = /screen\\s*\\.\\s*orientation\\s*\\.\\s*lock\\s*\\(|lockOrientation\\s*\\(/.test(src);
         return { bloqueoJS: observado.length > 0, llamadas: observado.slice(0, 6),
-                 enScriptEnLinea: enTexto, mediaBloqueante: media };`);
+                 enScriptEnLinea: enTexto, mediaBloqueante: media, hojasIlegibles: ilegibles };`);
       await page.setViewportSize({ width: 390, height: 844 });
       await page.waitForTimeout(250);
       const vert = await evalIn(page, "return (document.body?document.body.innerText:'').replace(/\\s+/g,' ').trim().length;");

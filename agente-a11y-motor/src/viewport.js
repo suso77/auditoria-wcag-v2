@@ -177,7 +177,21 @@ export function analyzeTextSpacing(trace) {
 
 /**
  * 1.3.4 Orientación: el contenido no se restringe a una sola orientación.
- * @param {{ bloqueoJS?:boolean, mediaBloqueante?:Array<string>, textoVertical?:number, textoHorizontal?:number }} trace
+ *
+ * Dos honestidades que este criterio se había dejado por el camino:
+ *
+ * 1. El rastreo recorre `document.styleSheets` buscando `@media (orientation:…)`
+ *    y una hoja de otro origen lanza al tocar `cssRules`. Eso se descartaba en
+ *    silencio, y la rama de conformidad afirmaba «y no hay bloqueo de
+ *    orientación» sobre un CSS que nunca se había podido leer. Ahora el rastreo
+ *    cuenta esas hojas (`hojasIlegibles`) y aquí la conformidad no se declara
+ *    mientras haya alguna sin leer: se dice qué parte no se ha mirado.
+ * 2. Si la medida de texto en las dos orientaciones no llega (0 caracteres en
+ *    una de ellas, página sin cuerpo legible), antes no se emitía NADA y el
+ *    criterio quedaba en blanco — que en el informe se lee igual que conforme.
+ *
+ * @param {{ bloqueoJS?:boolean, mediaBloqueante?:Array<string>, hojasIlegibles?:number,
+ *           textoVertical?:number, textoHorizontal?:number }} trace
  */
 export function analyzeOrientation(trace) {
   if (!trace) return [];
@@ -190,14 +204,22 @@ export function analyzeOrientation(trace) {
     out.push(F("1.3.4", "revisar", null, ["Hay reglas CSS que ocultan contenido según la orientación (" + trace.mediaBloqueante.slice(0, 3).join(" · ") + "): comprueba que no se pierda nada al girar."]));
     return out;
   }
+  const ilegibles = trace.hojasIlegibles || 0;
+  const noLeido = ilegibles
+    ? " No se han podido leer " + ilegibles + " hoja(s) de estilo de otro origen, así que la búsqueda de reglas <code>@media (orientation:…)</code> está incompleta."
+    : "";
   const v = trace.textoVertical || 0, h = trace.textoHorizontal || 0;
   if (v && h) {
     const perdida = Math.round((1 - Math.min(v, h) / Math.max(v, h)) * 100);
     if (perdida >= 15) {
-      out.push(F("1.3.4", "revisar", null, ["Al girar el dispositivo cambia un " + perdida + " % la cantidad de texto visible (" + h + " → " + v + " caracteres): revisa que no se pierda contenido en una de las orientaciones."]));
+      out.push(F("1.3.4", "revisar", null, ["Al girar el dispositivo cambia un " + perdida + " % la cantidad de texto visible (" + h + " → " + v + " caracteres): revisa que no se pierda contenido en una de las orientaciones." + noLeido]));
+    } else if (ilegibles) {
+      out.push(F("1.3.4", "revisar", null, ["El contenido se mantiene en vertical y en horizontal (diferencia del " + perdida + " %) y no se ha visto ninguna llamada a <code>screen.orientation.lock()</code>." + noLeido + " Comprueba a mano que ninguna de esas hojas oculte contenido al girar."]));
     } else {
       out.push(F("1.3.4", "cumple", null, ["El contenido se mantiene en vertical y en horizontal (diferencia del " + perdida + " %) y no hay bloqueo de orientación."]));
     }
+  } else {
+    out.push(F("1.3.4", "revisar", null, ["No se ha podido comparar el contenido en las dos orientaciones (caracteres legibles: " + h + " en horizontal, " + v + " en vertical), así que no se puede afirmar que no se pierda nada al girar." + noLeido]));
   }
   return out;
 }

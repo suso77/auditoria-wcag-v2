@@ -12,10 +12,28 @@ function verdicts(html) {
   return map;
 }
 
+const PARRAFO_ES = "<p>El centro de visitantes abre todos los d\u00edas de la semana desde las nueve de la ma\u00f1ana hasta las siete de la tarde, y la entrada al museo es gratuita para los ni\u00f1os menores de doce a\u00f1os.</p>";
+const PARRAFO_EN = "<p>The visitor centre opens every day of the week from nine in the morning until seven in the evening, and the entrance to the museum is free for children under the age of twelve.</p>";
+
 test("página con título e idioma → 2.4.2 cumple-parcial (lo descriptivo lo juzga una persona) y 3.1.1 cumple", () => {
-  const v = verdicts('<html lang="es"><head><title>Inicio</title></head><body><main><h1>Hola</h1></main></body></html>');
+  const v = verdicts('<html lang="es"><head><title>Inicio</title></head><body><main><h1>Hola</h1>' + PARRAFO_ES + '</main></body></html>');
   assert.ok(v["2.4.2"].includes("cumple-parcial"));
   assert.ok(v["3.1.1"].includes("cumple"));
+});
+
+test("un lang bien escrito sobre texto de OTRO idioma no es conformidad", () => {
+  // 3.1.1 no pide un atributo bien formado: pide que el idioma por omisión se
+  // pueda determinar. Una página en inglés con lang="es" se lee con voz
+  // española, y el motor la declaraba «cumple».
+  const v = verdicts('<html lang="es"><head><title>Home</title></head><body><main><h1>Welcome</h1>' + PARRAFO_EN + '</main></body></html>');
+  assert.ok(v["3.1.1"].includes("revisar"), JSON.stringify(v["3.1.1"]));
+  assert.ok(!v["3.1.1"].includes("cumple"));
+});
+
+test("sin texto que comparar, el lang bien formado es cumple-parcial, no cumple", () => {
+  const v = verdicts('<html lang="es"><head><title>t</title></head><body><main><h1>Hola</h1></main></body></html>');
+  assert.ok(v["3.1.1"].includes("cumple-parcial"), JSON.stringify(v["3.1.1"]));
+  assert.ok(!v["3.1.1"].includes("cumple"));
 });
 
 test("sin <title> → falla 2.4.2", () => {
@@ -66,8 +84,11 @@ test("regresión: <header role=\"banner\"> cuenta UNA vez, no dos", () => {
 });
 
 test("regresión: lang en mayúsculas es BCP-47 válido", () => {
-  const v = verdicts('<html lang="ES-es"><head><title>t</title></head><body><main><h1>x</h1></main></body></html>');
-  assert.ok(v["3.1.1"].includes("cumple"));
+  // Lo que este test defiende es que `ES-es` NO es una etiqueta inválida; con
+  // texto español delante, el veredicto es conformidad.
+  const v = verdicts('<html lang="ES-es"><head><title>t</title></head><body><main><h1>x</h1>' + PARRAFO_ES + '</main></body></html>');
+  assert.ok(v["3.1.1"].includes("cumple"), JSON.stringify(v["3.1.1"]));
+  assert.ok(!v["3.1.1"].includes("falla"));
 });
 
 test("regresión: encabezados ocultos no cuentan para el salto de jerarquía", () => {
@@ -165,15 +186,25 @@ test("un bloque en otro idioma sin lang queda a revisar", () => {
 });
 
 test("si el bloque declara su idioma, no se señala", () => {
-  assert.deepEqual(soloDe(BASE + "<p>" + ES + '</p><p lang="en">' + EN + "</p></main></body></html>", /3\.1\.2/), []);
+  // Lo que este test defiende es que NO se señale, no que el criterio se calle:
+  // desde v0.37.0 emite su `cumple-parcial` diciendo qué ha revisado y qué no
+  // alcanza a ver la detección. Un criterio en blanco se lee como conforme.
+  const f = soloDe(BASE + "<p>" + ES + '</p><p lang="en">' + EN + "</p></main></body></html>", /3\.1\.2/);
+  assert.deepEqual(f.map((x) => x.verdict), ["cumple-parcial"]);
+  assert.ok(!f.some((x) => /parecen estar en un idioma distinto/.test(x.evid.join(" "))));
 });
 
 test("un texto corto no basta para afirmar nada sobre el idioma", () => {
-  assert.deepEqual(soloDe(BASE + "<p>" + ES + "</p><p>The quick brown fox.</p></main></body></html>", /3\.1\.2/), []);
+  const f = soloDe(BASE + "<p>" + ES + "</p><p>The quick brown fox.</p></main></body></html>", /3\.1\.2/);
+  assert.deepEqual(f.map((x) => x.verdict), ["cumple-parcial"]);
+  // Y el propio veredicto avisa de ese límite, que es lo que lo hace honesto.
+  assert.match(f[0].evid.join(" "), /25 palabras/);
 });
 
 test("una página entera en su idioma no genera falsos de 3.1.2", () => {
-  assert.deepEqual(soloDe(BASE + "<p>" + ES + "</p><p>" + ES + "</p></main></body></html>", /3\.1\.2/), []);
+  const f = soloDe(BASE + "<p>" + ES + "</p><p>" + ES + "</p></main></body></html>", /3\.1\.2/);
+  assert.deepEqual(f.map((x) => x.verdict), ["cumple-parcial"]);
+  assert.ok(!f.some((x) => x.verdict === "revisar"));
 });
 
 /* ── Criterios de interacción: lo que sí se ve en el marcado ─────────────── */
@@ -367,4 +398,26 @@ test("1.4.2: era el último «No evaluado» de los 55, y ya no lo es", () => {
   // Y lo que sí es una falla sigue siéndolo.
   const malo = uno('<audio src="/a.mp3" autoplay></audio>');
   assert.equal(malo[0].verdict, "falla");
+});
+
+/* ── 3.1.2 habla siempre, también cuando no encuentra nada (v0.37.0) ───────── */
+test("3.1.2 no se queda en blanco en una página de un solo idioma", () => {
+  // Solo hablaba al encontrar un bloque sospechoso, así que una página
+  // homogénea salía «No evaluado» en la hoja de seguimiento — que se lee igual
+  // que «nadie lo miró».
+  const v = verdicts('<html lang="es"><head><title>t</title></head><body><main><h1>x</h1>' + PARRAFO_ES + '</main></body></html>');
+  assert.deepEqual(v["3.1.2"], ["cumple-parcial"]);
+
+  // Con un bloque en otro idioma sin marcar, sigue siendo `revisar`.
+  const mezcla = verdicts('<html lang="es"><head><title>t</title></head><body><main>' + PARRAFO_ES + PARRAFO_EN + '</main></body></html>');
+  assert.ok(mezcla["3.1.2"].includes("revisar"));
+
+  // Y marcado con su propio lang, deja de ser sospechoso.
+  const marcado = verdicts('<html lang="es"><head><title>t</title></head><body><main>' + PARRAFO_ES + PARRAFO_EN.replace("<p>", '<p lang="en">') + '</main></body></html>');
+  assert.deepEqual(marcado["3.1.2"], ["cumple-parcial"]);
+});
+
+test("sin lang en <html>, 3.1.2 tampoco se declara conforme", () => {
+  const v = verdicts('<html><head><title>t</title></head><body><main>' + PARRAFO_ES + '</main></body></html>');
+  assert.deepEqual(v["3.1.2"], ["revisar"]);
 });

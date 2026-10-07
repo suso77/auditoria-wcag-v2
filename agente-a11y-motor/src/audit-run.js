@@ -29,6 +29,7 @@ import { rollupSample } from "./sample-audit.js";
 import { reconcile } from "./axe-cross.js";
 import { cuadernoDeMuestra, findingsDelCuaderno } from "./cuaderno.js";
 import { WCAG22, enClause } from "./engine.js";
+import { aplicaCoberturas } from "./verdicts.js";
 
 const WIX = {};
 WCAG22.forEach(function (c) { WIX[c.n] = { t: c.t, lvl: c.lvl }; });
@@ -120,9 +121,17 @@ export function axeFindingsNuevos(violations, yaFallan) {
   return out;
 }
 
-/** Mediciones por píxeles → hallazgos con forma de criterio. */
+/**
+ * Mediciones por píxeles → hallazgos con forma de criterio.
+ *
+ * `__meta` no es un criterio: es la nota de cobertura de la propia sonda (las
+ * restauraciones que no alcanzaron a un elemento). Sin filtrarla, esa nota
+ * instrumental se convertía en una fila de 1.4.3 «revisar» con el texto de la
+ * sonda dentro, mezclada con las barreras de contraste de verdad. Va por la vía
+ * de las coberturas, que es la que ahora ata los veredictos.
+ */
 export function pixelFindings(mediciones) {
-  return (mediciones || []).map(function (m) {
+  return (mediciones || []).filter(function (m) { return m && m.crit !== "__meta"; }).map(function (m) {
     return {
       c: { n: "1.4.3", t: WIX["1.4.3"].t, lvl: WIX["1.4.3"].lvl },
       verdict: m.verdict,
@@ -237,6 +246,32 @@ export async function auditRun(target, opts) {
       (viewport && viewport.findings) || [],
       (dynamic && dynamic.findings) || []
     );
+
+    /* Las notas de cobertura ATAN los criterios que limitan.
+     *
+     * Hasta aquí estas notas solo iban a `avisos` —prosa al final del informe—
+     * y no tocaban ningún veredicto. El resultado era una incoherencia dentro
+     * del propio agente: la capa de adaptación bajaba a `revisar` cuando su
+     * medición estaba recortada (`informeRecorte`), mientras que la de render
+     * podía declarar 2.4.3 `pasa` habiendo medido 20 de 500 controles, con la
+     * nota que lo decía a cuatro páginas de distancia. Un criterio medido a
+     * medias no es un criterio conforme. */
+    const coberturas = ((render && render.coberturas) || [])
+      .concat((pixeles || []).filter(function (m) { return m && m.crit === "__meta"; }));
+    const ataduras = aplicaCoberturas(findings, coberturas);
+    findings = ataduras.findings;
+    // Un aviso por CRITERIO, no por elemento: con el tope bajo, 200 controles
+    // daban 102 líneas repitiendo lo mismo y el informe era ilegible.
+    const porCriterio = {};
+    ataduras.atados.forEach(function (a) {
+      const k = a.n + "||" + a.por;
+      porCriterio[k] = (porCriterio[k] || 0) + 1;
+    });
+    Object.keys(porCriterio).forEach(function (k) {
+      const p = k.split("||");
+      avisos.push("El criterio " + p[0] + " no se declara conforme en " + porCriterio[k] +
+        " medición(es): la medición de la página está incompleta — " + p[1] + ".");
+    });
 
     // axe: solo lo que el motor no ha visto ya.
     let axeExtra = [], reconciliacion = null;

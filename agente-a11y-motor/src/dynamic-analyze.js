@@ -58,7 +58,30 @@ function __uid(el){
   }
   return parts.length ? 'html > body > '+parts.join(' > ') : 'body';
 }
-function __visible(el){ if(!el) return false; var r=el.getClientRects(); if(!r.length) return false; var cs=getComputedStyle(el); return cs.visibility!=='hidden' && cs.display!=='none'; }
+/* «Pintado» tiene que mirar también la OPACIDAD, y la acumulada.
+   Esta funcion miraba visibility y display y no opacity, al contrario que su gemela
+   de la capa de pixeles. Una sola propiedad CSS cambiaba el informe entero, medido en
+   Chromium con dos paginas identicas salvo esa propiedad:
+     · un emergente revelado con opacity 0 a 1 no se observaba NUNCA (1 disparador, 0
+       hovers) y 1.4.13 salia «cumple» diciendo «se ha pasado el puntero por 1
+       disparador y no ha aparecido ninguno problematico» — las dos mitades falsas;
+       el mismo emergente con display none a block salia «falla» grave.
+     · un bloque con opacity 0 y texto recortado producia una falla GRAVE de 1.4.10
+       sobre 564 px de texto que nadie puede ver; con visibility hidden, nada.
+   Y la opacidad tiene que ser la ACUMULADA: getComputedStyle(el).opacity es la del
+   propio elemento, asi que los HIJOS de un opacity 0 tambien pasaban el filtro.
+   (Sin comillas invertidas en este comentario: vive dentro de una plantilla.) */
+function __opacidadAcum(el){
+  var o = 1, n = el;
+  while (n && n.nodeType === 1) {
+    var v = parseFloat(getComputedStyle(n).opacity);
+    if (!isNaN(v)) o *= v;
+    if (o === 0) return 0;
+    n = n.parentElement;
+  }
+  return o;
+}
+function __visible(el){ if(!el) return false; var r=el.getClientRects(); if(!r.length) return false; var cs=getComputedStyle(el); if(cs.visibility==='hidden'||cs.display==='none') return false; return __opacidadAcum(el) > 0; }
 function __apagado(el){
   /* \`disabled\` se HEREDA de <fieldset disabled>, y el atributo no está en el hijo.
      Mirando solo \`hasAttribute('disabled')\`, los campos de un fieldset deshabilitado
@@ -852,9 +875,28 @@ export async function dynamicAnalyze(target, opts) {
             if(d){ d.split(/\\s+/).forEach(function(id){ var r=document.getElementById(id); if(r) dt+=' '+(r.textContent||''); }); }
             var emt='';
             var em=el.getAttribute('aria-errormessage'); if(em){ var r2=document.getElementById(em); if(r2) emt+=' '+(r2.textContent||''); }
+            /* Si el campo está DE VERDAD en error, lo dice el navegador.
+             *
+             * (OJO: sin comillas invertidas en este comentario — vive dentro de
+             * un template literal y cerrarían la cadena.)
+             *
+             * Aquí solo se recogía aria-invalid, y el analizador usaba
+             * «obligatorio» como sustituto de «habrá fallado». Eso falla en la
+             * dirección mala: un campo obligatorio CORRECTAMENTE RELLENADO
+             * contaba como campo en error, y 3.3.1 emitía una falla grave sobre
+             * un formulario conforme. checkValidity() no tiene efectos
+             * secundarios —a diferencia de reportValidity— y da exactamente la
+             * decisión que ha tomado el navegador al enviar.
+             */
+            var nativoInvalido = false;
+            try { nativoInvalido = (el.willValidate === true) && (el.checkValidity() === false); } catch(e) { nativoInvalido = false; }
+            var valor = '';
+            try { valor = String(el.value == null ? '' : el.value); } catch(e) { valor = ''; }
             return { locator:k, name:(el.getAttribute('aria-label')||el.getAttribute('name')||'').slice(0,40),
                      required: el.hasAttribute('required')||el.getAttribute('aria-required')==='true',
                      invalid: el.getAttribute('aria-invalid')==='true',
+                     nativoInvalido: nativoInvalido,
+                     vacio: !valor.replace(/[\\s]+/g,''),
                      describedbyText: dt.trim(),
                      errormessageText: emt.trim(),
                      // G83: texto de error visible junto al campo, sin asociar.

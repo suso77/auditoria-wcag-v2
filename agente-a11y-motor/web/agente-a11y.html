@@ -1160,7 +1160,39 @@
   };
   // Estados REQUERIDOS por rol (ARIA 1.2). tab NO requiere aria-selected (es "supported",
   // con valor por defecto false), por eso no está aquí.
-  const REQUIRED_STATE = { checkbox: "aria-checked", switch: "aria-checked", menuitemcheckbox: "aria-checked", radio: "aria-checked", menuitemradio: "aria-checked", combobox: "aria-expanded" };
+  /* Estados y propiedades que un rol declarado NECESITA para exponer su estado.
+   *
+   * La tabla tenía solo la familia de `aria-checked` y `combobox` a medias, así
+   * que un `<div role="slider" tabindex="0">` sin `aria-valuenow` salía 4.1.2
+   * «cumple»: un deslizador que no dice en qué valor está, declarado conforme.
+   *
+   * La lista es la de «Required States and Properties» de WAI-ARIA 1.2, §5.2.2
+   * («Content authors MUST provide a non-empty value for required states and
+   * properties»), comprobada contra la propia especificación y contra
+   * `aria-query` 5.3.2, que la publica en forma de datos. Doce roles, y solo
+   * doce. En concreto NO están, y no se exigen por mucho que lo parezca:
+   *   · `spinbutton` y `tab` — ARIA 1.2 no les exige ningún estado;
+   *   · `progressbar` — `aria-valuenow` ausente es justamente cómo se expresa el
+   *     progreso INDETERMINADO (la barra que gira sin saber cuánto queda);
+   *   · `aria-valuemin`/`aria-valuemax` — tienen valor por defecto (0 y 100), así
+   *     que su ausencia no deja el estado sin exponer.
+   *
+   * Los valores son LISTAS: `combobox` y `scrollbar` exigen dos cosas cada uno, y
+   * con un solo campo de texto se comprobaba una y se callaba la otra. */
+  const REQUIRED_STATE = {
+    checkbox: ["aria-checked"], switch: ["aria-checked"],
+    menuitemcheckbox: ["aria-checked"], menuitemradio: ["aria-checked"], radio: ["aria-checked"],
+    combobox: ["aria-controls", "aria-expanded"],
+    scrollbar: ["aria-controls", "aria-valuenow"],
+    slider: ["aria-valuenow"], meter: ["aria-valuenow"],
+    heading: ["aria-level"],
+    option: ["aria-selected"]
+  };
+  /* `treeitem` también lleva `aria-selected` entre los requeridos (lo hereda de
+   * `option`), pero la guía de patrones ARIA dice explícitamente que en un árbol
+   * de selección ÚNICA se puede omitir. Emitir `falla` ahí sería un falso
+   * positivo en un patrón correcto, así que va como sospecha. */
+  const ESTADO_SOSPECHA = { treeitem: ["aria-selected"] };
   function ariaValidation(el, tag, role, explicitRole, implicit) {
     const obs = [];
     if (explicitRole) {
@@ -1199,9 +1231,23 @@
     });
     // Un input nativo checkbox/radio ya expone el estado "checked" por el DOM: no exigir aria-checked.
     const type = (el.getAttribute("type") || "").toLowerCase();
-    const nativeChecked = REQUIRED_STATE[role] === "aria-checked" && tag === "input" && (type === "checkbox" || type === "radio");
-    if (explicitRole && REQUIRED_STATE[role] && !el.hasAttribute(REQUIRED_STATE[role]) && !nativeChecked) {
-      obs.push({ html: "Un <code>" + esc(role) + "</code> declarado con <code>role</code> necesita <code>" + REQUIRED_STATE[role] + "</code> para exponer su estado a la API de accesibilidad.", crit: "4.1.2", sev: "grave", type: "aria-missing-state" });
+    const nativeInput = tag === "input" && (type === "checkbox" || type === "radio");
+    // `aria-level` de un encabezado lo da el propio <h1>…<h6>: no se exige aparte.
+    const nativeHeading = /^h[1-6]$/.test(tag);
+    if (explicitRole) {
+      (REQUIRED_STATE[role] || []).forEach(function (attr) {
+        if (el.hasAttribute(attr)) return;
+        if (attr === "aria-checked" && nativeInput) return;
+        if (attr === "aria-level" && nativeHeading) return;
+        obs.push({ html: "Un <code>" + esc(role) + "</code> declarado con <code>role</code> necesita <code>" + attr + "</code> para exponer su estado a la API de accesibilidad.", crit: "4.1.2", sev: "grave", type: "aria-missing-state" });
+      });
+      (ESTADO_SOSPECHA[role] || []).forEach(function (attr) {
+        if (el.hasAttribute(attr)) return;
+        obs.push({
+          html: "Un <code>" + esc(role) + "</code> lleva <code>" + attr + "</code> entre los estados requeridos de ARIA. Se puede omitir si el árbol es de selección ÚNICA; si se puede seleccionar más de un nodo, falta el estado.",
+          crit: "4.1.2", sev: "moderada", type: "aria-missing-state-duda", nivel: "revisar"
+        });
+      });
     }
     return obs;
   }
@@ -1258,7 +1304,18 @@
     { n: "1.2.5", t: "Audiodescripción (grabado)", lvl: "AA", pr: "Perceptible", scope: "medios", det: "manual",
       d: "El vídeo grabado necesita audiodescripción.", ap: function (m) { return m.isMedia; } },
     { n: "1.3.1", t: "Información y relaciones", lvl: "A", pr: "Perceptible", scope: "componente", det: "auto",
-      d: "La estructura y las relaciones deben exponerse por código.", ap: function (m) { return m.isFormControl || m.isHeading || m.interactive || m.isImage || m.relations.length > 0; } },
+      /* Las tablas y las listas entran en el criterio por derecho propio.
+       *
+       * Sin ellas, una tabla CORRECTA (con `<th>` y `<caption>`) no recibía
+       * ningún veredicto de 1.3.1: el criterio no aparecía, y un criterio que no
+       * aparece se lee en el informe igual que uno conforme. Ahora una tabla bien
+       * marcada dice «cumple» y una sin encabezados dice «falla»: las dos cosas
+       * son afirmaciones, y eso es lo que se puede defender. */
+      d: "La estructura y las relaciones deben exponerse por código.",
+      ap: function (m) {
+        return m.isFormControl || m.isHeading || m.interactive || m.isImage || m.relations.length > 0 ||
+          ["table", "grid", "treegrid", "list", "rowheader", "columnheader"].indexOf(m.role) !== -1;
+      } },
     { n: "1.3.2", t: "Secuencia significativa", lvl: "A", pr: "Perceptible", scope: "página", det: "manual",
       d: "El orden de lectura debe ser correcto cuando el orden importa.", ap: function () { return false; } },
     { n: "1.3.3", t: "Características sensoriales", lvl: "A", pr: "Perceptible", scope: "contexto", det: "manual",
@@ -1525,13 +1582,26 @@
     // un manejador de teclado, y desde el marcado no se ve si lo hay (puede estar
     // en un addEventListener). Antes esto salía «2.1.1 cumple»: la barrera más
     // común de la web, declarada conforme.
-    if (model.role !== "(genérico)" && model.role !== "(sin rol)" &&
-        INTERACTIVE_ROLES.indexOf(model.role) !== -1 &&
+    /* El rol NO es lo que hace que algo sea un control: lo que lo hace es que
+     * responda al ratón. Esta comprobación estaba atada a `INTERACTIVE_ROLES`, así
+     * que el caso más vulgar de la web —`<div tabindex="0" onclick="…">` SIN rol—
+     * se escapaba entero y 2.1.1 salía «cumple». Y es el peor de los dos: un
+     * `role="button"` sin manejador de teclado al menos se anuncia como botón;
+     * este no se anuncia como nada Y tampoco se activa con el teclado.
+     *
+     * (Que además no tenga rol es una barrera de 4.1.2, y ahí ya se emite. Aquí lo
+     * que se dice es lo de 2.1.1: que recibir el foco no es ser operable.) */
+    const conRol = model.role !== "(genérico)" && model.role !== "(sin rol)" && INTERACTIVE_ROLES.indexOf(model.role) !== -1;
+    const porClic = model.hasClick && !conRol;
+    if ((conRol || porClic) &&
         NATIVOS_OPERABLES.indexOf(model.tag) === -1 &&
         model.focusable && !model.disabled) {
       const conTeclado = model.hasKeyHandler;
+      const quien = conRol
+        ? "Control no nativo (<code>&lt;" + esc(model.tag) + '&gt;</code> con <code>role="' + esc(model.role) + '"</code>)'
+        : "Elemento con <code>onclick</code> y <code>tabindex</code> pero SIN rol (<code>&lt;" + esc(model.tag) + "&gt;</code>)";
       obs.push({
-        html: "Control no nativo (<code>&lt;" + esc(model.tag) + '&gt;</code> con <code>role="' + esc(model.role) + '"</code>): recibe el foco, pero Enter y Espacio no lo activan solos como harían en un elemento nativo' +
+        html: quien + ": recibe el foco, pero Enter y Espacio no lo activan solos como harían en un elemento nativo" +
           (conTeclado ? ", y aunque declara un manejador de teclado en el marcado hay que comprobar que responde a las dos teclas" : ". No se ve ningún manejador de teclado en el marcado") +
           ". Compruébalo con el teclado.",
         crit: "2.1.1", sev: "crítica", type: "custom-control-keyboard", nivel: "revisar"
@@ -1660,10 +1730,13 @@
   }
 
   let NODE_SEQ = 0;
-  function makeNode(el, doc, depth) {
+  function makeNode(el, doc, depth, presentacionHeredada) {
     const tag = el.tagName.toLowerCase();
     const explicitRole = el.getAttribute("role");
-    const implicit = implicitRole(el);
+    // Un descendiente estructural de un contenedor con `role="presentation"`
+    // tampoco expone su rol implícito (ARIA 1.2): si no, el nodo seguiría
+    // apareciendo en el informe como `cell` o `row` de una tabla que ya no existe.
+    const implicit = presentacionHeredada ? "presentation" : implicitRole(el);
     const role = explicitRole ? explicitRole.split(/\s+/)[0] : implicit;
     const disabled = el.hasAttribute("disabled");
     const focusable = keyboardFocusable(el);
@@ -1726,8 +1799,40 @@
     return stripped && !interactive && !name && !el.hasAttribute("aria-live");
   }
 
+  /* `role="presentation"` SE HEREDA a los elementos estructurales obligatorios.
+   *
+   * WAI-ARIA 1.2: «When an explicit or inherited role of presentation is applied
+   * to an element with the implicit semantic of a WAI-ARIA role that has required
+   * owned elements, […] the user agent MUST apply an inherited role of
+   * presentation to any owned elements that do not have an explicit role
+   * defined», y la especificación pone de ejemplo exactamente este caso: «the
+   * implicit native semantics of an HTML table element's thead/tbody/tfoot/tr/
+   * th/td descendants will also be removed».
+   *
+   * El motor no lo hacía, y el resultado era un falso positivo grave en el
+   * marcado RECOMENDADO para una tabla de maquetación: `<table
+   * role="presentation">` perdía el rol de la tabla pero sus `<tr>` seguían
+   * siendo `row`, así que cada fila salía como «row huérfano» y el criterio 1.3.1
+   * se declaraba FALLA grave en una tabla correctamente marcada. Y lo mismo con
+   * `<ul role="presentation">` y sus `<li>`.
+   *
+   * Clave: el tag del contenedor; valor: los tags cuya semántica implícita se
+   * cae con él. La herencia es transitiva por la cadena (table → tr → td).
+   */
+  const ESTRUCTURA_OBLIGADA = {
+    table: ["thead", "tbody", "tfoot", "tr", "th", "td", "caption", "colgroup", "col"],
+    tr: ["th", "td"], thead: ["tr", "th", "td"], tbody: ["tr", "th", "td"], tfoot: ["tr", "th", "td"],
+    ul: ["li"], ol: ["li"], menu: ["li"], dl: ["dt", "dd", "div"]
+  };
+  /** ¿Hereda este elemento la presentación del contenedor que la perdió? */
+  function heredaPresentacion(el, tagsCaidos) {
+    if (!tagsCaidos || !tagsCaidos.length) return false;
+    if (el.getAttribute("role")) return false;   // un rol explícito corta la herencia
+    return tagsCaidos.indexOf(el.tagName.toLowerCase()) !== -1;
+  }
+
   // Recorre el DOM y produce nodos expuestos; los contenedores genéricos vacíos se colapsan.
-  function collectTree(el, doc, depth, ctx, ancestors) {
+  function collectTree(el, doc, depth, ctx, ancestors, tagsCaidos) {
     ancestors = ancestors || [];
     const info = isExposedInfo(el);
     if (!info.exposed) {
@@ -1738,24 +1843,30 @@
       return [];
     }
     const explicitRole = el.getAttribute("role");
-    const role = explicitRole ? explicitRole.split(/\s+/)[0] : implicitRole(el);
+    const presentacionHeredada = heredaPresentacion(el, tagsCaidos);
+    const role = explicitRole ? explicitRole.split(/\s+/)[0]
+      : (presentacionHeredada ? "presentation" : implicitRole(el));
     const nameObj = accessibleName(el, doc, role);
     const focusable = keyboardFocusable(el);
     const interactive = focusable || INTERACTIVE_ROLES.indexOf(role) !== -1 || el.hasAttribute("onclick");
+    const tag = el.tagName.toLowerCase();
 
     if (isTransparent(el, role, nameObj.name, interactive)) {
+      // Si el que pierde la semántica es un contenedor con estructura obligada,
+      // sus descendientes estructurales la pierden también (ARIA 1.2).
+      const caen = (role === "none" || role === "presentation") ? (ESTRUCTURA_OBLIGADA[tag] || null) : null;
       let out = [];
-      childElements(el).forEach(function (c) { out = out.concat(collectTree(c, doc, depth, ctx, ancestors)); });
+      childElements(el).forEach(function (c) { out = out.concat(collectTree(c, doc, depth, ctx, ancestors, caen)); });
       return out;
     }
-    const node = makeNode(el, doc, depth);
+    const node = makeNode(el, doc, depth, presentacionHeredada);
     const req = REQUIRED_PARENT[node.role];
     if (req && !req.some(function (r) { return ancestors.indexOf(r) !== -1; })) {
       node.observations.push({ html: "Un <code>" + esc(node.role) + "</code> debe estar dentro de un <code>" + req.join("</code> o <code>") + "</code>; aquí aparece huérfano.", crit: "1.3.1", sev: "grave", type: "orphan-role" });
     }
     if (CONTAINER_ROLES.has(role)) {
       const childAnc = ancestors.concat(role);
-      childElements(el).forEach(function (c) { node.children = node.children.concat(collectTree(c, doc, depth + 1, ctx, childAnc)); });
+      childElements(el).forEach(function (c) { node.children = node.children.concat(collectTree(c, doc, depth + 1, ctx, childAnc, null)); });
     }
     return [node];
   }
@@ -1811,6 +1922,41 @@
       const owned = REQUIRED_OWNED[n.role];
       if (owned && n.children.length && !flatten(n.children).some(function (c) { return owned.indexOf(c.role) !== -1; })) {
         obs.push({ html: "Un <code>" + esc(n.role) + "</code> no contiene ningún <code>" + owned.join("</code>/<code>") + "</code>: la estructura del patrón está incompleta.", crit: "1.3.1", sev: "grave", node: nd, type: "owned-missing" });
+      }
+      /* Una tabla SIN NINGUNA celda de encabezado.
+       *
+       * Esto no se comprobaba en ninguna capa, y es la barrera clásica de 1.3.1:
+       * la tabla salía «cumple · Determinable desde el marcado y correcto», que en
+       * el IRA se lee «Correcto». Un lector de pantalla que recorre una tabla sin
+       * `<th>` canta los números sin decir de qué columna son, y la relación entre
+       * el dato y su cabecera —que es literalmente lo que pide el criterio— no
+       * está expuesta por código.
+       *
+       * Y da igual de qué tabla se trate: si son datos, le faltan los encabezados;
+       * si es una tabla de maquetación, no debería estar exponiendo rol de tabla
+       * (le falta `role="presentation"`). Las dos lecturas son el mismo defecto de
+       * 1.3.1, así que se dicen las dos y decide quien audita. */
+      if (n.role === "table" || n.role === "grid" || n.role === "treegrid") {
+        const dentro = flatten(n.children);
+        const cabeceras = dentro.filter(function (c) { return c.role === "columnheader" || c.role === "rowheader"; });
+        const filas = dentro.filter(function (c) { return c.role === "row"; });
+        const celdasPorFila = filas.map(function (f) {
+          return flatten(f.children).filter(function (c) { return c.role === "cell" || c.role === "gridcell" || c.role === "columnheader" || c.role === "rowheader"; }).length;
+        });
+        const anchoMax = celdasPorFila.length ? Math.max.apply(null, celdasPorFila) : 0;
+        if (!cabeceras.length && filas.length) {
+          // Con una sola fila o una sola columna puede ser cualquier cosa; con dos
+          // por dos, la forma ya es de tabla de datos.
+          const formaDeDatos = filas.length >= 2 && anchoMax >= 2;
+          obs.push({
+            html: "Una tabla de " + filas.length + "×" + anchoMax + " sin NINGUNA celda de encabezado (<code>&lt;th&gt;</code> o <code>role=\"columnheader\"/\"rowheader\"</code>): " +
+              "los datos se anuncian sin decir a qué columna o fila pertenecen. Si son datos, marca los encabezados con <code>&lt;th scope=\"col\"&gt;</code> o <code>scope=\"row\"</code>" +
+              (dentro.some(function (c) { return c.tag === "caption"; }) ? "" : " y pon un <code>&lt;caption&gt;</code>") +
+              "; si la tabla es solo de maquetación, quítale la semántica con <code>role=\"presentation\"</code>.",
+            crit: "1.3.1", sev: formaDeDatos ? "grave" : "moderada", node: nd,
+            type: "table-sin-cabeceras", nivel: formaDeDatos ? undefined : "revisar"
+          });
+        }
       }
     });
     return obs;
@@ -2432,15 +2578,20 @@
     { key: "subcriterio", label: "Subcriterio EN (9.X.Y.Z)" }, { key: "enEN", label: "En la EN vigente" },
     { key: "criterio", label: "Criterio WCAG" },
     { key: "nombre", label: "Nombre" }, { key: "nivel", label: "Nivel" }, { key: "resultado", label: "Resultado" },
+    // La cobertura, al lado del resultado: quien lee la hoja tiene que poder ver
+    // sobre cuántas páginas se está afirmando cada cosa sin salir de la fila.
+    { key: "cobertura", label: "Cobertura de la muestra" },
     { key: "num_barreras", label: "Nº barreras" }
   ];
 
   /**
    * Exporta los hallazgos a la forma OAW/IRA.
    * @param {Array} findings  hallazgos del agente (unificados)
-   * @param {{ url?:string, overrides?:object }} [ctx]  `overrides` fija el
-   *   subcriterio OAW a mano: por criterio (`"1.3.1"`) o por elemento
+   * @param {{ url?:string, overrides?:object, muestra?:object }} [ctx]  `overrides`
+   *   fija el subcriterio OAW a mano: por criterio (`"1.3.1"`) o por elemento
    *   (`"1.3.1|nav.principal"`), y gana sobre cualquier asignación automática.
+   *   `muestra` es el rollup (`rollupSample`): con él la hoja de Seguimiento
+   *   declara su cobertura y no exporta «Correcto» sobre una muestra incompleta.
    */
   // Una fila por ELEMENTO afectado, igual que src/report-oaw.js: un hallazgo
   // con 7 nodos son 7 barreras en el IRA, no una con siete nombres pegados.
@@ -3856,6 +4007,36 @@
             ") y los atenúa sin ocultarlos: 2.4.11 exige que no queden ocultos del todo, así que no es una barrera de este criterio, pero comprueba que el indicador de foco siga distinguiéndose a través de él." });
       }
     });
+    /* Y si NADA tapa el foco, también se dice.
+     *
+     * Este criterio solo hablaba cuando encontraba algo que tapaba, así que en una
+     * página sin barras fijas salía «No evaluado» en la hoja de seguimiento —
+     * indistinguible de un criterio que nadie ha mirado, cuando lo que ha pasado es
+     * que se ha medido y está bien. Es una afirmación determinable: se ha recorrido
+     * cada control enfocable con cada elemento fijo o flotante de la página, en las
+     * dos direcciones de tabulación, y ninguno queda oculto. */
+    if (!oscurecidos.length) {
+      const fijos = flotantes.filter(function (f) { return f.position === "fixed" || f.position === "sticky"; });
+      const n = focusables.length;
+      const controles = n === 1 ? "1 control enfocable" : n + " controles enfocables";
+      /* Es una afirmación sobre el CONJUNTO, no sobre un elemento, así que viaja
+       * con la secuencia de rutas comprobadas (como el orden de foco de 2.4.3) y
+       * no con un `path`: no hay un elemento al que señalar, y dejar la casilla
+       * del selector vacía en el informe sería peor que decir qué se recorrió. */
+      const rutas = focusables.slice(0, 20).map(function (f) { return rutaM(f.el); }).filter(Boolean);
+      if (!n) {
+        res.push({ crit: "2.4.11", label: "Foco no oscurecido", node: "(documento)", verdict: "revisar", rutas: [],
+          detail: "no se ha encontrado ningún control enfocable en esta página, así que no hay nada que pueda quedar tapado al recibir el foco: el criterio no se ha podido medir sobre nada. Si la página debería tener controles, eso es lo que hay que mirar." });
+      } else if (!flotantes.length) {
+        res.push({ crit: "2.4.11", label: "Foco no oscurecido", node: "(documento)", verdict: "pasa", rutas: rutas,
+          detail: "se han recorrido los " + controles + " de la página y NO hay ningún elemento fijo, pegajoso ni flotante que pueda superponerse a ellos: nada puede oscurecer el control que recibe el foco." });
+      } else {
+        res.push({ crit: "2.4.11", label: "Foco no oscurecido", node: "(documento)", verdict: "pasa", rutas: rutas,
+          detail: "se ha comprobado cada uno de los " + controles + " contra los " + flotantes.length +
+            " elemento(s) superpuesto(s) de la página" + (fijos.length ? " (" + fijos.length + " fijo(s) o pegajoso(s))" : "") +
+            ", tabulando en las dos direcciones, y ninguno queda oculto ni atenuado al recibir el foco." });
+      }
+    }
     /* Si la página se ha medido detrás de un VELO, eso va primero que cualquier
      * criterio.
      *
@@ -3867,6 +4048,8 @@
     if (velos.length) {
       const v = velos.reduce(function (m, x) { return x.opaco > m.opaco ? x : m; }, velos[0]);
       res.push({ crit: "__meta", label: "Medido detrás de un velo", node: v.loc, verdict: "revisar",
+        // Con un velo delante, TODO lo que se mide sobre el render está en duda.
+        limita: ["1.4.3", "1.4.11", "1.4.1", "2.4.7", "2.4.11", "2.5.8", "2.4.3", "2.1.1"],
         detail: "«" + v.loc + "» (" + v.position + ", opacidad efectiva " + (v.opaco != null ? v.opaco.toFixed(2) : "?") +
           ") cubre la pantalla entera, así que TODO lo de esta página se ha medido con él puesto. " +
           (v.opaco >= 0.9
@@ -3879,16 +4062,32 @@
     const marcos = todosM(doc, "iframe,frame").filter(function (f) { return renderedM(f, win); });
     if (cerrados.length) {
       res.push({ crit: "__meta", label: "Shadow DOM cerrado", node: cerrados.length + " componente(s)", verdict: "revisar",
+        // Lo que la propia nota dice que no está comprobado: contraste, tamaño
+        // de los objetivos y foco de lo que haya dentro del componente.
+        limita: ["1.4.3", "1.4.11", "2.4.7", "2.5.8", "2.4.3", "2.1.1"],
         detail: "hay " + cerrados.length + " componente(s) que parecen llevar un shadow root CERRADO (" +
           cerrados.slice(0, 5).map(function (el) { return locatorM(el); }).join(", ") + (cerrados.length > 5 ? ", …" : "") +
           "): su contenido no se puede inspeccionar desde fuera, así que el contraste, el tamaño de los objetivos y el foco de lo que haya dentro NO están comprobados. Compruébalo con el inspector del navegador o pídeselo a quien mantenga el componente." });
     }
     if (marcos.length) {
+      /* Esta nota es INFORMATIVA: no lleva `limita` a propósito.
+       *
+       * Llevarlo fue un error mío, medido y retirado. La nota salta con cualquier
+       * marco pintado, y el orquestador de Node entra en los marcos uno a uno con
+       * Playwright —también en los de otro origen— y los mide. Con `limita`, un
+       * A/B sobre la misma página demostró que un solo reproductor incrustado
+       * tumbaba 1.4.3, 1.4.11, 2.4.7, 2.5.8 y 2.1.1 de `pasa` a `revisar` aunque
+       * el marco se hubiera medido entero: eso no es prudencia, es ruido, y el
+       * ruido en un informe tapa las barreras de verdad igual que el silencio.
+       *
+       * Lo que sí ata es la nota «Marco no medible», que se emite exactamente
+       * cuando un marco no se ha podido mirar. Esa es la diferencia que importa:
+       * el criterio se aprieta cuando algo NO se ha visto, no cuando algo existe. */
       res.push({ crit: "__meta", label: "Marcos: se auditan aparte", node: marcos.length + " iframe(s)", verdict: "revisar",
         detail: "hay " + marcos.length + " marco(s) pintado(s) (" +
           marcos.slice(0, 5).map(function (f) { return locatorM(f) + (f.getAttribute("src") ? " → " + String(f.getAttribute("src")).slice(0, 60) : ""); }).join(", ") +
           (marcos.length > 5 ? ", …" : "") +
-          "). Esta medición recorre un solo documento: el contenido de cada marco se mide por separado, y si alguno es de otro origen no se puede medir en absoluto." });
+          "). Esta pasada de medición recorre un solo documento: el contenido de cada marco se mide en su propia pasada, y lo que no se haya podido medir sale como nota aparte. Los criterios de ÁMBITO DE PÁGINA de cada marco (su propio título, idioma y estructura) se auditan por su URL." });
     }
 
     // La nota dice lo que se midió DE VERDAD, y de cuántos.
@@ -3896,6 +4095,7 @@
     const sinMirar = conTexto.length - cubiertos;
     if (sinMirar > 0) {
       res.push({ crit: "__meta", label: "Cobertura del contraste", node: (medidosAqui + yaMedidos) + "/" + conTexto.length, verdict: "revisar",
+        limita: ["1.4.3", "1.4.11"],
         detail: "se midió el contraste de " + (medidosAqui + yaMedidos) + " de " + conTexto.length + " bloques de texto con texto propio" +
           (descartados ? " (" + descartados + " más se descartaron por no estar pintados o no dar un contraste medible)" : "") +
           "; quedan " + sinMirar + " sin comprobar por el límite de la medición (" + limit + "). Súbelo para dictaminarlos." });
@@ -4002,11 +4202,15 @@
       });
     }
     if (truncado) {
-      res.push({ crit: "__meta", label: "Cobertura de los controles", node: all.length + "/" + candidatos.length, verdict: "revisar", detail: "se midieron " + all.length + " de " + candidatos.length + " controles (límite): el resto NO está comprobado" });
+      res.push({ crit: "__meta", label: "Cobertura de los controles", node: all.length + "/" + candidatos.length, verdict: "revisar",
+        // Todo lo que se dictamina control por control.
+        limita: ["2.4.7", "2.5.8", "2.4.3", "2.1.1", "2.4.11"],
+        detail: "se midieron " + all.length + " de " + candidatos.length + " controles (límite): el resto NO está comprobado" });
     }
     if (!docEnfocado && (porCss || sinRegla)) {
       res.push({
         crit: "__meta", label: "Foco visible sin foco del sistema", node: (porCss + sinRegla) + " controles", verdict: "revisar",
+        limita: ["2.4.7", "2.4.11"],
         detail: "el documento NO tenía el foco del sistema durante la medición (ventana en segundo plano, panel lateral o popup de extensión abierto): «:focus» no se aplica y el indicador de foco no se puede medir sobre el render. Se ha caído al CSS: " + porCss + " control(es) con regla de foco con indicador y " + sinRegla + " sin ninguna" + (hojasBloqueadas ? ", con " + hojasBloqueadas + " hoja(s) de otro origen ilegibles" : "") + ". Para medir 2.4.7 de verdad, haz clic en la página y vuelve a analizar con la ventana en primer plano."
       });
     }

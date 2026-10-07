@@ -88,6 +88,52 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   function esIndeterminado(v) {
     return !esConforme(v) && !esNoAplica(v) && v !== "falla";
   }
+
+  /**
+   * Las notas de cobertura ATAN los veredictos de los criterios que limitan.
+   *
+   * La medición emite notas `__meta` cuando sabe que no ha llegado a mirar todo:
+   * un velo a pantalla completa, un shadow DOM cerrado, marcos que se auditan
+   * aparte, el límite de bloques de texto, el límite de controles, la ventana sin
+   * el foco del sistema, sondas de color sin restaurar. Hasta aquí esas notas
+   * viajaban a la lista de `avisos` del informe —prosa al final— y NO tocaban
+   * ningún veredicto: 2.4.3 podía salir `pasa` habiendo medido 20 de 500
+   * controles, y el aviso que lo decía estaba a cuatro páginas de distancia.
+   *
+   * La capa de adaptación ya hacía lo correcto con su propio recorte
+   * (`informeRecorte` baja a `revisar` cuando `cobertura.truncado`). Esto es la
+   * misma política, aplicada a la capa de render: un criterio cuya medición está
+   * incompleta no puede declararse conforme. Solo baja; nunca sube, nunca toca un
+   * `falla` —una barrera encontrada en la parte medida sigue siendo una barrera—
+   * y nunca toca un `no-aplica`, que es una afirmación sobre lo que HAY en la
+   * página, no sobre lo que se ha medido en ella.
+   *
+   * @param {Array<{c:{n:string}, verdict:string, evid?:Array<string>}>} findings
+   * @param {Array<{crit?:string, label?:string, detail?:string, limita?:Array<string>}>} coberturas
+   * @returns {{findings:Array, atados:Array<{n:string, de:string, por:string}>}}
+   */
+  function aplicaCoberturas(findings, coberturas) {
+    const limites = {};   // criterio → [etiqueta de la nota]
+    (coberturas || []).forEach(function (c) {
+      (c && c.limita || []).forEach(function (n) {
+        (limites[n] = limites[n] || []).push({ label: c.label || "cobertura", detail: c.detail || "" });
+      });
+    });
+    const atados = [];
+    const out = (findings || []).map(function (f) {
+      const n = f && f.c && f.c.n;
+      const notas = n && limites[n];
+      if (!notas || !esConforme(f.verdict)) return f;
+      atados.push({ n: n, de: f.verdict, por: notas.map(function (x) { return x.label; }).join(" · ") });
+      return Object.assign({}, f, {
+        verdict: "revisar",
+        evid: (f.evid || []).concat(notas.map(function (x) {
+          return "La medición de este criterio está INCOMPLETA (" + x.label + "), así que lo medido no basta para declararlo conforme: " + x.detail;
+        }))
+      });
+    });
+    return { findings: out, atados: atados };
+  }
   NS.VERDICTS = VERDICTS;
   NS.rank = rank;
   NS.worseOf = worseOf;
@@ -95,6 +141,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   NS.esConforme = esConforme;
   NS.esNoAplica = esNoAplica;
   NS.esIndeterminado = esIndeterminado;
+  NS.aplicaCoberturas = aplicaCoberturas;
 })(A11Y);
 
 /* ── engine.js ── */
@@ -450,7 +497,39 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   };
   // Estados REQUERIDOS por rol (ARIA 1.2). tab NO requiere aria-selected (es "supported",
   // con valor por defecto false), por eso no está aquí.
-  const REQUIRED_STATE = { checkbox: "aria-checked", switch: "aria-checked", menuitemcheckbox: "aria-checked", radio: "aria-checked", menuitemradio: "aria-checked", combobox: "aria-expanded" };
+  /* Estados y propiedades que un rol declarado NECESITA para exponer su estado.
+   *
+   * La tabla tenía solo la familia de `aria-checked` y `combobox` a medias, así
+   * que un `<div role="slider" tabindex="0">` sin `aria-valuenow` salía 4.1.2
+   * «cumple»: un deslizador que no dice en qué valor está, declarado conforme.
+   *
+   * La lista es la de «Required States and Properties» de WAI-ARIA 1.2, §5.2.2
+   * («Content authors MUST provide a non-empty value for required states and
+   * properties»), comprobada contra la propia especificación y contra
+   * `aria-query` 5.3.2, que la publica en forma de datos. Doce roles, y solo
+   * doce. En concreto NO están, y no se exigen por mucho que lo parezca:
+   *   · `spinbutton` y `tab` — ARIA 1.2 no les exige ningún estado;
+   *   · `progressbar` — `aria-valuenow` ausente es justamente cómo se expresa el
+   *     progreso INDETERMINADO (la barra que gira sin saber cuánto queda);
+   *   · `aria-valuemin`/`aria-valuemax` — tienen valor por defecto (0 y 100), así
+   *     que su ausencia no deja el estado sin exponer.
+   *
+   * Los valores son LISTAS: `combobox` y `scrollbar` exigen dos cosas cada uno, y
+   * con un solo campo de texto se comprobaba una y se callaba la otra. */
+  const REQUIRED_STATE = {
+    checkbox: ["aria-checked"], switch: ["aria-checked"],
+    menuitemcheckbox: ["aria-checked"], menuitemradio: ["aria-checked"], radio: ["aria-checked"],
+    combobox: ["aria-controls", "aria-expanded"],
+    scrollbar: ["aria-controls", "aria-valuenow"],
+    slider: ["aria-valuenow"], meter: ["aria-valuenow"],
+    heading: ["aria-level"],
+    option: ["aria-selected"]
+  };
+  /* `treeitem` también lleva `aria-selected` entre los requeridos (lo hereda de
+   * `option`), pero la guía de patrones ARIA dice explícitamente que en un árbol
+   * de selección ÚNICA se puede omitir. Emitir `falla` ahí sería un falso
+   * positivo en un patrón correcto, así que va como sospecha. */
+  const ESTADO_SOSPECHA = { treeitem: ["aria-selected"] };
   function ariaValidation(el, tag, role, explicitRole, implicit) {
     const obs = [];
     if (explicitRole) {
@@ -489,9 +568,23 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     });
     // Un input nativo checkbox/radio ya expone el estado "checked" por el DOM: no exigir aria-checked.
     const type = (el.getAttribute("type") || "").toLowerCase();
-    const nativeChecked = REQUIRED_STATE[role] === "aria-checked" && tag === "input" && (type === "checkbox" || type === "radio");
-    if (explicitRole && REQUIRED_STATE[role] && !el.hasAttribute(REQUIRED_STATE[role]) && !nativeChecked) {
-      obs.push({ html: "Un <code>" + esc(role) + "</code> declarado con <code>role</code> necesita <code>" + REQUIRED_STATE[role] + "</code> para exponer su estado a la API de accesibilidad.", crit: "4.1.2", sev: "grave", type: "aria-missing-state" });
+    const nativeInput = tag === "input" && (type === "checkbox" || type === "radio");
+    // `aria-level` de un encabezado lo da el propio <h1>…<h6>: no se exige aparte.
+    const nativeHeading = /^h[1-6]$/.test(tag);
+    if (explicitRole) {
+      (REQUIRED_STATE[role] || []).forEach(function (attr) {
+        if (el.hasAttribute(attr)) return;
+        if (attr === "aria-checked" && nativeInput) return;
+        if (attr === "aria-level" && nativeHeading) return;
+        obs.push({ html: "Un <code>" + esc(role) + "</code> declarado con <code>role</code> necesita <code>" + attr + "</code> para exponer su estado a la API de accesibilidad.", crit: "4.1.2", sev: "grave", type: "aria-missing-state" });
+      });
+      (ESTADO_SOSPECHA[role] || []).forEach(function (attr) {
+        if (el.hasAttribute(attr)) return;
+        obs.push({
+          html: "Un <code>" + esc(role) + "</code> lleva <code>" + attr + "</code> entre los estados requeridos de ARIA. Se puede omitir si el árbol es de selección ÚNICA; si se puede seleccionar más de un nodo, falta el estado.",
+          crit: "4.1.2", sev: "moderada", type: "aria-missing-state-duda", nivel: "revisar"
+        });
+      });
     }
     return obs;
   }
@@ -548,7 +641,18 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     { n: "1.2.5", t: "Audiodescripción (grabado)", lvl: "AA", pr: "Perceptible", scope: "medios", det: "manual",
       d: "El vídeo grabado necesita audiodescripción.", ap: function (m) { return m.isMedia; } },
     { n: "1.3.1", t: "Información y relaciones", lvl: "A", pr: "Perceptible", scope: "componente", det: "auto",
-      d: "La estructura y las relaciones deben exponerse por código.", ap: function (m) { return m.isFormControl || m.isHeading || m.interactive || m.isImage || m.relations.length > 0; } },
+      /* Las tablas y las listas entran en el criterio por derecho propio.
+       *
+       * Sin ellas, una tabla CORRECTA (con `<th>` y `<caption>`) no recibía
+       * ningún veredicto de 1.3.1: el criterio no aparecía, y un criterio que no
+       * aparece se lee en el informe igual que uno conforme. Ahora una tabla bien
+       * marcada dice «cumple» y una sin encabezados dice «falla»: las dos cosas
+       * son afirmaciones, y eso es lo que se puede defender. */
+      d: "La estructura y las relaciones deben exponerse por código.",
+      ap: function (m) {
+        return m.isFormControl || m.isHeading || m.interactive || m.isImage || m.relations.length > 0 ||
+          ["table", "grid", "treegrid", "list", "rowheader", "columnheader"].indexOf(m.role) !== -1;
+      } },
     { n: "1.3.2", t: "Secuencia significativa", lvl: "A", pr: "Perceptible", scope: "página", det: "manual",
       d: "El orden de lectura debe ser correcto cuando el orden importa.", ap: function () { return false; } },
     { n: "1.3.3", t: "Características sensoriales", lvl: "A", pr: "Perceptible", scope: "contexto", det: "manual",
@@ -815,13 +919,26 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     // un manejador de teclado, y desde el marcado no se ve si lo hay (puede estar
     // en un addEventListener). Antes esto salía «2.1.1 cumple»: la barrera más
     // común de la web, declarada conforme.
-    if (model.role !== "(genérico)" && model.role !== "(sin rol)" &&
-        INTERACTIVE_ROLES.indexOf(model.role) !== -1 &&
+    /* El rol NO es lo que hace que algo sea un control: lo que lo hace es que
+     * responda al ratón. Esta comprobación estaba atada a `INTERACTIVE_ROLES`, así
+     * que el caso más vulgar de la web —`<div tabindex="0" onclick="…">` SIN rol—
+     * se escapaba entero y 2.1.1 salía «cumple». Y es el peor de los dos: un
+     * `role="button"` sin manejador de teclado al menos se anuncia como botón;
+     * este no se anuncia como nada Y tampoco se activa con el teclado.
+     *
+     * (Que además no tenga rol es una barrera de 4.1.2, y ahí ya se emite. Aquí lo
+     * que se dice es lo de 2.1.1: que recibir el foco no es ser operable.) */
+    const conRol = model.role !== "(genérico)" && model.role !== "(sin rol)" && INTERACTIVE_ROLES.indexOf(model.role) !== -1;
+    const porClic = model.hasClick && !conRol;
+    if ((conRol || porClic) &&
         NATIVOS_OPERABLES.indexOf(model.tag) === -1 &&
         model.focusable && !model.disabled) {
       const conTeclado = model.hasKeyHandler;
+      const quien = conRol
+        ? "Control no nativo (<code>&lt;" + esc(model.tag) + '&gt;</code> con <code>role="' + esc(model.role) + '"</code>)'
+        : "Elemento con <code>onclick</code> y <code>tabindex</code> pero SIN rol (<code>&lt;" + esc(model.tag) + "&gt;</code>)";
       obs.push({
-        html: "Control no nativo (<code>&lt;" + esc(model.tag) + '&gt;</code> con <code>role="' + esc(model.role) + '"</code>): recibe el foco, pero Enter y Espacio no lo activan solos como harían en un elemento nativo' +
+        html: quien + ": recibe el foco, pero Enter y Espacio no lo activan solos como harían en un elemento nativo" +
           (conTeclado ? ", y aunque declara un manejador de teclado en el marcado hay que comprobar que responde a las dos teclas" : ". No se ve ningún manejador de teclado en el marcado") +
           ". Compruébalo con el teclado.",
         crit: "2.1.1", sev: "crítica", type: "custom-control-keyboard", nivel: "revisar"
@@ -950,10 +1067,13 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   }
 
   let NODE_SEQ = 0;
-  function makeNode(el, doc, depth) {
+  function makeNode(el, doc, depth, presentacionHeredada) {
     const tag = el.tagName.toLowerCase();
     const explicitRole = el.getAttribute("role");
-    const implicit = implicitRole(el);
+    // Un descendiente estructural de un contenedor con `role="presentation"`
+    // tampoco expone su rol implícito (ARIA 1.2): si no, el nodo seguiría
+    // apareciendo en el informe como `cell` o `row` de una tabla que ya no existe.
+    const implicit = presentacionHeredada ? "presentation" : implicitRole(el);
     const role = explicitRole ? explicitRole.split(/\s+/)[0] : implicit;
     const disabled = el.hasAttribute("disabled");
     const focusable = keyboardFocusable(el);
@@ -1016,8 +1136,40 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     return stripped && !interactive && !name && !el.hasAttribute("aria-live");
   }
 
+  /* `role="presentation"` SE HEREDA a los elementos estructurales obligatorios.
+   *
+   * WAI-ARIA 1.2: «When an explicit or inherited role of presentation is applied
+   * to an element with the implicit semantic of a WAI-ARIA role that has required
+   * owned elements, […] the user agent MUST apply an inherited role of
+   * presentation to any owned elements that do not have an explicit role
+   * defined», y la especificación pone de ejemplo exactamente este caso: «the
+   * implicit native semantics of an HTML table element's thead/tbody/tfoot/tr/
+   * th/td descendants will also be removed».
+   *
+   * El motor no lo hacía, y el resultado era un falso positivo grave en el
+   * marcado RECOMENDADO para una tabla de maquetación: `<table
+   * role="presentation">` perdía el rol de la tabla pero sus `<tr>` seguían
+   * siendo `row`, así que cada fila salía como «row huérfano» y el criterio 1.3.1
+   * se declaraba FALLA grave en una tabla correctamente marcada. Y lo mismo con
+   * `<ul role="presentation">` y sus `<li>`.
+   *
+   * Clave: el tag del contenedor; valor: los tags cuya semántica implícita se
+   * cae con él. La herencia es transitiva por la cadena (table → tr → td).
+   */
+  const ESTRUCTURA_OBLIGADA = {
+    table: ["thead", "tbody", "tfoot", "tr", "th", "td", "caption", "colgroup", "col"],
+    tr: ["th", "td"], thead: ["tr", "th", "td"], tbody: ["tr", "th", "td"], tfoot: ["tr", "th", "td"],
+    ul: ["li"], ol: ["li"], menu: ["li"], dl: ["dt", "dd", "div"]
+  };
+  /** ¿Hereda este elemento la presentación del contenedor que la perdió? */
+  function heredaPresentacion(el, tagsCaidos) {
+    if (!tagsCaidos || !tagsCaidos.length) return false;
+    if (el.getAttribute("role")) return false;   // un rol explícito corta la herencia
+    return tagsCaidos.indexOf(el.tagName.toLowerCase()) !== -1;
+  }
+
   // Recorre el DOM y produce nodos expuestos; los contenedores genéricos vacíos se colapsan.
-  function collectTree(el, doc, depth, ctx, ancestors) {
+  function collectTree(el, doc, depth, ctx, ancestors, tagsCaidos) {
     ancestors = ancestors || [];
     const info = isExposedInfo(el);
     if (!info.exposed) {
@@ -1028,24 +1180,30 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       return [];
     }
     const explicitRole = el.getAttribute("role");
-    const role = explicitRole ? explicitRole.split(/\s+/)[0] : implicitRole(el);
+    const presentacionHeredada = heredaPresentacion(el, tagsCaidos);
+    const role = explicitRole ? explicitRole.split(/\s+/)[0]
+      : (presentacionHeredada ? "presentation" : implicitRole(el));
     const nameObj = accessibleName(el, doc, role);
     const focusable = keyboardFocusable(el);
     const interactive = focusable || INTERACTIVE_ROLES.indexOf(role) !== -1 || el.hasAttribute("onclick");
+    const tag = el.tagName.toLowerCase();
 
     if (isTransparent(el, role, nameObj.name, interactive)) {
+      // Si el que pierde la semántica es un contenedor con estructura obligada,
+      // sus descendientes estructurales la pierden también (ARIA 1.2).
+      const caen = (role === "none" || role === "presentation") ? (ESTRUCTURA_OBLIGADA[tag] || null) : null;
       let out = [];
-      childElements(el).forEach(function (c) { out = out.concat(collectTree(c, doc, depth, ctx, ancestors)); });
+      childElements(el).forEach(function (c) { out = out.concat(collectTree(c, doc, depth, ctx, ancestors, caen)); });
       return out;
     }
-    const node = makeNode(el, doc, depth);
+    const node = makeNode(el, doc, depth, presentacionHeredada);
     const req = REQUIRED_PARENT[node.role];
     if (req && !req.some(function (r) { return ancestors.indexOf(r) !== -1; })) {
       node.observations.push({ html: "Un <code>" + esc(node.role) + "</code> debe estar dentro de un <code>" + req.join("</code> o <code>") + "</code>; aquí aparece huérfano.", crit: "1.3.1", sev: "grave", type: "orphan-role" });
     }
     if (CONTAINER_ROLES.has(role)) {
       const childAnc = ancestors.concat(role);
-      childElements(el).forEach(function (c) { node.children = node.children.concat(collectTree(c, doc, depth + 1, ctx, childAnc)); });
+      childElements(el).forEach(function (c) { node.children = node.children.concat(collectTree(c, doc, depth + 1, ctx, childAnc, null)); });
     }
     return [node];
   }
@@ -1101,6 +1259,41 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       const owned = REQUIRED_OWNED[n.role];
       if (owned && n.children.length && !flatten(n.children).some(function (c) { return owned.indexOf(c.role) !== -1; })) {
         obs.push({ html: "Un <code>" + esc(n.role) + "</code> no contiene ningún <code>" + owned.join("</code>/<code>") + "</code>: la estructura del patrón está incompleta.", crit: "1.3.1", sev: "grave", node: nd, type: "owned-missing" });
+      }
+      /* Una tabla SIN NINGUNA celda de encabezado.
+       *
+       * Esto no se comprobaba en ninguna capa, y es la barrera clásica de 1.3.1:
+       * la tabla salía «cumple · Determinable desde el marcado y correcto», que en
+       * el IRA se lee «Correcto». Un lector de pantalla que recorre una tabla sin
+       * `<th>` canta los números sin decir de qué columna son, y la relación entre
+       * el dato y su cabecera —que es literalmente lo que pide el criterio— no
+       * está expuesta por código.
+       *
+       * Y da igual de qué tabla se trate: si son datos, le faltan los encabezados;
+       * si es una tabla de maquetación, no debería estar exponiendo rol de tabla
+       * (le falta `role="presentation"`). Las dos lecturas son el mismo defecto de
+       * 1.3.1, así que se dicen las dos y decide quien audita. */
+      if (n.role === "table" || n.role === "grid" || n.role === "treegrid") {
+        const dentro = flatten(n.children);
+        const cabeceras = dentro.filter(function (c) { return c.role === "columnheader" || c.role === "rowheader"; });
+        const filas = dentro.filter(function (c) { return c.role === "row"; });
+        const celdasPorFila = filas.map(function (f) {
+          return flatten(f.children).filter(function (c) { return c.role === "cell" || c.role === "gridcell" || c.role === "columnheader" || c.role === "rowheader"; }).length;
+        });
+        const anchoMax = celdasPorFila.length ? Math.max.apply(null, celdasPorFila) : 0;
+        if (!cabeceras.length && filas.length) {
+          // Con una sola fila o una sola columna puede ser cualquier cosa; con dos
+          // por dos, la forma ya es de tabla de datos.
+          const formaDeDatos = filas.length >= 2 && anchoMax >= 2;
+          obs.push({
+            html: "Una tabla de " + filas.length + "×" + anchoMax + " sin NINGUNA celda de encabezado (<code>&lt;th&gt;</code> o <code>role=\"columnheader\"/\"rowheader\"</code>): " +
+              "los datos se anuncian sin decir a qué columna o fila pertenecen. Si son datos, marca los encabezados con <code>&lt;th scope=\"col\"&gt;</code> o <code>scope=\"row\"</code>" +
+              (dentro.some(function (c) { return c.tag === "caption"; }) ? "" : " y pon un <code>&lt;caption&gt;</code>") +
+              "; si la tabla es solo de maquetación, quítale la semántica con <code>role=\"presentation\"</code>.",
+            crit: "1.3.1", sev: formaDeDatos ? "grave" : "moderada", node: nd,
+            type: "table-sin-cabeceras", nivel: formaDeDatos ? undefined : "revisar"
+          });
+        }
       }
     });
     return obs;
@@ -2435,6 +2628,36 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
             ") y los atenúa sin ocultarlos: 2.4.11 exige que no queden ocultos del todo, así que no es una barrera de este criterio, pero comprueba que el indicador de foco siga distinguiéndose a través de él." });
       }
     });
+    /* Y si NADA tapa el foco, también se dice.
+     *
+     * Este criterio solo hablaba cuando encontraba algo que tapaba, así que en una
+     * página sin barras fijas salía «No evaluado» en la hoja de seguimiento —
+     * indistinguible de un criterio que nadie ha mirado, cuando lo que ha pasado es
+     * que se ha medido y está bien. Es una afirmación determinable: se ha recorrido
+     * cada control enfocable con cada elemento fijo o flotante de la página, en las
+     * dos direcciones de tabulación, y ninguno queda oculto. */
+    if (!oscurecidos.length) {
+      const fijos = flotantes.filter(function (f) { return f.position === "fixed" || f.position === "sticky"; });
+      const n = focusables.length;
+      const controles = n === 1 ? "1 control enfocable" : n + " controles enfocables";
+      /* Es una afirmación sobre el CONJUNTO, no sobre un elemento, así que viaja
+       * con la secuencia de rutas comprobadas (como el orden de foco de 2.4.3) y
+       * no con un `path`: no hay un elemento al que señalar, y dejar la casilla
+       * del selector vacía en el informe sería peor que decir qué se recorrió. */
+      const rutas = focusables.slice(0, 20).map(function (f) { return rutaM(f.el); }).filter(Boolean);
+      if (!n) {
+        res.push({ crit: "2.4.11", label: "Foco no oscurecido", node: "(documento)", verdict: "revisar", rutas: [],
+          detail: "no se ha encontrado ningún control enfocable en esta página, así que no hay nada que pueda quedar tapado al recibir el foco: el criterio no se ha podido medir sobre nada. Si la página debería tener controles, eso es lo que hay que mirar." });
+      } else if (!flotantes.length) {
+        res.push({ crit: "2.4.11", label: "Foco no oscurecido", node: "(documento)", verdict: "pasa", rutas: rutas,
+          detail: "se han recorrido los " + controles + " de la página y NO hay ningún elemento fijo, pegajoso ni flotante que pueda superponerse a ellos: nada puede oscurecer el control que recibe el foco." });
+      } else {
+        res.push({ crit: "2.4.11", label: "Foco no oscurecido", node: "(documento)", verdict: "pasa", rutas: rutas,
+          detail: "se ha comprobado cada uno de los " + controles + " contra los " + flotantes.length +
+            " elemento(s) superpuesto(s) de la página" + (fijos.length ? " (" + fijos.length + " fijo(s) o pegajoso(s))" : "") +
+            ", tabulando en las dos direcciones, y ninguno queda oculto ni atenuado al recibir el foco." });
+      }
+    }
     /* Si la página se ha medido detrás de un VELO, eso va primero que cualquier
      * criterio.
      *
@@ -2446,6 +2669,8 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     if (velos.length) {
       const v = velos.reduce(function (m, x) { return x.opaco > m.opaco ? x : m; }, velos[0]);
       res.push({ crit: "__meta", label: "Medido detrás de un velo", node: v.loc, verdict: "revisar",
+        // Con un velo delante, TODO lo que se mide sobre el render está en duda.
+        limita: ["1.4.3", "1.4.11", "1.4.1", "2.4.7", "2.4.11", "2.5.8", "2.4.3", "2.1.1"],
         detail: "«" + v.loc + "» (" + v.position + ", opacidad efectiva " + (v.opaco != null ? v.opaco.toFixed(2) : "?") +
           ") cubre la pantalla entera, así que TODO lo de esta página se ha medido con él puesto. " +
           (v.opaco >= 0.9
@@ -2458,16 +2683,32 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     const marcos = todosM(doc, "iframe,frame").filter(function (f) { return renderedM(f, win); });
     if (cerrados.length) {
       res.push({ crit: "__meta", label: "Shadow DOM cerrado", node: cerrados.length + " componente(s)", verdict: "revisar",
+        // Lo que la propia nota dice que no está comprobado: contraste, tamaño
+        // de los objetivos y foco de lo que haya dentro del componente.
+        limita: ["1.4.3", "1.4.11", "2.4.7", "2.5.8", "2.4.3", "2.1.1"],
         detail: "hay " + cerrados.length + " componente(s) que parecen llevar un shadow root CERRADO (" +
           cerrados.slice(0, 5).map(function (el) { return locatorM(el); }).join(", ") + (cerrados.length > 5 ? ", …" : "") +
           "): su contenido no se puede inspeccionar desde fuera, así que el contraste, el tamaño de los objetivos y el foco de lo que haya dentro NO están comprobados. Compruébalo con el inspector del navegador o pídeselo a quien mantenga el componente." });
     }
     if (marcos.length) {
+      /* Esta nota es INFORMATIVA: no lleva `limita` a propósito.
+       *
+       * Llevarlo fue un error mío, medido y retirado. La nota salta con cualquier
+       * marco pintado, y el orquestador de Node entra en los marcos uno a uno con
+       * Playwright —también en los de otro origen— y los mide. Con `limita`, un
+       * A/B sobre la misma página demostró que un solo reproductor incrustado
+       * tumbaba 1.4.3, 1.4.11, 2.4.7, 2.5.8 y 2.1.1 de `pasa` a `revisar` aunque
+       * el marco se hubiera medido entero: eso no es prudencia, es ruido, y el
+       * ruido en un informe tapa las barreras de verdad igual que el silencio.
+       *
+       * Lo que sí ata es la nota «Marco no medible», que se emite exactamente
+       * cuando un marco no se ha podido mirar. Esa es la diferencia que importa:
+       * el criterio se aprieta cuando algo NO se ha visto, no cuando algo existe. */
       res.push({ crit: "__meta", label: "Marcos: se auditan aparte", node: marcos.length + " iframe(s)", verdict: "revisar",
         detail: "hay " + marcos.length + " marco(s) pintado(s) (" +
           marcos.slice(0, 5).map(function (f) { return locatorM(f) + (f.getAttribute("src") ? " → " + String(f.getAttribute("src")).slice(0, 60) : ""); }).join(", ") +
           (marcos.length > 5 ? ", …" : "") +
-          "). Esta medición recorre un solo documento: el contenido de cada marco se mide por separado, y si alguno es de otro origen no se puede medir en absoluto." });
+          "). Esta pasada de medición recorre un solo documento: el contenido de cada marco se mide en su propia pasada, y lo que no se haya podido medir sale como nota aparte. Los criterios de ÁMBITO DE PÁGINA de cada marco (su propio título, idioma y estructura) se auditan por su URL." });
     }
 
     // La nota dice lo que se midió DE VERDAD, y de cuántos.
@@ -2475,6 +2716,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     const sinMirar = conTexto.length - cubiertos;
     if (sinMirar > 0) {
       res.push({ crit: "__meta", label: "Cobertura del contraste", node: (medidosAqui + yaMedidos) + "/" + conTexto.length, verdict: "revisar",
+        limita: ["1.4.3", "1.4.11"],
         detail: "se midió el contraste de " + (medidosAqui + yaMedidos) + " de " + conTexto.length + " bloques de texto con texto propio" +
           (descartados ? " (" + descartados + " más se descartaron por no estar pintados o no dar un contraste medible)" : "") +
           "; quedan " + sinMirar + " sin comprobar por el límite de la medición (" + limit + "). Súbelo para dictaminarlos." });
@@ -2581,11 +2823,15 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       });
     }
     if (truncado) {
-      res.push({ crit: "__meta", label: "Cobertura de los controles", node: all.length + "/" + candidatos.length, verdict: "revisar", detail: "se midieron " + all.length + " de " + candidatos.length + " controles (límite): el resto NO está comprobado" });
+      res.push({ crit: "__meta", label: "Cobertura de los controles", node: all.length + "/" + candidatos.length, verdict: "revisar",
+        // Todo lo que se dictamina control por control.
+        limita: ["2.4.7", "2.5.8", "2.4.3", "2.1.1", "2.4.11"],
+        detail: "se midieron " + all.length + " de " + candidatos.length + " controles (límite): el resto NO está comprobado" });
     }
     if (!docEnfocado && (porCss || sinRegla)) {
       res.push({
         crit: "__meta", label: "Foco visible sin foco del sistema", node: (porCss + sinRegla) + " controles", verdict: "revisar",
+        limita: ["2.4.7", "2.4.11"],
         detail: "el documento NO tenía el foco del sistema durante la medición (ventana en segundo plano, panel lateral o popup de extensión abierto): «:focus» no se aplica y el indicador de foco no se puede medir sobre el render. Se ha caído al CSS: " + porCss + " control(es) con regla de foco con indicador y " + sinRegla + " sin ninguna" + (hojasBloqueadas ? ", con " + hojasBloqueadas + " hoja(s) de otro origen ilegibles" : "") + ". Para medir 2.4.7 de verdad, haz clic en la página y vuelve a analizar con la ventana en primer plano."
       });
     }
@@ -2965,7 +3211,70 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       decision: null
     }, extra || {});
   }
-  function noAplica(n, porque, datos) {
+  /* Lo que está OCULTO no es lo que no existe.
+   *
+   * Las fichas deciden con `visibles()`, que descarta todo lo que lleve `hidden`,
+   * `inert`, `aria-hidden="true"` o `display:none` en línea. Con eso, el patrón más
+   * común de la web —el reproductor en una caja de luz, el formulario de acceso en un
+   * modal, el menú plegado— se leía como «no existe», y la ficha emitía `no-aplica`
+   * con una frase FALSA sobre el DOM que acababa de recorrer.
+   *
+   * Comprobado con un control A/B: el MISMO formulario de acceso con contraseña y
+   * captcha da veredicto pendiente si está visible y `no-aplica` metido en un
+   * `display:none`; el MISMO vídeo, igual con 1.2.4 y 1.2.5. Y el daño es doble,
+   * porque `aplicaCuaderno` sustituye el `humano` conservador del motor por este
+   * `no-aplica`: el criterio pasa de «pendiente de persona» a «fuera de alcance».
+   *
+   * Así que antes de firmar «no viene al caso» se mira si hay candidatos OCULTOS de la
+   * familia que le toca a cada criterio. Si los hay, no se puede afirmar que no haya
+   * nada: el criterio queda a revisar, nombrando lo que está escondido.
+   *
+   * Con una condición, que se descubrió probándolo: el censo solo entra cuando NO
+   * hay candidatos VISIBLES. Hay fichas que firman `no-aplica` con elementos de la
+   * familia a la vista, y por una razón que no tiene nada que ver con que falte
+   * algo: 3.3.7 (entrada redundante) no aplica a un formulario de un solo campo
+   * por más campos que haya, visibles u ocultos. Si el censo entrara también ahí,
+   * el mismo formulario de un campo pasaría de «no aplica» a «revisar» solo por
+   * estar dentro de un modal, que es cambiar un veredicto correcto por una duda
+   * inventada. El censo responde a una sola pregunta —«¿de verdad no hay nada de
+   * esto en la página?»— y solo se le pregunta cuando esa es la afirmación. */
+  const FAMILIA_OCULTA = {
+    "1.2.4": "video,audio,iframe[src],embed[src],object[data]",
+    "1.2.5": "video,iframe[src],embed[src],object[data]",
+    "1.3.2": "h1,h2,h3,h4,h5,h6,[role=heading],main,nav,aside,header,footer,section,article,form,table",
+    "1.4.5": "img,svg,picture",
+    "2.3.1": "video,canvas,img,[style*=animation]",
+    "2.4.4": "a[href]",
+    "3.3.3": "input,select,textarea",
+    "3.3.4": "form,input,select,textarea,button",
+    "3.3.7": "input,select,textarea",
+    "3.3.8": "input[type=password],iframe[src*=captcha],[class*=captcha],[id*=captcha]"
+  };
+  function noAplica(n, porque, datos, doc) {
+    const sel = FAMILIA_OCULTA[n];
+    if (doc && sel) {
+      let ocultos = [], hayVisibles = false;
+      try {
+        const todos = Array.prototype.slice.call(doc.querySelectorAll(sel));
+        ocultos = todos.filter(function (el) { return oculto(el); });
+        hayVisibles = todos.length > ocultos.length;
+      } catch (e) { ocultos = []; hayVisibles = false; }
+      if (ocultos.length && !hayVisibles) {
+        return ficha(n, {
+          aplica: true, veredicto: "revisar",
+          pregunta: "¿Este contenido llega a verse? Si se muestra al pulsar algo —una caja de luz, un modal, un menú plegado— el criterio SÍ aplica y hay que juzgarlo con el contenido a la vista.",
+          queMirar: ocultos.slice(0, 8).map(function (el) { return ref(el, "oculto ahora mismo (" + tag(el) + "): compruébalo con el contenido desplegado"); }),
+          loQueYaSabemos: [
+            "No hay candidatos VISIBLES, pero sí " + ocultos.length + " oculto(s) de la misma familia, así que NO se puede afirmar que el criterio no venga al caso.",
+            porque + " — pero eso solo vale para lo que se ve: " + ocultos.slice(0, 4).map(function (el) { return loc(el); }).join(", ") +
+            (ocultos.length > 4 ? " y " + (ocultos.length - 4) + " más" : "") + " están en el DOM y ocultos.",
+            "Si de verdad no se muestran nunca, el criterio no aplica y lo puedes firmar así; si se despliegan, vuelve a mirarlo con ellos a la vista."
+          ],
+          comoDecidir: ["Despliega lo que esté plegado y vuelve a auditar la página en ese estado."],
+          datos: Object.assign({ ocultos: ocultos.length }, datos || {})
+        });
+      }
+    }
     return ficha(n, { aplica: false, veredicto: "no-aplica", pregunta: "", comoDecidir: [], loQueYaSabemos: [porque], datos: datos || {} });
   }
 
@@ -2984,7 +3293,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
        * reproductor, y declarar que el criterio no viene al caso sin haberlo abierto es
        * afirmar lo que no se sabe. */
       if (!m.propios.length && !m.externos.length && !dudosos.length) {
-        return noAplica("1.2.4", "La página no tiene ningún <video>, <audio> ni marco embebido de ninguna clase: no hay contenido en directo que subtitular.");
+        return noAplica("1.2.4", "La página no tiene ningún <video>, <audio> ni marco embebido de ninguna clase: no hay contenido en directo que subtitular.", null, doc);
       }
       return ficha("1.2.4", {
         pregunta: "¿Alguno de estos medios es una emisión EN DIRECTO? Si lo es, ¿lleva subtítulos en directo?",
@@ -3007,7 +3316,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       const videos = ctx.medios.propios.filter(function (x) { return x.tag === "video"; });
       const dudosos5 = ctx.medios.dudosos || [];
       if (!videos.length && !ctx.medios.externos.length && !dudosos5.length) {
-        return noAplica("1.2.5", "La página no tiene ningún vídeo ni marco embebido de ninguna clase: no hay nada que audiodescribir.");
+        return noAplica("1.2.5", "La página no tiene ningún vídeo ni marco embebido de ninguna clase: no hay nada que audiodescribir.", null, doc);
       }
       const sinDesc = videos.filter(function (x) { return !x.descripciones; });
       return ficha("1.2.5", {
@@ -3036,7 +3345,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       const bloques = visibles(doc, "h1,h2,h3,h4,h5,h6,main,nav,aside,section,article,footer,header,form,table")
         .slice(0, 25);
       if (!bloques.length) {
-        return noAplica("1.3.2", "La página no tiene bloques de contenido (encabezados, regiones, formularios ni tablas) cuyo orden pueda importar.");
+        return noAplica("1.3.2", "La página no tiene bloques de contenido (encabezados, regiones, formularios ni tablas) cuyo orden pueda importar.", null, doc);
       }
       return ficha("1.3.2", {
         pregunta: "Leyendo la página en el orden del código (el de abajo), ¿se entiende lo mismo que viéndola?",
@@ -3090,7 +3399,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     "1.4.5": function (doc, ctx) {
       const imgs = visibles(doc, "img,svg,picture").filter(function (el) { return tag(el) !== "img" || el.getAttribute("alt") !== ""; });
       if (!imgs.length) {
-        return noAplica("1.4.5", "La página no tiene imágenes visibles con contenido (las decorativas, con alt vacío, quedan fuera del criterio).");
+        return noAplica("1.4.5", "La página no tiene imágenes visibles con contenido (las decorativas, con alt vacío, quedan fuera del criterio).", null, doc);
       }
       // Candidatas: alt con pinta de frase, o nombre de archivo que suena a texto.
       const SOSPECHOSO = /(banner|cartel|titular|slogan|lema|texto|frase|cita|promo|oferta|infograf)/i;
@@ -3124,7 +3433,22 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         .concat(ctx.medios.externos);
       const conAnimacion = /@keyframes|animation\s*:/i.test(ctx.estilos);
       if (!candidatos.length && !conAnimacion) {
-        return noAplica("2.3.1", "La página no tiene vídeo, canvas, GIF ni animaciones CSS declaradas: no hay nada que pueda destellar.");
+        /* Y no se firma «no aplica» si el CSS no se ha leído del todo. */
+        if (ctx.cssBloqueadas || ctx.cssLeido === false) {
+          return ficha("2.3.1", {
+            aplica: true, veredicto: "revisar",
+            pregunta: "¿Hay algo que destelle más de tres veces por segundo?",
+            loQueYaSabemos: [
+              "En el marcado no hay vídeo, canvas, GIF ni animación declarada — pero " +
+              (ctx.cssLeido === false ? "NO se ha podido leer ninguna hoja de estilo" : ctx.cssBloqueadas + " hoja(s) de estilo de otro origen no se han podido leer") +
+              ", así que una animación declarada ahí no se habría visto.",
+              "2.3.1 es el criterio cuyo incumplimiento puede provocar una crisis epiléptica: no se firma «no aplica» sobre un CSS que nadie ha leído."
+            ],
+            comoDecidir: ["Abre el inspector, busca `@keyframes` y `animation:` en las hojas externas, y mira la página unos segundos."],
+            datos: { cssBloqueadas: ctx.cssBloqueadas || 0, cssLeido: ctx.cssLeido !== false }
+          });
+        }
+        return noAplica("2.3.1", "La página no tiene vídeo, canvas, GIF ni animaciones CSS declaradas: no hay nada que pueda destellar.", null, doc);
       }
       const unicos = [];
       const vistos = {};
@@ -3148,7 +3472,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     "2.4.4": function (doc, ctx) {
       const enlaces = visibles(doc, "a[href]");
       if (!enlaces.length) {
-        return noAplica("2.4.4", "La página no tiene enlaces visibles.");
+        return noAplica("2.4.4", "La página no tiene enlaces visibles.", null, doc);
       }
       const vagos = enlaces.filter(function (a) { return NOMBRES_VACIOS.test(nombreDe(a)); });
       if (!vagos.length) {
@@ -3192,7 +3516,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
           /^(email|url|tel|number|date|time)$/i.test(el.getAttribute("type") || "");
       });
       if (!conRestriccion.length) {
-        return noAplica("3.3.3", "La página no tiene ningún campo con restricciones (obligatorio, patrón, tipo, longitud o rango): no hay error que sugerir cómo corregir.");
+        return noAplica("3.3.3", "La página no tiene ningún campo con restricciones (obligatorio, patrón, tipo, longitud o rango): no hay error que sugerir cómo corregir.", null, doc);
       }
       return ficha("3.3.3", {
         pregunta: "Cuando uno de estos campos se rellena mal, ¿el mensaje dice CÓMO corregirlo, y no solo que está mal?",
@@ -3225,7 +3549,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         return COMPROMETEDORAS.test(nombreDe(el) || el.getAttribute("value") || "");
       });
       if (!forms.length && !botones.length) {
-        return noAplica("3.3.4", "La página no tiene formularios ni acciones con consecuencias legales, económicas o sobre datos del usuario.");
+        return noAplica("3.3.4", "La página no tiene formularios ni acciones con consecuencias legales, económicas o sobre datos del usuario.", null, doc);
       }
       if (!conPost.length && !botones.length) {
         return noAplica("3.3.4",
@@ -3254,7 +3578,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         return t !== "hidden" && t !== "submit" && t !== "button" && t !== "reset";
       });
       if (campos.length < 2) {
-        return noAplica("3.3.7", "La página no tiene dos campos que pudieran pedir el mismo dato.");
+        return noAplica("3.3.7", "La página no tiene dos campos que pudieran pedir el mismo dato.", null, doc);
       }
       // Los grupos se calculan y se GUARDAN siempre, aunque en esta página no se
       // repita ninguno: el cruce entre páginas de `cuadernoDeMuestra` los necesita
@@ -3313,7 +3637,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         return CAPTCHA.test((el.getAttribute("class") || "") + " " + (el.getAttribute("id") || "") + " " + (el.getAttribute("src") || ""));
       });
       if (!passwords.length && !captcha.length) {
-        return noAplica("3.3.8", "La página no tiene ningún campo de contraseña ni captcha: no hay proceso de autenticación que evaluar.");
+        return noAplica("3.3.8", "La página no tiene ningún campo de contraseña ni captcha: no hay proceso de autenticación que evaluar.", null, doc);
       }
       const bloqueaPegado = visibles(doc, "input,textarea").filter(function (el) {
         return /return\s+false|preventDefault/i.test(el.getAttribute("onpaste") || "");
@@ -3360,7 +3684,11 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     const ctx = {
       medios: medios(doc),
       texto: textoVisible(doc),
-      estilos: estilosEnLinea + "\n" + (opts.css || "")
+      estilos: estilosEnLinea + "\n" + (opts.css || ""),
+      /* Cuántas hojas no se pudieron leer, y si se leyó alguna. Una ficha no puede
+       * afirmar «no hay nada declarado» sobre un CSS que nadie le pasó. */
+      cssBloqueadas: opts.cssBloqueadas || 0,
+      cssLeido: opts.cssLeido !== false
     };
 
     const criterios = CRITERIOS_DE_JUICIO.map(function (n) { return FICHAS[n](doc, ctx); });
@@ -4071,18 +4399,53 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     pt: ["o", "os", "as", "de", "que", "e", "em", "um", "uma", "para", "com", "não", "por", "do", "da", "dos", "das", "no", "na", "se"],
     gl: ["o", "os", "as", "do", "da", "dos", "das", "e", "en", "un", "unha", "para", "con", "non", "que", "por", "ao", "nos", "se", "é"]
   };
-  function idiomaProbable(texto) {
+  /* Idiomas cuyas palabras funci\u00f3n se solapan de verdad: entre ellos, el perfil no
+   * decide. Con `es` declarado y perfil `gl`, lo honesto es decir que no se puede
+   * saber desde el marcado, no acusar de idioma equivocado. */
+  const IDIOMAS_PROXIMOS = { es: ["gl", "pt"], gl: ["es", "pt"], pt: ["es", "gl"], fr: [], en: [] };
+
+  /**
+   * Perfil de idioma por palabras funci\u00f3n, con el detalle de la medida.
+   *
+   * Devuelve siempre un objeto, para que quien lo use pueda distinguir \u00abno hay
+   * texto suficiente\u00bb de \u00abhay texto y dice otra cosa\u00bb \u2014 dos situaciones que piden
+   * veredictos distintos y que antes se confund\u00edan en un solo `null`.
+   */
+  function idiomaDelTexto(texto) {
     const palabras = String(texto || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
       .split(/[^a-z]+/).filter(Boolean);
-    if (palabras.length < 25) return null;   // muy corto: no se puede afirmar nada
+    if (palabras.length < 25) return { suficiente: false, razon: "corto", palabras: palabras.length, idioma: null, detalle: "texto demasiado corto" };
     const punt = {};
     Object.keys(FUNCIONALES).forEach(function (k) {
       punt[k] = palabras.filter(function (w) { return FUNCIONALES[k].indexOf(w) !== -1; }).length / palabras.length;
     });
     const orden = Object.keys(punt).sort(function (a, b) { return punt[b] - punt[a]; });
+    const pct = function (k) { return Math.round(punt[k] * 1000) / 10; };
     // Exigir margen: sin diferencia clara entre el primero y el segundo, no se dice.
-    if (punt[orden[0]] < 0.08 || punt[orden[0]] < punt[orden[1]] * 1.6) return null;
-    return orden[0];
+    if (punt[orden[0]] < 0.08 || punt[orden[0]] < punt[orden[1]] * 1.6) {
+      return { suficiente: false, razon: "sin-margen", palabras: palabras.length, idioma: orden[0],
+        detalle: "sin margen entre «" + orden[0] + "» (" + pct(orden[0]) + " %) y «" + orden[1] + "» (" + pct(orden[1]) + " %) sobre " + palabras.length + " palabras" };
+    }
+    return { suficiente: true, palabras: palabras.length, idioma: orden[0],
+      detalle: pct(orden[0]) + " % de palabras funci\u00f3n de \u00ab" + orden[0] + "\u00bb sobre " + palabras.length +
+        " palabras, frente al " + pct(orden[1]) + " % de \u00ab" + orden[1] + "\u00bb; el perfil solo distingue " +
+        Object.keys(FUNCIONALES).join("/") };
+  }
+  /** Compatibilidad: el nombre antiguo devuelve solo el c\u00f3digo, o `null`. */
+  function idiomaProbable(texto) {
+    const r = idiomaDelTexto(texto);
+    return r.suficiente ? r.idioma : null;
+  }
+  /** Texto visible de la p\u00e1gina, para el perfil de idioma. */
+  function textoVisible(doc) {
+    const trozos = [];
+    visibles(doc.querySelectorAll("p,li,td,th,h1,h2,h3,h4,h5,h6,label,legend,figcaption,dd,dt,summary,caption,blockquote,a,button"))
+      .forEach(function (el) { const t = (el.textContent || "").replace(/\s+/g, " ").trim(); if (t) trozos.push(t); });
+    if (!trozos.length) {
+      const cuerpo = doc.querySelector("body");
+      if (cuerpo) trozos.push((cuerpo.textContent || "").replace(/\s+/g, " ").trim());
+    }
+    return trozos.join(" \n ");
   }
 
   /* ── Lo que se puede ver en el marcado de los criterios «de interacción» ── */
@@ -4187,7 +4550,41 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     if (!efectivo) out.push(F("3.1.1", "falla", "grave", ["<html> no declara el atributo lang: el lector no sabe en qué idioma leer."]));
     else if (!/^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i.test(efectivo)) out.push(F("3.1.1", "falla", "grave", ["<html lang=\"" + efectivo + "\"> no es una etiqueta de idioma BCP-47 válida."]));
     else if (lang && xmlLang && lang.toLowerCase() !== xmlLang.toLowerCase()) out.push(F("3.1.1", "revisar", null, ["lang=\"" + lang + "\" y xml:lang=\"" + xmlLang + "\" no coinciden."]));
-    else out.push(F("3.1.1", "cumple", null, ["Idioma declarado: lang=\"" + efectivo + "\"."]));
+    else {
+      /* Que el atributo esté y sea válido NO es que sea verdad.
+       *
+       * 3.1.1 no pide un `lang` bien escrito: pide que el idioma por omisión de la
+       * página se pueda determinar por programa. Una página en inglés con
+       * `lang="es"` lo tiene bien escrito y lo tiene MAL: el lector la lee con
+       * voz española, y eso es ininteligible. El motor emitía «cumple» sobre esa
+       * página, que es declarar conformidad sobre la única cosa que el criterio
+       * prohíbe.
+       *
+       * Lo que se puede hacer desde el marcado es comparar la declaración con un
+       * perfil de palabras función del texto visible. Es una señal, no una
+       * prueba: por eso ningún resultado de aquí es `falla`. */
+      const pista = idiomaDelTexto(textoVisible(doc));
+      const decl = efectivo.toLowerCase().split("-")[0];
+      if (!pista.suficiente) {
+        // Dos motivos distintos para no poder afirmar nada, y se dicen distintos:
+        // que no haya texto, o que haya texto y el perfil no distinga.
+        out.push(F("3.1.1", "cumple-parcial", null, [pista.razon === "corto"
+          ? "Idioma declarado: lang=\"" + efectivo + "\", bien formado. No hay texto suficiente en la página (" + pista.palabras +
+            " palabra(s) reconocidas) para corroborar que el contenido esté en ese idioma: compruébalo a ojo."
+          : "Idioma declarado: lang=\"" + efectivo + "\", bien formado. El perfil de palabras función no distingue el idioma del texto (" + pista.detalle +
+            "), así que no se puede corroborar desde el marcado que el contenido esté en «" + decl + "»: compruébalo a ojo."]));
+      } else if (pista.idioma === decl) {
+        out.push(F("3.1.1", "cumple", null, ["Idioma declarado: lang=\"" + efectivo + "\", y el texto de la página concuerda (" +
+          pista.detalle + ")."]));
+      } else if (IDIOMAS_PROXIMOS[decl] && IDIOMAS_PROXIMOS[decl].indexOf(pista.idioma) !== -1) {
+        out.push(F("3.1.1", "cumple-parcial", null, ["Idioma declarado: lang=\"" + efectivo + "\". El perfil del texto se parece más a «" + pista.idioma +
+          "» (" + pista.detalle + "), pero son idiomas cercanos y las palabras función se solapan: no se puede decidir desde el marcado. Confírmalo."]));
+      } else {
+        out.push(F("3.1.1", "revisar", null, ["La página declara lang=\"" + efectivo + "\", pero su texto visible parece estar en «" + pista.idioma +
+          "» (" + pista.detalle + "). Si el idioma por omisión no es el declarado, el lector de pantalla lee la página con la voz equivocada y el contenido es ininteligible. " +
+          "Compruébalo: si el idioma real es otro, corrige <code>&lt;html lang&gt;</code>; si la página es multilingüe, marca cada parte con su propio <code>lang</code> (3.1.2)."]));
+      }
+    }
 
     // 1.3.1 Landmarks: exactamente un main; banner/contentinfo no duplicados
     const mains = landmarks(doc, "main", ["main"]);
@@ -4512,10 +4909,24 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       ], p.hits.map(function (h) { return { locator: h.locator, name: "" }; })));
     });
 
-    /* ── 3.1.2 Idioma de las partes ── */
+    /* ── 3.1.2 Idioma de las partes ──
+     *
+     * Este criterio solo hablaba al encontrar un bloque sospechoso, así que en una
+     * página homogénea salía «No evaluado» en la hoja de seguimiento, que se lee
+     * igual que «nadie lo miró». Ahora se emite siempre: con la cuenta de bloques
+     * revisados, los que ya declaran su idioma, y el límite de la detección — que
+     * solo distingue cinco idiomas y no ve una palabra o una frase suelta. */
     const langPagina = String((html && html.getAttribute("lang")) || "").toLowerCase().split("-")[0];
+    if (!langPagina) {
+      // Sin idioma de página no hay con qué comparar: lo que falla es 3.1.1, que ya
+      // lo dice, pero 3.1.2 tampoco puede declararse conforme.
+      out.push(F("3.1.2", "revisar", null, [
+        "La página no declara idioma, así que no hay referencia con la que comparar las partes: revísalo después de corregir 3.1.1."
+      ]));
+    }
     if (langPagina) {
       const sospechosos = [];
+      let revisados = 0, yaMarcados = 0;
       const bloques = doc.querySelectorAll("p,li,blockquote,td,dd,figcaption,h1,h2,h3,h4,h5,h6");
       for (let i = 0; i < bloques.length && sospechosos.length < 12; i++) {
         const el = bloques[i];
@@ -4523,8 +4934,9 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         // Si el propio bloque o un antepasado ya declara idioma, está resuelto.
         let p = el, declarado = null;
         while (p && p.nodeType === 1) { const l = p.getAttribute("lang"); if (l) { declarado = l.toLowerCase().split("-")[0]; break; } p = p.parentElement; }
-        if (declarado && declarado !== langPagina) continue;
+        if (declarado && declarado !== langPagina) { yaMarcados++; continue; }
         const txt = (el.textContent || "").replace(/\s+/g, " ").trim();
+        revisados++;
         const idioma = idiomaProbable(txt);
         if (idioma && idioma !== langPagina) {
           sospechosos.push({ locator: loc(el), idioma: idioma, texto: txt.slice(0, 60) });
@@ -4536,6 +4948,19 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
           sospechosos.slice(0, 4).map(function (x) { return x.locator + " (¿" + x.idioma + "?) «" + x.texto + "»"; }).join(" · ") +
           ". La detección es por palabras funcionales y puede equivocarse con textos técnicos o con citas: confírmalo antes de anotarlo."
         ], sospechosos.slice(0, 8).map(function (x) { return { locator: x.locator, name: x.idioma }; })));
+      } else {
+        /* `cumple-parcial`, no `cumple`: lo comprobado es que ningún bloque de
+         * texto da un perfil de otro idioma, y eso no alcanza a lo que pide el
+         * criterio. La detección solo distingue cinco idiomas y necesita 25
+         * palabras, así que una cita corta, un nombre propio extranjero o un
+         * término técnico suelto no los ve nadie más que una persona leyendo. */
+        out.push(F("3.1.2", "cumple-parcial", null, [
+          "Se han revisado " + revisados + " bloque(s) de texto contra el idioma declarado (<code>lang=\"" + langPagina +
+          "\"</code>)" + (yaMarcados ? ", más " + yaMarcados + " que ya declaran su propio idioma," : "") +
+          " y ninguno da el perfil de otro idioma. La detección es por palabras funcionales: distingue " +
+          Object.keys(FUNCIONALES).join("/") + " y necesita unas 25 palabras, así que una cita corta, una frase hecha o un término extranjero suelto NO los ve. " +
+          "Si la página mezcla idiomas en frases cortas, compruébalo a ojo."
+        ]));
       }
     }
 
@@ -5409,7 +5834,21 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
 
   /**
    * 1.3.4 Orientación: el contenido no se restringe a una sola orientación.
-   * @param {{ bloqueoJS?:boolean, mediaBloqueante?:Array<string>, textoVertical?:number, textoHorizontal?:number }} trace
+   *
+   * Dos honestidades que este criterio se había dejado por el camino:
+   *
+   * 1. El rastreo recorre `document.styleSheets` buscando `@media (orientation:…)`
+   *    y una hoja de otro origen lanza al tocar `cssRules`. Eso se descartaba en
+   *    silencio, y la rama de conformidad afirmaba «y no hay bloqueo de
+   *    orientación» sobre un CSS que nunca se había podido leer. Ahora el rastreo
+   *    cuenta esas hojas (`hojasIlegibles`) y aquí la conformidad no se declara
+   *    mientras haya alguna sin leer: se dice qué parte no se ha mirado.
+   * 2. Si la medida de texto en las dos orientaciones no llega (0 caracteres en
+   *    una de ellas, página sin cuerpo legible), antes no se emitía NADA y el
+   *    criterio quedaba en blanco — que en el informe se lee igual que conforme.
+   *
+   * @param {{ bloqueoJS?:boolean, mediaBloqueante?:Array<string>, hojasIlegibles?:number,
+   *           textoVertical?:number, textoHorizontal?:number }} trace
    */
   function analyzeOrientation(trace) {
     if (!trace) return [];
@@ -5422,14 +5861,22 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       out.push(F("1.3.4", "revisar", null, ["Hay reglas CSS que ocultan contenido según la orientación (" + trace.mediaBloqueante.slice(0, 3).join(" · ") + "): comprueba que no se pierda nada al girar."]));
       return out;
     }
+    const ilegibles = trace.hojasIlegibles || 0;
+    const noLeido = ilegibles
+      ? " No se han podido leer " + ilegibles + " hoja(s) de estilo de otro origen, así que la búsqueda de reglas <code>@media (orientation:…)</code> está incompleta."
+      : "";
     const v = trace.textoVertical || 0, h = trace.textoHorizontal || 0;
     if (v && h) {
       const perdida = Math.round((1 - Math.min(v, h) / Math.max(v, h)) * 100);
       if (perdida >= 15) {
-        out.push(F("1.3.4", "revisar", null, ["Al girar el dispositivo cambia un " + perdida + " % la cantidad de texto visible (" + h + " → " + v + " caracteres): revisa que no se pierda contenido en una de las orientaciones."]));
+        out.push(F("1.3.4", "revisar", null, ["Al girar el dispositivo cambia un " + perdida + " % la cantidad de texto visible (" + h + " → " + v + " caracteres): revisa que no se pierda contenido en una de las orientaciones." + noLeido]));
+      } else if (ilegibles) {
+        out.push(F("1.3.4", "revisar", null, ["El contenido se mantiene en vertical y en horizontal (diferencia del " + perdida + " %) y no se ha visto ninguna llamada a <code>screen.orientation.lock()</code>." + noLeido + " Comprueba a mano que ninguna de esas hojas oculte contenido al girar."]));
       } else {
         out.push(F("1.3.4", "cumple", null, ["El contenido se mantiene en vertical y en horizontal (diferencia del " + perdida + " %) y no hay bloqueo de orientación."]));
       }
+    } else {
+      out.push(F("1.3.4", "revisar", null, ["No se ha podido comparar el contenido en las dos orientaciones (caracteres legibles: " + h + " en horizontal, " + v + " en vertical), así que no se puede afirmar que no se pierda nada al girar." + noLeido]));
     }
     return out;
   }
@@ -5804,8 +6251,32 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   function analyzeErrorState(trace) {
     const out = [];
     if (!trace || !trace.submitted) return out;
-    const bad = (trace.fields || []).filter(function (f) { return f.required || f.invalid; });
-    if (!bad.length) return out;
+    /* Qué es un campo EN ERROR, que no es lo mismo que un campo obligatorio.
+     *
+     * Esto era `f.required || f.invalid`, con `invalid` mirando solo
+     * `aria-invalid="true"`. O sea: «obligatorio» se usaba como sustituto de
+     * «habrá fallado la validación», y en cuanto el campo está rellenado y es
+     * válido eso es falso. Medido: un `required` correctamente rellenado producía
+     * `3.3.1 falla grave` («1 campo con error sin descripción») y, de paso, un
+     * `4.1.2 revisar` por no exponer `aria-invalid` en un campo que no tiene
+     * ningún error que exponer. Una barrera inventada sobre contenido conforme,
+     * que es precisamente lo que el comentario de abajo advierte de no hacer.
+     *
+     * Ahora el error es lo que lo acredita: `aria-invalid="true"`, o la validez
+     * NATIVA que el navegador acaba de decidir al enviar (`nativoInvalido`). Y se
+     * mantiene «obligatorio y vacío» como respaldo para los rastreos que no traen
+     * la validez nativa (los de la extensión, o una traza antigua): ahí la
+     * inferencia sí es correcta, porque un obligatorio vacío tras un envío ha
+     * fallado seguro. Un obligatorio relleno y válido no entra por ninguna vía. */
+    const enError = function (f) {
+      if (f.invalid) return true;
+      if (f.nativoInvalido) return true;
+      if (f.nativoInvalido === false && f.vacio === false) return false;   // el navegador ya ha dicho que vale
+      return !!(f.required && (f.vacio === undefined || f.vacio));
+    };
+    const bad = (trace.fields || []).filter(enError);
+    // Sin campos en error no se sale en silencio: más abajo se dice que el envío
+    // no disparó ninguna validación, que es información y no es conformidad.
     /* 3.3.1 pide que el error se DESCRIBA EN TEXTO, no que esté asociado por ARIA.
      *
      * La técnica suficiente **G83** se satisface con texto de error visible junto al
@@ -5847,6 +6318,19 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     if (!hayAlerta) out.push(F("4.1.3", "revisar", null, ["No se detecta un mensaje de estado (role=alert / aria-live) al enviar: revisa que el error se anuncie sin mover el foco."]));
     else if (!anuncioVisto) out.push(F("4.1.3", "revisar", null, ["Hay una región de estado (role=alert / aria-live) en la página, pero su contenido no ha cambiado al enviar: que exista el contenedor no quiere decir que el error se anuncie. Compruébalo con un lector."]));
 
+    /* Un envío en el que NO falla nada no dice nada sobre 3.3.1 — y eso hay que
+     * decirlo, porque antes no se emitía nada en absoluto y un criterio ausente se
+     * lee en el informe igual que uno conforme. Lo que se ha observado es que el
+     * formulario se envió sin disparar ninguna validación: no había errores que
+     * describir, así que el criterio no se ha podido comprobar en este envío. */
+    if (!bad.length) {
+      out.push(F("3.3.1", "revisar", null, [
+        "Se envió el formulario y NINGÚN campo quedó en error (" + ((trace.fields || []).length) +
+        " campo(s) revisados), así que no se ha podido comprobar cómo se identifican los errores: no hubo ninguno. " +
+        "Pruébalo a mano con datos inválidos —un correo mal escrito, un obligatorio vacío— y comprueba que el error se describe en texto junto al campo."
+      ]));
+      return out;
+    }
     if (!sinTexto.length && !sinInvalid.length) {
       if (anuncioVisto && !textoSinAsociar.length) {
         out.push(F("3.3.1", "cumple", null, ["Los errores se identifican en texto asociado al campo, exponen <code>aria-invalid</code>, y el anuncio se ha visto producirse: el contenido de la región de estado cambió al enviar."]));
@@ -6582,6 +7066,10 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
    *   aparece en ningún hallazgo. Sin ella, la diferencia entre «comprobado y
    *   correcto» y «nadie lo miró» se perdía justo en el entregable: los criterios
    *   ausentes no generaban fila, y la rama «No evaluado» era código muerto.
+   * @param {{ todosLosCriterios?: boolean,
+   *           muestra?: { paginas?: number, paginasAnalizadas?: number, sinAnalizar?: Array } }} [opts]
+   *   `muestra` es el rollup de la muestra (`rollupSample`). Con él, la hoja de
+   *   Seguimiento sabe sobre CUÁNTAS páginas se está pronunciando.
    */
   function seguimiento(findings, opts) {
     const by = {};
@@ -6597,10 +7085,31 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         if (!by[c.n]) by[c.n] = { criterio: c.n, nombre: c.t, nivel: c.lvl, worst: null, n: 0 };
       });
     }
+    /* La COBERTURA de la muestra entra en la hoja.
+     *
+     * Si tres de las diez páginas no se llegaron a analizar, un criterio que sale
+     * bien en las siete restantes se exportaba como «Correcto», a secas, en una
+     * hoja que no dice en ninguna parte que faltan tres páginas. El rollup sí lo
+     * dice («Incompleta: 3 de 10…»), pero eso vive en otro objeto y no viaja con
+     * la fila. Un «Correcto» sin cobertura al lado es una afirmación que el agente
+     * no puede sostener, así que mientras la muestra esté incompleta no se emite:
+     * la conformidad se queda en «No se puede comprobar», con el motivo. Las
+     * barreras NO se tocan: una barrera encontrada en siete páginas sigue siendo
+     * una barrera, y «No aplica» tampoco, que es una afirmación sobre lo que hay.
+     */
+    const m = (opts && opts.muestra) || null;
+    const totalPag = m && m.paginas != null ? m.paginas : null;
+    const vistas = m && m.paginasAnalizadas != null ? m.paginasAnalizadas : totalPag;
+    const incompleta = totalPag != null && vistas != null && vistas < totalPag;
+    const cobertura = totalPag == null ? "" : vistas + " de " + totalPag + " página(s) analizadas";
     return Object.keys(by).map(function (k) { return by[k]; })
       .sort(function (a, b) { return cmpSC(a.criterio, b.criterio); })
       .map(function (r) {
         const en = enClause(r.criterio);
+        let resultado = resultadoOAW(r.worst);
+        if (incompleta && (r.worst === "cumple" || r.worst === "pasa")) {
+          resultado = "No se puede comprobar (muestra incompleta: " + cobertura + ")";
+        }
         return {
           subcriterio: en || "",
           enEN: !!en,
@@ -6608,7 +7117,8 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
           nombre: r.nombre,
           nivel: r.nivel,
           veredicto: r.worst,
-          resultado: resultadoOAW(r.worst),
+          resultado: resultado,
+          cobertura: cobertura,
           num_barreras: r.n
         };
       });
@@ -6653,20 +7163,25 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     { key: "subcriterio", label: "Subcriterio EN (9.X.Y.Z)" }, { key: "enEN", label: "En la EN vigente" },
     { key: "criterio", label: "Criterio WCAG" },
     { key: "nombre", label: "Nombre" }, { key: "nivel", label: "Nivel" }, { key: "resultado", label: "Resultado" },
+    // La cobertura, al lado del resultado: quien lee la hoja tiene que poder ver
+    // sobre cuántas páginas se está afirmando cada cosa sin salir de la fila.
+    { key: "cobertura", label: "Cobertura de la muestra" },
     { key: "num_barreras", label: "Nº barreras" }
   ];
 
   /**
    * Exporta los hallazgos a la forma OAW/IRA.
    * @param {Array} findings  hallazgos del agente (unificados)
-   * @param {{ url?:string, overrides?:object }} [ctx]  `overrides` fija el
-   *   subcriterio OAW a mano: por criterio (`"1.3.1"`) o por elemento
+   * @param {{ url?:string, overrides?:object, muestra?:object }} [ctx]  `overrides`
+   *   fija el subcriterio OAW a mano: por criterio (`"1.3.1"`) o por elemento
    *   (`"1.3.1|nav.principal"`), y gana sobre cualquier asignación automática.
+   *   `muestra` es el rollup (`rollupSample`): con él la hoja de Seguimiento
+   *   declara su cobertura y no exporta «Correcto» sobre una muestra incompleta.
    */
   function oawExport(findings, ctx) {
     ctx = ctx || {};
     const b = barreras(findings, ctx);
-    const s = seguimiento(findings, { todosLosCriterios: ctx.todosLosCriterios !== false });
+    const s = seguimiento(findings, { todosLosCriterios: ctx.todosLosCriterios !== false, muestra: ctx.muestra || null });
     // Solo los EVALUADOS: desde que el Seguimiento emite fila para los 55
     // criterios, listar aquí los seis que no están en la EN vigente aunque nadie
     // los haya mirado convertía un dato útil («esto se ha evaluado y no cabe en el

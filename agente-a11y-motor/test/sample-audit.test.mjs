@@ -75,3 +75,31 @@ test("sin el campo `analizada`, sigue valiendo el indicio de siempre", () => {
   assert.equal(r.sinAnalizar.length, 1);
   assert.match(r.sinAnalizar[0].error, /no se obtuvo ningún hallazgo/);
 });
+
+/* ── Robustez y honestidad del rollup (v0.37.0) ─────────────────────────────── */
+test("un hueco en la muestra no revienta el rollup: cuenta como página sin analizar", () => {
+  // `[pagina, null]` es lo que deja un fallo de carga en algunos orquestadores,
+  // y hacía reventar el rollup con un TypeError. Un informe que no se genera es
+  // peor que un informe incompleto.
+  const r = rollupSample([{ url: "/a", findings: [{ c: { n: "1.1.1", lvl: "A", t: "x" }, verdict: "cumple" }] }, null]);
+  assert.equal(r.paginas, 2);
+  assert.equal(r.paginasAnalizadas, 1);
+  assert.match(r.conformidad, /Incompleta/);
+});
+
+test("un hallazgo malformado no tira el informe ni se cuenta", () => {
+  const r = rollupSample([{ url: "/a", findings: [null, { c: { n: "1.3.1", lvl: "A", t: "x" }, verdict: "falla" }] }]);
+  assert.equal(r.conformidad, "No conforme");
+  assert.equal(r.criterios.length, 1);
+});
+
+test("una muestra VACÍA no es una muestra limpia", () => {
+  // Con cero páginas no fallaba nada y no quedaba nada por revisar, así que el
+  // rollup emitía «Sin barreras deterministas en la muestra»: la frase más
+  // tranquilizadora del informe, dicha sobre la nada.
+  [rollupSample([]), rollupSample(), rollupSample(null)].forEach(function (r) {
+    assert.match(r.conformidad, /Sin muestra/);
+    assert.doesNotMatch(r.conformidad, /Sin barreras/);
+    assert.equal(r.paginas, 0);
+  });
+});

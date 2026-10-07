@@ -230,7 +230,14 @@ test("2.4.11 real: sin nada fijo por encima, no se inventa el criterio", { skip 
   const b = await chromium.launch(launchOptions);
   try {
     const m = await medir(b, '<!doctype html><html lang="es"><body><p>t</p><button>Enviar</button></body></html>');
-    assert.deepEqual(m.filter((x) => x.crit === "2.4.11"), []);
+    /* Lo que defiende este test es que no se INVENTE una barrera, no que el
+       criterio se calle: desde v0.37.0 emite la afirmación positiva —se ha
+       recorrido cada control y nada lo tapa—, porque un criterio en blanco se
+       lee en la hoja de seguimiento igual que uno conforme. */
+    const f = m.filter((x) => x.crit === "2.4.11");
+    assert.equal(f.length, 1, JSON.stringify(f));
+    assert.equal(f[0].verdict, "pasa");
+    assert.doesNotMatch(f[0].detail, /tapa POR COMPLETO|queda(n)? tapado/);
   } finally { await b.close(); }
 });
 
@@ -241,7 +248,12 @@ test("2.4.11 real: un control DENTRO de la barra fija no se acusa a sí mismo", 
     const m = await medir(b, `<!doctype html><html lang="es"><body>
       <div style="position:fixed;top:0;left:0;right:0;height:60px;background:#222">
         <button>Cerrar aviso</button></div><p>contenido</p></body></html>`);
-    assert.deepEqual(m.filter((x) => x.crit === "2.4.11"), []);
+    // Igual que arriba: lo que no puede pasar es que la barra se acuse de taparse
+    // a sí misma. Que el criterio se pronuncie a favor sí tiene que pasar.
+    const f = m.filter((x) => x.crit === "2.4.11");
+    assert.equal(f.length, 1, JSON.stringify(f));
+    assert.equal(f[0].verdict, "pasa");
+    assert.doesNotMatch(f[0].detail, /tapa POR COMPLETO|queda(n)? tapado/);
   } finally { await b.close(); }
 });
 

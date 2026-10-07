@@ -318,3 +318,33 @@ test("2.2.1: un temporizador del propio sitio NO se marca como descartable", () 
   assert.ok(!/etiquetas de analítica/.test(f[0].evid.join(" ")), f[0].evid.join(" "));
   assert.match(f[0].evid.join(" "), /cerrar la sesión/);
 });
+
+/* ── 1.3.4 no declara conformidad sobre un CSS que no ha leído (v0.37.0) ───── */
+test("una hoja de estilo ilegible impide declarar 1.3.4 conforme", () => {
+  const base = { textoVertical: 1000, textoHorizontal: 1010 };
+  const limpio = analyzeOrientation(Object.assign({ hojasIlegibles: 0 }, base));
+  assert.equal(limpio[0].verdict, "cumple");
+
+  // El rastreo busca `@media (orientation:…)` recorriendo document.styleSheets,
+  // y una hoja de otro origen lanza al tocar cssRules. Se descartaba en
+  // silencio, y el criterio afirmaba «y no hay bloqueo de orientación» sobre un
+  // CSS que nunca se había podido leer.
+  const ciego = analyzeOrientation(Object.assign({ hojasIlegibles: 2 }, base));
+  assert.equal(ciego[0].verdict, "revisar");
+  assert.match(ciego[0].evid[0], /2 hoja\(s\) de estilo de otro origen/);
+});
+
+test("sin poder comparar las dos orientaciones, 1.3.4 no se queda en blanco", () => {
+  // Antes no se emitía nada, y un criterio ausente se lee en el informe igual
+  // que uno conforme.
+  const r = analyzeOrientation({ textoVertical: 0, textoHorizontal: 0, hojasIlegibles: 0 });
+  assert.equal(r.length, 1);
+  assert.equal(r[0].verdict, "revisar");
+  assert.match(r[0].evid[0], /no se puede afirmar/);
+});
+
+test("1.3.4: una llamada a lock() manda sobre todo lo demás", () => {
+  const r = analyzeOrientation({ bloqueoJS: true, hojasIlegibles: 3 });
+  assert.equal(r[0].verdict, "falla");
+  assert.equal(r[0].sev, "grave");
+});

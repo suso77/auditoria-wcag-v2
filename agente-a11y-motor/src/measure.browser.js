@@ -1259,6 +1259,36 @@ function runChecksReal(doc, win, limit) {
           ") y los atenúa sin ocultarlos: 2.4.11 exige que no queden ocultos del todo, así que no es una barrera de este criterio, pero comprueba que el indicador de foco siga distinguiéndose a través de él." });
     }
   });
+  /* Y si NADA tapa el foco, también se dice.
+   *
+   * Este criterio solo hablaba cuando encontraba algo que tapaba, así que en una
+   * página sin barras fijas salía «No evaluado» en la hoja de seguimiento —
+   * indistinguible de un criterio que nadie ha mirado, cuando lo que ha pasado es
+   * que se ha medido y está bien. Es una afirmación determinable: se ha recorrido
+   * cada control enfocable con cada elemento fijo o flotante de la página, en las
+   * dos direcciones de tabulación, y ninguno queda oculto. */
+  if (!oscurecidos.length) {
+    const fijos = flotantes.filter(function (f) { return f.position === "fixed" || f.position === "sticky"; });
+    const n = focusables.length;
+    const controles = n === 1 ? "1 control enfocable" : n + " controles enfocables";
+    /* Es una afirmación sobre el CONJUNTO, no sobre un elemento, así que viaja
+     * con la secuencia de rutas comprobadas (como el orden de foco de 2.4.3) y
+     * no con un `path`: no hay un elemento al que señalar, y dejar la casilla
+     * del selector vacía en el informe sería peor que decir qué se recorrió. */
+    const rutas = focusables.slice(0, 20).map(function (f) { return rutaM(f.el); }).filter(Boolean);
+    if (!n) {
+      res.push({ crit: "2.4.11", label: "Foco no oscurecido", node: "(documento)", verdict: "revisar", rutas: [],
+        detail: "no se ha encontrado ningún control enfocable en esta página, así que no hay nada que pueda quedar tapado al recibir el foco: el criterio no se ha podido medir sobre nada. Si la página debería tener controles, eso es lo que hay que mirar." });
+    } else if (!flotantes.length) {
+      res.push({ crit: "2.4.11", label: "Foco no oscurecido", node: "(documento)", verdict: "pasa", rutas: rutas,
+        detail: "se han recorrido los " + controles + " de la página y NO hay ningún elemento fijo, pegajoso ni flotante que pueda superponerse a ellos: nada puede oscurecer el control que recibe el foco." });
+    } else {
+      res.push({ crit: "2.4.11", label: "Foco no oscurecido", node: "(documento)", verdict: "pasa", rutas: rutas,
+        detail: "se ha comprobado cada uno de los " + controles + " contra los " + flotantes.length +
+          " elemento(s) superpuesto(s) de la página" + (fijos.length ? " (" + fijos.length + " fijo(s) o pegajoso(s))" : "") +
+          ", tabulando en las dos direcciones, y ninguno queda oculto ni atenuado al recibir el foco." });
+    }
+  }
   /* Si la página se ha medido detrás de un VELO, eso va primero que cualquier
    * criterio.
    *
@@ -1270,6 +1300,8 @@ function runChecksReal(doc, win, limit) {
   if (velos.length) {
     const v = velos.reduce(function (m, x) { return x.opaco > m.opaco ? x : m; }, velos[0]);
     res.push({ crit: "__meta", label: "Medido detrás de un velo", node: v.loc, verdict: "revisar",
+      // Con un velo delante, TODO lo que se mide sobre el render está en duda.
+      limita: ["1.4.3", "1.4.11", "1.4.1", "2.4.7", "2.4.11", "2.5.8", "2.4.3", "2.1.1"],
       detail: "«" + v.loc + "» (" + v.position + ", opacidad efectiva " + (v.opaco != null ? v.opaco.toFixed(2) : "?") +
         ") cubre la pantalla entera, así que TODO lo de esta página se ha medido con él puesto. " +
         (v.opaco >= 0.9
@@ -1282,16 +1314,32 @@ function runChecksReal(doc, win, limit) {
   const marcos = todosM(doc, "iframe,frame").filter(function (f) { return renderedM(f, win); });
   if (cerrados.length) {
     res.push({ crit: "__meta", label: "Shadow DOM cerrado", node: cerrados.length + " componente(s)", verdict: "revisar",
+      // Lo que la propia nota dice que no está comprobado: contraste, tamaño
+      // de los objetivos y foco de lo que haya dentro del componente.
+      limita: ["1.4.3", "1.4.11", "2.4.7", "2.5.8", "2.4.3", "2.1.1"],
       detail: "hay " + cerrados.length + " componente(s) que parecen llevar un shadow root CERRADO (" +
         cerrados.slice(0, 5).map(function (el) { return locatorM(el); }).join(", ") + (cerrados.length > 5 ? ", …" : "") +
         "): su contenido no se puede inspeccionar desde fuera, así que el contraste, el tamaño de los objetivos y el foco de lo que haya dentro NO están comprobados. Compruébalo con el inspector del navegador o pídeselo a quien mantenga el componente." });
   }
   if (marcos.length) {
+    /* Esta nota es INFORMATIVA: no lleva `limita` a propósito.
+     *
+     * Llevarlo fue un error mío, medido y retirado. La nota salta con cualquier
+     * marco pintado, y el orquestador de Node entra en los marcos uno a uno con
+     * Playwright —también en los de otro origen— y los mide. Con `limita`, un
+     * A/B sobre la misma página demostró que un solo reproductor incrustado
+     * tumbaba 1.4.3, 1.4.11, 2.4.7, 2.5.8 y 2.1.1 de `pasa` a `revisar` aunque
+     * el marco se hubiera medido entero: eso no es prudencia, es ruido, y el
+     * ruido en un informe tapa las barreras de verdad igual que el silencio.
+     *
+     * Lo que sí ata es la nota «Marco no medible», que se emite exactamente
+     * cuando un marco no se ha podido mirar. Esa es la diferencia que importa:
+     * el criterio se aprieta cuando algo NO se ha visto, no cuando algo existe. */
     res.push({ crit: "__meta", label: "Marcos: se auditan aparte", node: marcos.length + " iframe(s)", verdict: "revisar",
       detail: "hay " + marcos.length + " marco(s) pintado(s) (" +
         marcos.slice(0, 5).map(function (f) { return locatorM(f) + (f.getAttribute("src") ? " → " + String(f.getAttribute("src")).slice(0, 60) : ""); }).join(", ") +
         (marcos.length > 5 ? ", …" : "") +
-        "). Esta medición recorre un solo documento: el contenido de cada marco se mide por separado, y si alguno es de otro origen no se puede medir en absoluto." });
+        "). Esta pasada de medición recorre un solo documento: el contenido de cada marco se mide en su propia pasada, y lo que no se haya podido medir sale como nota aparte. Los criterios de ÁMBITO DE PÁGINA de cada marco (su propio título, idioma y estructura) se auditan por su URL." });
   }
 
   // La nota dice lo que se midió DE VERDAD, y de cuántos.
@@ -1299,6 +1347,7 @@ function runChecksReal(doc, win, limit) {
   const sinMirar = conTexto.length - cubiertos;
   if (sinMirar > 0) {
     res.push({ crit: "__meta", label: "Cobertura del contraste", node: (medidosAqui + yaMedidos) + "/" + conTexto.length, verdict: "revisar",
+      limita: ["1.4.3", "1.4.11"],
       detail: "se midió el contraste de " + (medidosAqui + yaMedidos) + " de " + conTexto.length + " bloques de texto con texto propio" +
         (descartados ? " (" + descartados + " más se descartaron por no estar pintados o no dar un contraste medible)" : "") +
         "; quedan " + sinMirar + " sin comprobar por el límite de la medición (" + limit + "). Súbelo para dictaminarlos." });
@@ -1405,11 +1454,15 @@ function runChecksReal(doc, win, limit) {
     });
   }
   if (truncado) {
-    res.push({ crit: "__meta", label: "Cobertura de los controles", node: all.length + "/" + candidatos.length, verdict: "revisar", detail: "se midieron " + all.length + " de " + candidatos.length + " controles (límite): el resto NO está comprobado" });
+    res.push({ crit: "__meta", label: "Cobertura de los controles", node: all.length + "/" + candidatos.length, verdict: "revisar",
+      // Todo lo que se dictamina control por control.
+      limita: ["2.4.7", "2.5.8", "2.4.3", "2.1.1", "2.4.11"],
+      detail: "se midieron " + all.length + " de " + candidatos.length + " controles (límite): el resto NO está comprobado" });
   }
   if (!docEnfocado && (porCss || sinRegla)) {
     res.push({
       crit: "__meta", label: "Foco visible sin foco del sistema", node: (porCss + sinRegla) + " controles", verdict: "revisar",
+      limita: ["2.4.7", "2.4.11"],
       detail: "el documento NO tenía el foco del sistema durante la medición (ventana en segundo plano, panel lateral o popup de extensión abierto): «:focus» no se aplica y el indicador de foco no se puede medir sobre el render. Se ha caído al CSS: " + porCss + " control(es) con regla de foco con indicador y " + sinRegla + " sin ninguna" + (hojasBloqueadas ? ", con " + hojasBloqueadas + " hoja(s) de otro origen ilegibles" : "") + ". Para medir 2.4.7 de verdad, haz clic en la página y vuelve a analizar con la ventana en primer plano."
     });
   }

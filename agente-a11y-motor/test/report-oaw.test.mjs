@@ -44,3 +44,32 @@ test("oawExport: CSV con BOM, separador ; y cabecera", () => {
   assert.match(out.csv.barreras.split("\r\n")[0], /Subcriterio EN.*;.*Criterio WCAG/);
   assert.match(out.csv.seguimiento, /9\.4\.1\.2/);
 });
+
+/* ── La hoja de Seguimiento declara su cobertura (v0.37.0) ──────────────────── */
+test("con la muestra incompleta, nada se exporta como «Correcto»", () => {
+  const f = (n, v) => ({ c: { n, lvl: "A", t: "x" }, verdict: v });
+  const findings = [f("1.1.1", "cumple"), f("1.3.1", "falla"), f("2.4.4", "no-aplica")];
+  const res = (m) => {
+    const o = {};
+    seguimiento(findings, { muestra: m }).forEach((r) => { o[r.criterio] = r.resultado; });
+    return o;
+  };
+  const completa = res({ paginas: 10, paginasAnalizadas: 10, sinAnalizar: [] });
+  assert.equal(completa["1.1.1"], "Correcto");
+
+  // Con tres páginas sin analizar, ese «Correcto» es una afirmación que el
+  // agente no puede sostener: se queda sin determinar, y con el motivo dentro.
+  const parcial = res({ paginas: 10, paginasAnalizadas: 7, sinAnalizar: [1, 2, 3] });
+  assert.match(parcial["1.1.1"], /No se puede comprobar \(muestra incompleta: 7 de 10/);
+  // Lo que NO cambia: una barrera encontrada sigue siendo una barrera, y «no
+  // aplica» habla de lo que hay en las páginas, no de cuántas se miraron.
+  assert.equal(parcial["1.3.1"], "Falla");
+  assert.equal(parcial["2.4.4"], "No aplica");
+});
+
+test("la cobertura de la muestra viaja en su propia columna del CSV", () => {
+  const findings = [{ c: { n: "1.1.1", lvl: "A", t: "x" }, verdict: "cumple" }];
+  const csv = oawExport(findings, { muestra: { paginas: 10, paginasAnalizadas: 7, sinAnalizar: [1, 2, 3] }, todosLosCriterios: false }).csv.seguimiento;
+  assert.match(csv.split("\r\n")[0], /Cobertura de la muestra/);
+  assert.match(csv, /7 de 10 página\(s\) analizadas/);
+});

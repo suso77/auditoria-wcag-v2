@@ -368,6 +368,7 @@ export async function resolverContrastePorPixeles(page, opts) {
   // barrido encuentra algo, es que una restauración por selector falló — se dice.
   const quedaban = await barrer();
   if (quedaban) out.push({ crit: "__meta", label: "Sondas de color", node: quedaban + " elemento(s)", verdict: "revisar",
+    limita: ["1.4.3", "1.4.11"],
     detail: "la restauración por selector no alcanzó " + quedaban + " elemento(s) (el DOM cambió durante la captura: carrusel, lazy-load o re-render). El barrido final los ha devuelto a su estado, pero revisa las mediciones posteriores de esta página." });
   return out;
 }

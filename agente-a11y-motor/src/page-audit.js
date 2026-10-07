@@ -201,18 +201,53 @@ const FUNCIONALES = {
   pt: ["o", "os", "as", "de", "que", "e", "em", "um", "uma", "para", "com", "não", "por", "do", "da", "dos", "das", "no", "na", "se"],
   gl: ["o", "os", "as", "do", "da", "dos", "das", "e", "en", "un", "unha", "para", "con", "non", "que", "por", "ao", "nos", "se", "é"]
 };
-function idiomaProbable(texto) {
+/* Idiomas cuyas palabras funci\u00f3n se solapan de verdad: entre ellos, el perfil no
+ * decide. Con `es` declarado y perfil `gl`, lo honesto es decir que no se puede
+ * saber desde el marcado, no acusar de idioma equivocado. */
+const IDIOMAS_PROXIMOS = { es: ["gl", "pt"], gl: ["es", "pt"], pt: ["es", "gl"], fr: [], en: [] };
+
+/**
+ * Perfil de idioma por palabras funci\u00f3n, con el detalle de la medida.
+ *
+ * Devuelve siempre un objeto, para que quien lo use pueda distinguir \u00abno hay
+ * texto suficiente\u00bb de \u00abhay texto y dice otra cosa\u00bb \u2014 dos situaciones que piden
+ * veredictos distintos y que antes se confund\u00edan en un solo `null`.
+ */
+function idiomaDelTexto(texto) {
   const palabras = String(texto || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .split(/[^a-z]+/).filter(Boolean);
-  if (palabras.length < 25) return null;   // muy corto: no se puede afirmar nada
+  if (palabras.length < 25) return { suficiente: false, razon: "corto", palabras: palabras.length, idioma: null, detalle: "texto demasiado corto" };
   const punt = {};
   Object.keys(FUNCIONALES).forEach(function (k) {
     punt[k] = palabras.filter(function (w) { return FUNCIONALES[k].indexOf(w) !== -1; }).length / palabras.length;
   });
   const orden = Object.keys(punt).sort(function (a, b) { return punt[b] - punt[a]; });
+  const pct = function (k) { return Math.round(punt[k] * 1000) / 10; };
   // Exigir margen: sin diferencia clara entre el primero y el segundo, no se dice.
-  if (punt[orden[0]] < 0.08 || punt[orden[0]] < punt[orden[1]] * 1.6) return null;
-  return orden[0];
+  if (punt[orden[0]] < 0.08 || punt[orden[0]] < punt[orden[1]] * 1.6) {
+    return { suficiente: false, razon: "sin-margen", palabras: palabras.length, idioma: orden[0],
+      detalle: "sin margen entre «" + orden[0] + "» (" + pct(orden[0]) + " %) y «" + orden[1] + "» (" + pct(orden[1]) + " %) sobre " + palabras.length + " palabras" };
+  }
+  return { suficiente: true, palabras: palabras.length, idioma: orden[0],
+    detalle: pct(orden[0]) + " % de palabras funci\u00f3n de \u00ab" + orden[0] + "\u00bb sobre " + palabras.length +
+      " palabras, frente al " + pct(orden[1]) + " % de \u00ab" + orden[1] + "\u00bb; el perfil solo distingue " +
+      Object.keys(FUNCIONALES).join("/") };
+}
+/** Compatibilidad: el nombre antiguo devuelve solo el c\u00f3digo, o `null`. */
+function idiomaProbable(texto) {
+  const r = idiomaDelTexto(texto);
+  return r.suficiente ? r.idioma : null;
+}
+/** Texto visible de la p\u00e1gina, para el perfil de idioma. */
+function textoVisible(doc) {
+  const trozos = [];
+  visibles(doc.querySelectorAll("p,li,td,th,h1,h2,h3,h4,h5,h6,label,legend,figcaption,dd,dt,summary,caption,blockquote,a,button"))
+    .forEach(function (el) { const t = (el.textContent || "").replace(/\s+/g, " ").trim(); if (t) trozos.push(t); });
+  if (!trozos.length) {
+    const cuerpo = doc.querySelector("body");
+    if (cuerpo) trozos.push((cuerpo.textContent || "").replace(/\s+/g, " ").trim());
+  }
+  return trozos.join(" \n ");
 }
 
 /* ── Lo que se puede ver en el marcado de los criterios «de interacción» ── */
@@ -317,7 +352,41 @@ export function auditPageDoc(doc) {
   if (!efectivo) out.push(F("3.1.1", "falla", "grave", ["<html> no declara el atributo lang: el lector no sabe en qué idioma leer."]));
   else if (!/^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i.test(efectivo)) out.push(F("3.1.1", "falla", "grave", ["<html lang=\"" + efectivo + "\"> no es una etiqueta de idioma BCP-47 válida."]));
   else if (lang && xmlLang && lang.toLowerCase() !== xmlLang.toLowerCase()) out.push(F("3.1.1", "revisar", null, ["lang=\"" + lang + "\" y xml:lang=\"" + xmlLang + "\" no coinciden."]));
-  else out.push(F("3.1.1", "cumple", null, ["Idioma declarado: lang=\"" + efectivo + "\"."]));
+  else {
+    /* Que el atributo esté y sea válido NO es que sea verdad.
+     *
+     * 3.1.1 no pide un `lang` bien escrito: pide que el idioma por omisión de la
+     * página se pueda determinar por programa. Una página en inglés con
+     * `lang="es"` lo tiene bien escrito y lo tiene MAL: el lector la lee con
+     * voz española, y eso es ininteligible. El motor emitía «cumple» sobre esa
+     * página, que es declarar conformidad sobre la única cosa que el criterio
+     * prohíbe.
+     *
+     * Lo que se puede hacer desde el marcado es comparar la declaración con un
+     * perfil de palabras función del texto visible. Es una señal, no una
+     * prueba: por eso ningún resultado de aquí es `falla`. */
+    const pista = idiomaDelTexto(textoVisible(doc));
+    const decl = efectivo.toLowerCase().split("-")[0];
+    if (!pista.suficiente) {
+      // Dos motivos distintos para no poder afirmar nada, y se dicen distintos:
+      // que no haya texto, o que haya texto y el perfil no distinga.
+      out.push(F("3.1.1", "cumple-parcial", null, [pista.razon === "corto"
+        ? "Idioma declarado: lang=\"" + efectivo + "\", bien formado. No hay texto suficiente en la página (" + pista.palabras +
+          " palabra(s) reconocidas) para corroborar que el contenido esté en ese idioma: compruébalo a ojo."
+        : "Idioma declarado: lang=\"" + efectivo + "\", bien formado. El perfil de palabras función no distingue el idioma del texto (" + pista.detalle +
+          "), así que no se puede corroborar desde el marcado que el contenido esté en «" + decl + "»: compruébalo a ojo."]));
+    } else if (pista.idioma === decl) {
+      out.push(F("3.1.1", "cumple", null, ["Idioma declarado: lang=\"" + efectivo + "\", y el texto de la página concuerda (" +
+        pista.detalle + ")."]));
+    } else if (IDIOMAS_PROXIMOS[decl] && IDIOMAS_PROXIMOS[decl].indexOf(pista.idioma) !== -1) {
+      out.push(F("3.1.1", "cumple-parcial", null, ["Idioma declarado: lang=\"" + efectivo + "\". El perfil del texto se parece más a «" + pista.idioma +
+        "» (" + pista.detalle + "), pero son idiomas cercanos y las palabras función se solapan: no se puede decidir desde el marcado. Confírmalo."]));
+    } else {
+      out.push(F("3.1.1", "revisar", null, ["La página declara lang=\"" + efectivo + "\", pero su texto visible parece estar en «" + pista.idioma +
+        "» (" + pista.detalle + "). Si el idioma por omisión no es el declarado, el lector de pantalla lee la página con la voz equivocada y el contenido es ininteligible. " +
+        "Compruébalo: si el idioma real es otro, corrige <code>&lt;html lang&gt;</code>; si la página es multilingüe, marca cada parte con su propio <code>lang</code> (3.1.2)."]));
+    }
+  }
 
   // 1.3.1 Landmarks: exactamente un main; banner/contentinfo no duplicados
   const mains = landmarks(doc, "main", ["main"]);
@@ -642,10 +711,24 @@ export function auditPageDoc(doc) {
     ], p.hits.map(function (h) { return { locator: h.locator, name: "" }; })));
   });
 
-  /* ── 3.1.2 Idioma de las partes ── */
+  /* ── 3.1.2 Idioma de las partes ──
+   *
+   * Este criterio solo hablaba al encontrar un bloque sospechoso, así que en una
+   * página homogénea salía «No evaluado» en la hoja de seguimiento, que se lee
+   * igual que «nadie lo miró». Ahora se emite siempre: con la cuenta de bloques
+   * revisados, los que ya declaran su idioma, y el límite de la detección — que
+   * solo distingue cinco idiomas y no ve una palabra o una frase suelta. */
   const langPagina = String((html && html.getAttribute("lang")) || "").toLowerCase().split("-")[0];
+  if (!langPagina) {
+    // Sin idioma de página no hay con qué comparar: lo que falla es 3.1.1, que ya
+    // lo dice, pero 3.1.2 tampoco puede declararse conforme.
+    out.push(F("3.1.2", "revisar", null, [
+      "La página no declara idioma, así que no hay referencia con la que comparar las partes: revísalo después de corregir 3.1.1."
+    ]));
+  }
   if (langPagina) {
     const sospechosos = [];
+    let revisados = 0, yaMarcados = 0;
     const bloques = doc.querySelectorAll("p,li,blockquote,td,dd,figcaption,h1,h2,h3,h4,h5,h6");
     for (let i = 0; i < bloques.length && sospechosos.length < 12; i++) {
       const el = bloques[i];
@@ -653,8 +736,9 @@ export function auditPageDoc(doc) {
       // Si el propio bloque o un antepasado ya declara idioma, está resuelto.
       let p = el, declarado = null;
       while (p && p.nodeType === 1) { const l = p.getAttribute("lang"); if (l) { declarado = l.toLowerCase().split("-")[0]; break; } p = p.parentElement; }
-      if (declarado && declarado !== langPagina) continue;
+      if (declarado && declarado !== langPagina) { yaMarcados++; continue; }
       const txt = (el.textContent || "").replace(/\s+/g, " ").trim();
+      revisados++;
       const idioma = idiomaProbable(txt);
       if (idioma && idioma !== langPagina) {
         sospechosos.push({ locator: loc(el), idioma: idioma, texto: txt.slice(0, 60) });
@@ -666,6 +750,19 @@ export function auditPageDoc(doc) {
         sospechosos.slice(0, 4).map(function (x) { return x.locator + " (¿" + x.idioma + "?) «" + x.texto + "»"; }).join(" · ") +
         ". La detección es por palabras funcionales y puede equivocarse con textos técnicos o con citas: confírmalo antes de anotarlo."
       ], sospechosos.slice(0, 8).map(function (x) { return { locator: x.locator, name: x.idioma }; })));
+    } else {
+      /* `cumple-parcial`, no `cumple`: lo comprobado es que ningún bloque de
+       * texto da un perfil de otro idioma, y eso no alcanza a lo que pide el
+       * criterio. La detección solo distingue cinco idiomas y necesita 25
+       * palabras, así que una cita corta, un nombre propio extranjero o un
+       * término técnico suelto no los ve nadie más que una persona leyendo. */
+      out.push(F("3.1.2", "cumple-parcial", null, [
+        "Se han revisado " + revisados + " bloque(s) de texto contra el idioma declarado (<code>lang=\"" + langPagina +
+        "\"</code>)" + (yaMarcados ? ", más " + yaMarcados + " que ya declaran su propio idioma," : "") +
+        " y ninguno da el perfil de otro idioma. La detección es por palabras funcionales: distingue " +
+        Object.keys(FUNCIONALES).join("/") + " y necesita unas 25 palabras, así que una cita corta, una frase hecha o un término extranjero suelto NO los ve. " +
+        "Si la página mezcla idiomas en frases cortas, compruébalo a ojo."
+      ]));
     }
   }
 

@@ -37,8 +37,14 @@ export function rollupSample(pages) {
   }).map(function (p) {
     return { url: (p && p.url) || "(sin url)", error: (p && p.error) || "no se obtuvo ningún hallazgo" };
   });
+  // El guardia `!p` existía arriba, para contar la página como no analizada, y
+  // aquí faltaba: una muestra con un hueco (`[pagina, null]`, que es lo que
+  // deja un fallo de carga en algunos orquestadores) hacía reventar el rollup
+  // con un TypeError, y eso no es «informe incompleto»: es «no hay informe».
   (pages || []).forEach(function (p) {
+    if (!p) return;
     (p.findings || []).forEach(function (f) {
+      if (!f || !f.c || !f.c.n) return;   // un hallazgo malformado no tira el informe
       const n = f.c.n;
       if (!byCrit[n]) byCrit[n] = { n: n, lvl: f.c.lvl, t: f.c.t, worst: null, enPaginas: {} };
       byCrit[n].worst = worseOf(byCrit[n].worst, f.verdict);
@@ -59,11 +65,21 @@ export function rollupSample(pages) {
   // y cualquier veredicto no reconocido.
   const revisar = criterios.filter(function (c) { return c.worst !== "falla" && !esNoAplica(c.worst) && !esConforme(c.worst); });
   const conformes = criterios.filter(function (c) { return esConforme(c.worst); });
-  const conformidad = fallan.length
-    ? "No conforme"
-    : sinAnalizar.length
-      ? "Incompleta: " + sinAnalizar.length + " de " + (pages || []).length + " página(s) de la muestra no se han analizado"
-      : (revisar.length ? "Requiere revisión manual" : "Sin barreras deterministas en la muestra");
+  /* Una muestra VACÍA no es una muestra limpia.
+   *
+   * Con `pages` vacío o sin definir, no fallaba nada, no quedaba nada por
+   * revisar y nada estaba sin analizar, así que el rollup declaraba «Sin
+   * barreras deterministas en la muestra» sobre CERO páginas: la frase más
+   * tranquilizadora del informe, emitida sobre la nada. Va primero que
+   * cualquier otra rama. */
+  const total = (pages || []).length;
+  const conformidad = !total
+    ? "Sin muestra: no se ha analizado ninguna página, así que no hay nada que declarar"
+    : fallan.length
+      ? "No conforme"
+      : sinAnalizar.length
+        ? "Incompleta: " + sinAnalizar.length + " de " + total + " página(s) de la muestra no se han analizado"
+        : (revisar.length ? "Requiere revisión manual" : "Sin barreras deterministas en la muestra");
   return {
     paginas: (pages || []).length,
     paginasAnalizadas: (pages || []).length - sinAnalizar.length,

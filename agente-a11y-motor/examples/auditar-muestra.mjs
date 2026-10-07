@@ -93,7 +93,7 @@ const sitio = await auditSite(muestra.map(function (u) { return { url: u }; }), 
   }
 });
 
-const out = oawExport(sitio.findings);
+const out = oawExport(sitio.findings, { muestra: sitio.rollup });
 await writeFile(prefijo + "-barreras.csv", out.csv.barreras, "utf8");
 await writeFile(prefijo + "-seguimiento.csv", out.csv.seguimiento, "utf8");
 if (sitio.cuaderno) await writeFile(prefijo + "-cuaderno.txt", cuadernoTexto(sitio.cuaderno), "utf8");

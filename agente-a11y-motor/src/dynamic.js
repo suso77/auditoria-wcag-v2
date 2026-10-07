@@ -180,8 +180,32 @@ export function analyzeTabs(events) {
 export function analyzeErrorState(trace) {
   const out = [];
   if (!trace || !trace.submitted) return out;
-  const bad = (trace.fields || []).filter(function (f) { return f.required || f.invalid; });
-  if (!bad.length) return out;
+  /* Qué es un campo EN ERROR, que no es lo mismo que un campo obligatorio.
+   *
+   * Esto era `f.required || f.invalid`, con `invalid` mirando solo
+   * `aria-invalid="true"`. O sea: «obligatorio» se usaba como sustituto de
+   * «habrá fallado la validación», y en cuanto el campo está rellenado y es
+   * válido eso es falso. Medido: un `required` correctamente rellenado producía
+   * `3.3.1 falla grave` («1 campo con error sin descripción») y, de paso, un
+   * `4.1.2 revisar` por no exponer `aria-invalid` en un campo que no tiene
+   * ningún error que exponer. Una barrera inventada sobre contenido conforme,
+   * que es precisamente lo que el comentario de abajo advierte de no hacer.
+   *
+   * Ahora el error es lo que lo acredita: `aria-invalid="true"`, o la validez
+   * NATIVA que el navegador acaba de decidir al enviar (`nativoInvalido`). Y se
+   * mantiene «obligatorio y vacío» como respaldo para los rastreos que no traen
+   * la validez nativa (los de la extensión, o una traza antigua): ahí la
+   * inferencia sí es correcta, porque un obligatorio vacío tras un envío ha
+   * fallado seguro. Un obligatorio relleno y válido no entra por ninguna vía. */
+  const enError = function (f) {
+    if (f.invalid) return true;
+    if (f.nativoInvalido) return true;
+    if (f.nativoInvalido === false && f.vacio === false) return false;   // el navegador ya ha dicho que vale
+    return !!(f.required && (f.vacio === undefined || f.vacio));
+  };
+  const bad = (trace.fields || []).filter(enError);
+  // Sin campos en error no se sale en silencio: más abajo se dice que el envío
+  // no disparó ninguna validación, que es información y no es conformidad.
   /* 3.3.1 pide que el error se DESCRIBA EN TEXTO, no que esté asociado por ARIA.
    *
    * La técnica suficiente **G83** se satisface con texto de error visible junto al
@@ -223,6 +247,19 @@ export function analyzeErrorState(trace) {
   if (!hayAlerta) out.push(F("4.1.3", "revisar", null, ["No se detecta un mensaje de estado (role=alert / aria-live) al enviar: revisa que el error se anuncie sin mover el foco."]));
   else if (!anuncioVisto) out.push(F("4.1.3", "revisar", null, ["Hay una región de estado (role=alert / aria-live) en la página, pero su contenido no ha cambiado al enviar: que exista el contenedor no quiere decir que el error se anuncie. Compruébalo con un lector."]));
 
+  /* Un envío en el que NO falla nada no dice nada sobre 3.3.1 — y eso hay que
+   * decirlo, porque antes no se emitía nada en absoluto y un criterio ausente se
+   * lee en el informe igual que uno conforme. Lo que se ha observado es que el
+   * formulario se envió sin disparar ninguna validación: no había errores que
+   * describir, así que el criterio no se ha podido comprobar en este envío. */
+  if (!bad.length) {
+    out.push(F("3.3.1", "revisar", null, [
+      "Se envió el formulario y NINGÚN campo quedó en error (" + ((trace.fields || []).length) +
+      " campo(s) revisados), así que no se ha podido comprobar cómo se identifican los errores: no hubo ninguno. " +
+      "Pruébalo a mano con datos inválidos —un correo mal escrito, un obligatorio vacío— y comprueba que el error se describe en texto junto al campo."
+    ]));
+    return out;
+  }
   if (!sinTexto.length && !sinInvalid.length) {
     if (anuncioVisto && !textoSinAsociar.length) {
       out.push(F("3.3.1", "cumple", null, ["Los errores se identifican en texto asociado al campo, exponen <code>aria-invalid</code>, y el anuncio se ha visto producirse: el contenido de la región de estado cambió al enviar."]));

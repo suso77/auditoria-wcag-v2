@@ -302,7 +302,70 @@ function ficha(n, extra) {
     decision: null
   }, extra || {});
 }
-function noAplica(n, porque, datos) {
+/* Lo que está OCULTO no es lo que no existe.
+ *
+ * Las fichas deciden con `visibles()`, que descarta todo lo que lleve `hidden`,
+ * `inert`, `aria-hidden="true"` o `display:none` en línea. Con eso, el patrón más
+ * común de la web —el reproductor en una caja de luz, el formulario de acceso en un
+ * modal, el menú plegado— se leía como «no existe», y la ficha emitía `no-aplica`
+ * con una frase FALSA sobre el DOM que acababa de recorrer.
+ *
+ * Comprobado con un control A/B: el MISMO formulario de acceso con contraseña y
+ * captcha da veredicto pendiente si está visible y `no-aplica` metido en un
+ * `display:none`; el MISMO vídeo, igual con 1.2.4 y 1.2.5. Y el daño es doble,
+ * porque `aplicaCuaderno` sustituye el `humano` conservador del motor por este
+ * `no-aplica`: el criterio pasa de «pendiente de persona» a «fuera de alcance».
+ *
+ * Así que antes de firmar «no viene al caso» se mira si hay candidatos OCULTOS de la
+ * familia que le toca a cada criterio. Si los hay, no se puede afirmar que no haya
+ * nada: el criterio queda a revisar, nombrando lo que está escondido.
+ *
+ * Con una condición, que se descubrió probándolo: el censo solo entra cuando NO
+ * hay candidatos VISIBLES. Hay fichas que firman `no-aplica` con elementos de la
+ * familia a la vista, y por una razón que no tiene nada que ver con que falte
+ * algo: 3.3.7 (entrada redundante) no aplica a un formulario de un solo campo
+ * por más campos que haya, visibles u ocultos. Si el censo entrara también ahí,
+ * el mismo formulario de un campo pasaría de «no aplica» a «revisar» solo por
+ * estar dentro de un modal, que es cambiar un veredicto correcto por una duda
+ * inventada. El censo responde a una sola pregunta —«¿de verdad no hay nada de
+ * esto en la página?»— y solo se le pregunta cuando esa es la afirmación. */
+const FAMILIA_OCULTA = {
+  "1.2.4": "video,audio,iframe[src],embed[src],object[data]",
+  "1.2.5": "video,iframe[src],embed[src],object[data]",
+  "1.3.2": "h1,h2,h3,h4,h5,h6,[role=heading],main,nav,aside,header,footer,section,article,form,table",
+  "1.4.5": "img,svg,picture",
+  "2.3.1": "video,canvas,img,[style*=animation]",
+  "2.4.4": "a[href]",
+  "3.3.3": "input,select,textarea",
+  "3.3.4": "form,input,select,textarea,button",
+  "3.3.7": "input,select,textarea",
+  "3.3.8": "input[type=password],iframe[src*=captcha],[class*=captcha],[id*=captcha]"
+};
+function noAplica(n, porque, datos, doc) {
+  const sel = FAMILIA_OCULTA[n];
+  if (doc && sel) {
+    let ocultos = [], hayVisibles = false;
+    try {
+      const todos = Array.prototype.slice.call(doc.querySelectorAll(sel));
+      ocultos = todos.filter(function (el) { return oculto(el); });
+      hayVisibles = todos.length > ocultos.length;
+    } catch (e) { ocultos = []; hayVisibles = false; }
+    if (ocultos.length && !hayVisibles) {
+      return ficha(n, {
+        aplica: true, veredicto: "revisar",
+        pregunta: "¿Este contenido llega a verse? Si se muestra al pulsar algo —una caja de luz, un modal, un menú plegado— el criterio SÍ aplica y hay que juzgarlo con el contenido a la vista.",
+        queMirar: ocultos.slice(0, 8).map(function (el) { return ref(el, "oculto ahora mismo (" + tag(el) + "): compruébalo con el contenido desplegado"); }),
+        loQueYaSabemos: [
+          "No hay candidatos VISIBLES, pero sí " + ocultos.length + " oculto(s) de la misma familia, así que NO se puede afirmar que el criterio no venga al caso.",
+          porque + " — pero eso solo vale para lo que se ve: " + ocultos.slice(0, 4).map(function (el) { return loc(el); }).join(", ") +
+          (ocultos.length > 4 ? " y " + (ocultos.length - 4) + " más" : "") + " están en el DOM y ocultos.",
+          "Si de verdad no se muestran nunca, el criterio no aplica y lo puedes firmar así; si se despliegan, vuelve a mirarlo con ellos a la vista."
+        ],
+        comoDecidir: ["Despliega lo que esté plegado y vuelve a auditar la página en ese estado."],
+        datos: Object.assign({ ocultos: ocultos.length }, datos || {})
+      });
+    }
+  }
   return ficha(n, { aplica: false, veredicto: "no-aplica", pregunta: "", comoDecidir: [], loQueYaSabemos: [porque], datos: datos || {} });
 }
 
@@ -321,7 +384,7 @@ const FICHAS = {
      * reproductor, y declarar que el criterio no viene al caso sin haberlo abierto es
      * afirmar lo que no se sabe. */
     if (!m.propios.length && !m.externos.length && !dudosos.length) {
-      return noAplica("1.2.4", "La página no tiene ningún <video>, <audio> ni marco embebido de ninguna clase: no hay contenido en directo que subtitular.");
+      return noAplica("1.2.4", "La página no tiene ningún <video>, <audio> ni marco embebido de ninguna clase: no hay contenido en directo que subtitular.", null, doc);
     }
     return ficha("1.2.4", {
       pregunta: "¿Alguno de estos medios es una emisión EN DIRECTO? Si lo es, ¿lleva subtítulos en directo?",
@@ -344,7 +407,7 @@ const FICHAS = {
     const videos = ctx.medios.propios.filter(function (x) { return x.tag === "video"; });
     const dudosos5 = ctx.medios.dudosos || [];
     if (!videos.length && !ctx.medios.externos.length && !dudosos5.length) {
-      return noAplica("1.2.5", "La página no tiene ningún vídeo ni marco embebido de ninguna clase: no hay nada que audiodescribir.");
+      return noAplica("1.2.5", "La página no tiene ningún vídeo ni marco embebido de ninguna clase: no hay nada que audiodescribir.", null, doc);
     }
     const sinDesc = videos.filter(function (x) { return !x.descripciones; });
     return ficha("1.2.5", {
@@ -373,7 +436,7 @@ const FICHAS = {
     const bloques = visibles(doc, "h1,h2,h3,h4,h5,h6,main,nav,aside,section,article,footer,header,form,table")
       .slice(0, 25);
     if (!bloques.length) {
-      return noAplica("1.3.2", "La página no tiene bloques de contenido (encabezados, regiones, formularios ni tablas) cuyo orden pueda importar.");
+      return noAplica("1.3.2", "La página no tiene bloques de contenido (encabezados, regiones, formularios ni tablas) cuyo orden pueda importar.", null, doc);
     }
     return ficha("1.3.2", {
       pregunta: "Leyendo la página en el orden del código (el de abajo), ¿se entiende lo mismo que viéndola?",
@@ -427,7 +490,7 @@ const FICHAS = {
   "1.4.5": function (doc, ctx) {
     const imgs = visibles(doc, "img,svg,picture").filter(function (el) { return tag(el) !== "img" || el.getAttribute("alt") !== ""; });
     if (!imgs.length) {
-      return noAplica("1.4.5", "La página no tiene imágenes visibles con contenido (las decorativas, con alt vacío, quedan fuera del criterio).");
+      return noAplica("1.4.5", "La página no tiene imágenes visibles con contenido (las decorativas, con alt vacío, quedan fuera del criterio).", null, doc);
     }
     // Candidatas: alt con pinta de frase, o nombre de archivo que suena a texto.
     const SOSPECHOSO = /(banner|cartel|titular|slogan|lema|texto|frase|cita|promo|oferta|infograf)/i;
@@ -461,7 +524,22 @@ const FICHAS = {
       .concat(ctx.medios.externos);
     const conAnimacion = /@keyframes|animation\s*:/i.test(ctx.estilos);
     if (!candidatos.length && !conAnimacion) {
-      return noAplica("2.3.1", "La página no tiene vídeo, canvas, GIF ni animaciones CSS declaradas: no hay nada que pueda destellar.");
+      /* Y no se firma «no aplica» si el CSS no se ha leído del todo. */
+      if (ctx.cssBloqueadas || ctx.cssLeido === false) {
+        return ficha("2.3.1", {
+          aplica: true, veredicto: "revisar",
+          pregunta: "¿Hay algo que destelle más de tres veces por segundo?",
+          loQueYaSabemos: [
+            "En el marcado no hay vídeo, canvas, GIF ni animación declarada — pero " +
+            (ctx.cssLeido === false ? "NO se ha podido leer ninguna hoja de estilo" : ctx.cssBloqueadas + " hoja(s) de estilo de otro origen no se han podido leer") +
+            ", así que una animación declarada ahí no se habría visto.",
+            "2.3.1 es el criterio cuyo incumplimiento puede provocar una crisis epiléptica: no se firma «no aplica» sobre un CSS que nadie ha leído."
+          ],
+          comoDecidir: ["Abre el inspector, busca `@keyframes` y `animation:` en las hojas externas, y mira la página unos segundos."],
+          datos: { cssBloqueadas: ctx.cssBloqueadas || 0, cssLeido: ctx.cssLeido !== false }
+        });
+      }
+      return noAplica("2.3.1", "La página no tiene vídeo, canvas, GIF ni animaciones CSS declaradas: no hay nada que pueda destellar.", null, doc);
     }
     const unicos = [];
     const vistos = {};
@@ -485,7 +563,7 @@ const FICHAS = {
   "2.4.4": function (doc, ctx) {
     const enlaces = visibles(doc, "a[href]");
     if (!enlaces.length) {
-      return noAplica("2.4.4", "La página no tiene enlaces visibles.");
+      return noAplica("2.4.4", "La página no tiene enlaces visibles.", null, doc);
     }
     const vagos = enlaces.filter(function (a) { return NOMBRES_VACIOS.test(nombreDe(a)); });
     if (!vagos.length) {
@@ -529,7 +607,7 @@ const FICHAS = {
         /^(email|url|tel|number|date|time)$/i.test(el.getAttribute("type") || "");
     });
     if (!conRestriccion.length) {
-      return noAplica("3.3.3", "La página no tiene ningún campo con restricciones (obligatorio, patrón, tipo, longitud o rango): no hay error que sugerir cómo corregir.");
+      return noAplica("3.3.3", "La página no tiene ningún campo con restricciones (obligatorio, patrón, tipo, longitud o rango): no hay error que sugerir cómo corregir.", null, doc);
     }
     return ficha("3.3.3", {
       pregunta: "Cuando uno de estos campos se rellena mal, ¿el mensaje dice CÓMO corregirlo, y no solo que está mal?",
@@ -562,7 +640,7 @@ const FICHAS = {
       return COMPROMETEDORAS.test(nombreDe(el) || el.getAttribute("value") || "");
     });
     if (!forms.length && !botones.length) {
-      return noAplica("3.3.4", "La página no tiene formularios ni acciones con consecuencias legales, económicas o sobre datos del usuario.");
+      return noAplica("3.3.4", "La página no tiene formularios ni acciones con consecuencias legales, económicas o sobre datos del usuario.", null, doc);
     }
     if (!conPost.length && !botones.length) {
       return noAplica("3.3.4",
@@ -591,7 +669,7 @@ const FICHAS = {
       return t !== "hidden" && t !== "submit" && t !== "button" && t !== "reset";
     });
     if (campos.length < 2) {
-      return noAplica("3.3.7", "La página no tiene dos campos que pudieran pedir el mismo dato.");
+      return noAplica("3.3.7", "La página no tiene dos campos que pudieran pedir el mismo dato.", null, doc);
     }
     // Los grupos se calculan y se GUARDAN siempre, aunque en esta página no se
     // repita ninguno: el cruce entre páginas de `cuadernoDeMuestra` los necesita
@@ -650,7 +728,7 @@ const FICHAS = {
       return CAPTCHA.test((el.getAttribute("class") || "") + " " + (el.getAttribute("id") || "") + " " + (el.getAttribute("src") || ""));
     });
     if (!passwords.length && !captcha.length) {
-      return noAplica("3.3.8", "La página no tiene ningún campo de contraseña ni captcha: no hay proceso de autenticación que evaluar.");
+      return noAplica("3.3.8", "La página no tiene ningún campo de contraseña ni captcha: no hay proceso de autenticación que evaluar.", null, doc);
     }
     const bloqueaPegado = visibles(doc, "input,textarea").filter(function (el) {
       return /return\s+false|preventDefault/i.test(el.getAttribute("onpaste") || "");
@@ -697,7 +775,11 @@ export function cuadernoDeJuicio(doc, opts) {
   const ctx = {
     medios: medios(doc),
     texto: textoVisible(doc),
-    estilos: estilosEnLinea + "\n" + (opts.css || "")
+    estilos: estilosEnLinea + "\n" + (opts.css || ""),
+    /* Cuántas hojas no se pudieron leer, y si se leyó alguna. Una ficha no puede
+     * afirmar «no hay nada declarado» sobre un CSS que nadie le pasó. */
+    cssBloqueadas: opts.cssBloqueadas || 0,
+    cssLeido: opts.cssLeido !== false
   };
 
   const criterios = CRITERIOS_DE_JUICIO.map(function (n) { return FICHAS[n](doc, ctx); });
