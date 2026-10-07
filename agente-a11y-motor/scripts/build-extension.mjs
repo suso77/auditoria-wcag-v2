@@ -144,7 +144,14 @@ const bundle =
   " * Cada módulo va en su propia IIFE y comparte el espacio de nombres `A11Y`:\n" +
   " * varios definen por su cuenta funciones con el mismo nombre (F, crit, loc…)\n" +
   " * y en un ámbito único se pisarían en silencio.\n" +
+  " *\n" +
+  " * La marca de abajo NO es decorativa: el analizador recorre los `script` en\n" +
+  " * línea de la página buscando llamadas a `screen.orientation.lock()` para\n" +
+  " * 1.3.4, y este fichero contiene esa cadena dentro de sus propios textos de\n" +
+  " * evidencia. Sin una marca que lo delate, el agente se encuentra a sí mismo y\n" +
+  " * acusa a la página. Se busca literalmente, así que no se toca.\n" +
   " */\n" +
+  "/*__A11Y_NUCLEO_GENERADO__*/\n" +
   "var A11Y = (typeof globalThis !== \"undefined\" ? globalThis : self).A11Y || {};\n" +
   "(typeof globalThis !== \"undefined\" ? globalThis : self).A11Y = A11Y;\n\n" +
   partes.join("\n");

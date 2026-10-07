@@ -220,11 +220,90 @@ export async function analyzeRendered(target, opts) {
         }
       }
     }
+    /* El censo de SHADOW ROOTS CERRADOS, preguntándoselo al navegador.
+     *
+     * Desde dentro de la página no se pueden enumerar: un root cerrado no se
+     * expone en `el.shadowRoot`. El código inyectado se las arregla con una
+     * heurística —elemento personalizado (con guion en el nombre), pintado, sin
+     * hijos propios y sin shadowRoot accesible— y eso deja fuera el caso de un
+     * `<div>` corriente con un root cerrado: no se detecta, no se emite la nota,
+     * y los criterios de medición no quedan atados sobre contenido que nadie ha
+     * podido mirar. Ésa es la dirección peligrosa del error.
+     *
+     * El protocolo de depuración sí lo sabe: `DOM.getDocument` con `pierce`
+     * devuelve los shadow roots con su `shadowRootType`, cerrados incluidos. Así
+     * que aquí se pregunta, y lo que diga CDP manda sobre la heurística. Si la
+     * sesión CDP no se puede abrir (otro navegador, página cerrada), se queda la
+     * heurística y no se pierde nada de lo que ya había. */
+    let censoCDP = null;
+    try {
+      const cdp = await page.context().newCDPSession(page);
+      try {
+        const doc = await cdp.send("DOM.getDocument", { depth: -1, pierce: true });
+        const hosts = [];
+        (function anda(n) {
+          if (!n) return;
+          (n.shadowRoots || []).forEach(function (sr) {
+            if (sr.shadowRootType === "closed") hosts.push(n);
+            anda(sr);
+          });
+          (n.children || []).forEach(anda);
+        })(doc.root);
+        const nombrados = [];
+        for (const h of hosts.slice(0, 20)) {
+          let loc = h.localName || "?";
+          try {
+            const { object } = await cdp.send("DOM.resolveNode", { backendNodeId: h.backendNodeId });
+            const r = await cdp.send("Runtime.callFunctionOn", {
+              objectId: object.objectId, returnByValue: true,
+              functionDeclaration: `function(){
+                var partes=[], n=this;
+                while(n && n.nodeType===1){
+                  var t=n.tagName.toLowerCase();
+                  if(t==='html'||t==='body') break;
+                  var p=n.parentElement; if(!p){ partes.unshift(t); break; }
+                  var i=1, s=p.children, k;
+                  for(k=0;k<s.length;k++){ if(s[k]===n) break; if(s[k].tagName===n.tagName) i++; }
+                  partes.unshift(t+':nth-of-type('+i+')');
+                  n=p;
+                }
+                var id=this.id?('#'+this.id):'';
+                var cl=(this.className&&typeof this.className==='string')?('.'+this.className.trim().split(/\\s+/).join('.')):'';
+                return { ruta:'html > body > '+partes.join(' > '), loc:this.tagName.toLowerCase()+id+cl };
+              }`
+            });
+            if (r && r.result && r.result.value) { nombrados.push(r.result.value); loc = r.result.value.loc; }
+            else nombrados.push({ loc: loc, ruta: "" });
+          } catch (e) { nombrados.push({ loc: loc, ruta: "" }); }
+        }
+        censoCDP = { total: hosts.length, hosts: nombrados };
+      } finally { try { await cdp.detach(); } catch (e) { /* la sesión ya se fue */ } }
+    } catch (e) {
+      censoCDP = null;   // sin CDP: manda la heurística inyectada
+    }
+
     // TODAS, no la primera: la medición emite hasta tres notas de cobertura
     // (texto recortado por el límite, controles recortados, y 2.4.7 sin el foco
     // del sistema). Con `.find` la segunda y la tercera se perdían en silencio.
     const todasLasMedidas = (measurements || []).concat(medicionMarcos);
-    const coberturas = coberturasPropias.concat(todasLasMedidas.filter(function (m) { return m.crit === "__meta"; }));
+    let metaMedidas = todasLasMedidas.filter(function (m) { return m.crit === "__meta"; });
+    if (censoCDP) {
+      // El censo de verdad sustituye a la nota heurística: una sola nota, con la
+      // lista completa, en vez de dos que se contradicen.
+      metaMedidas = metaMedidas.filter(function (m) { return m.label !== "Shadow DOM cerrado"; });
+      if (censoCDP.total) {
+        coberturasPropias.push({
+          crit: "__meta", label: "Shadow DOM cerrado", node: censoCDP.total + " componente(s)", verdict: "revisar",
+          limita: ["1.4.3", "1.4.11", "2.4.7", "2.5.8", "2.4.3", "2.1.1"],
+          detail: "hay " + censoCDP.total + " shadow root(s) CERRADO(s) en la página (" +
+            censoCDP.hosts.slice(0, 5).map(function (h) { return h.loc; }).join(", ") +
+            (censoCDP.total > 5 ? ", …" : "") +
+            "), contados por el protocolo del navegador y no por aproximación. Su contenido no se puede inspeccionar desde fuera, así que el contraste, el tamaño de los objetivos y el foco de lo que haya dentro NO están comprobados. Compruébalo con el inspector o pídeselo a quien mantenga el componente.",
+          rutas: censoCDP.hosts.map(function (h) { return h.ruta; }).filter(Boolean)
+        });
+      }
+    }
+    const coberturas = coberturasPropias.concat(metaMedidas);
 
     // 3) axe-core (opcional)
     let axe = null;

@@ -1299,14 +1299,28 @@ function runChecksReal(doc, win, limit) {
   const velos = flotantes.filter(function (f) { return f.velo; });
   if (velos.length) {
     const v = velos.reduce(function (m, x) { return x.opaco > m.opaco ? x : m; }, velos[0]);
+    /* Un velo OPACO y uno TRANSLÚCIDO no invalidan lo mismo, y la nota los ataba
+     * igual: una capa al 30 % tumbaba los ocho criterios exactamente como una al
+     * 97 %. El propio texto ya distinguía los dos casos —«lo que hay debajo no se
+     * ve» frente a «la página se ve a través y la medición sirve»— así que la
+     * lista contradecía a la frase que iba al lado.
+     *
+     * Opaco: no se ve nada de lo que hay debajo, luego nada de lo medido sobre el
+     * render vale. Translúcido: la geometría es la de verdad —tamaños, foco,
+     * orden de tabulación, objetivos— y lo único que queda en duda es el COLOR,
+     * porque el velo se compone encima y el contraste real de lo de debajo es
+     * peor que el medido. Atar ahí el tamaño de los objetivos o el orden de foco
+     * sería apretar donde sí se ha medido bien. */
+    const opaco = v.opaco == null || v.opaco >= 0.9;
     res.push({ crit: "__meta", label: "Medido detrás de un velo", node: v.loc, verdict: "revisar",
-      // Con un velo delante, TODO lo que se mide sobre el render está en duda.
-      limita: ["1.4.3", "1.4.11", "1.4.1", "2.4.7", "2.4.11", "2.5.8", "2.4.3", "2.1.1"],
+      limita: opaco
+        ? ["1.4.3", "1.4.11", "1.4.1", "2.4.7", "2.4.11", "2.5.8", "2.4.3", "2.1.1"]
+        : ["1.4.3", "1.4.11", "1.4.1"],
       detail: "«" + v.loc + "» (" + v.position + ", opacidad efectiva " + (v.opaco != null ? v.opaco.toFixed(2) : "?") +
         ") cubre la pantalla entera, así que TODO lo de esta página se ha medido con él puesto. " +
-        (v.opaco >= 0.9
+        (opaco
           ? "Y es opaco: lo que hay debajo no se ve, con lo que la medición de contraste, tamaño y foco de la página no vale."
-          : "Es translúcido, así que la página se ve a través y la medición sirve, pero el contraste real de todo lo de debajo es PEOR que el medido.") +
+          : "Es translúcido, así que la página se ve a través y la geometría medida —tamaños de objetivo, foco y orden de tabulación— sigue valiendo; lo que no vale es el COLOR: el velo se compone encima, y el contraste real de todo lo de debajo es PEOR que el medido.") +
         " Lo normal es que sea un aviso de consentimiento o un modal: acéptalo o ciérralo y vuelve a medir. Hasta entonces, esta página no está auditada en el estado en que la usa la gente." });
   }
 

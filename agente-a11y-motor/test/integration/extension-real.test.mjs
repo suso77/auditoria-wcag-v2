@@ -75,6 +75,20 @@ after(async () => {
 
 /* ── Lo esencial: el bundle y la librería dicen lo mismo ── */
 
+test("el agente no se encuentra a sí mismo al buscar en los scripts de la página", { skip }, async () => {
+  /* El núcleo inyectado contiene la cadena «screen.orientation.lock()» dentro de
+   * los textos de evidencia de 1.3.4. Buscando en todos los `script` sin `src`,
+   * el agente leía su propio bundle y acusaba a la página de bloquear la
+   * orientación: medido, cuatro páginas limpias salían las cuatro con falla. */
+  const f = await page.evaluate(() => window.__a11yAgente.analizar({ limite: 400 })
+    .findings.filter((x) => x.c && x.c.n === "1.3.4"));
+  assert.ok(!f.some((x) => x.verdict === "falla"),
+    "la página de prueba no bloquea la orientación: " + JSON.stringify(f.map((x) => x.verdict + " " + x.evid[0].slice(0, 60))));
+  assert.ok(!f.some((x) => /aparece escrita una llamada/.test(x.evid.join(" "))),
+    "y tampoco encuentra la cadena, porque la única que hay es la suya");
+});
+
+
 test("el bundle carga y expone el núcleo completo", { skip }, async () => {
   const r = await page.evaluate(() => ({
     n: Object.keys(window.A11Y).length,
@@ -158,7 +172,23 @@ test("el análisis completo encuentra barreras de varias capas", { skip }, async
     JSON.stringify(hovers.map((f) => f.verdict + ": " + f.evid[0].slice(0, 60))));
   assert.equal(hover.verdict, "revisar", "el `title` está exento de 1.4.13 y salió «" + hover.verdict + "»");
   assert.ok(!hovers.some((f) => f.verdict === "falla"), "y ninguno puede ser falla por el `title`");
-  assert.ok(fallan.has("1.3.4"), "adaptación (orientación): " + [...fallan]);
+  /* La capa de adaptación tiene que haber corrido y haberse pronunciado sobre
+   * 1.3.4 — pero NO como barrera.
+   *
+   * Esta línea exigía `fallan.has("1.3.4")` y llevaba semanas en verde afirmando
+   * una barrera que esta página no tiene: el fixture no lleva un solo script en
+   * línea. El «falla» venía de que el agente, al buscar llamadas a
+   * screen.orientation.lock() entre los scripts de la página, se encontraba a sí
+   * mismo —el núcleo inyectado lleva esa cadena en sus textos de evidencia—. Lo
+   * correcto aquí es que el criterio se pronuncie y diga qué no ha podido
+   * comprobar: la extensión no puede cambiar el tamaño de la ventana, así que no
+   * ha comparado las dos orientaciones. */
+  const ori = r.findings.filter((f) => f.c.n === "1.3.4");
+  assert.ok(ori.length, "adaptación (orientación) tiene que pronunciarse");
+  assert.ok(!ori.some((f) => f.verdict === "falla"),
+    "esta página no bloquea la orientación: " + JSON.stringify(ori.map((f) => f.verdict + " " + f.evid[0].slice(0, 70))));
+  assert.ok(ori.some((f) => /dos orientaciones/.test(f.evid.join(" "))),
+    "y dice que no ha podido comparar las dos orientaciones");
   assert.equal(r.url, base);
   assert.ok(r.huella && r.huella.navs.length, "debe traer la huella para los criterios de sitio");
 });

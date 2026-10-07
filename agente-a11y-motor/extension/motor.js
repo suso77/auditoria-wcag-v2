@@ -7,7 +7,14 @@
  * Cada módulo va en su propia IIFE y comparte el espacio de nombres `A11Y`:
  * varios definen por su cuenta funciones con el mismo nombre (F, crit, loc…)
  * y en un ámbito único se pisarían en silencio.
+ *
+ * La marca de abajo NO es decorativa: el analizador recorre los `script` en
+ * línea de la página buscando llamadas a `screen.orientation.lock()` para
+ * 1.3.4, y este fichero contiene esa cadena dentro de sus propios textos de
+ * evidencia. Sin una marca que lo delate, el agente se encuentra a sí mismo y
+ * acusa a la página. Se busca literalmente, así que no se toca.
  */
+/*__A11Y_NUCLEO_GENERADO__*/
 var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
 (typeof globalThis !== "undefined" ? globalThis : self).A11Y = A11Y;
 
@@ -794,21 +801,36 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       }
       const lvl = (WCAG_IX[o.crit] || {}).lvl;
       const sev = o.sev || severityByCrit(o.crit, lvl);
-      const f = failMap[o.crit] || (failMap[o.crit] = { sev: sev, evid: [], nodes: [], types: [] });
+      const f = failMap[o.crit] || (failMap[o.crit] = { sev: sev, evid: [], nodes: [], types: [], sinNodo: [] });
       if (SEV_RANK[sev] > SEV_RANK[f.sev]) f.sev = sev;
       f.evid.push(o.html);
       if (o.type && f.types.indexOf(o.type) === -1) f.types.push(o.type);
+      // Las observaciones que no son DE un elemento (las estructurales del
+      // documento) se apartan: no se le pueden cargar a ninguna fila en concreto,
+      // así que acompañan a todas.
+      if (!(o.node && o.node.locator)) f.sinNodo.push(o.html);
       // Deduplicación por IDENTIDAD del nodo, no por su locator: dos <img> sin id
       // ni clase comparten locator («img») y se fusionaban en uno solo, así que dos
       // barreras distintas salían como una sola fila en el IRA. El locator sirve
       // para leerlo; para contar hace falta la identidad.
       if (o.node && o.node.locator) {
-        const mismo = f.nodes.some(function (x) {
-          return (x.id != null && o.node.id != null)
+        let yaEsta = null;
+        f.nodes.forEach(function (x) {
+          const mismo = (x.id != null && o.node.id != null)
             ? x.id === o.node.id
             : (x.locator === o.node.locator && x.role === o.node.role);
+          if (mismo) yaEsta = x;
         });
-        if (!mismo) f.nodes.push(o.node);
+        /* La evidencia se queda PEGADA a su elemento.
+         *
+         * El hallazgo junta en `evid` todos los mensajes del criterio, y la hoja de
+         * Barreras saca una fila por elemento: las N filas salían con la UNIÓN de
+         * los mensajes, así que la fila de un `role="slider"` arrastraba también lo
+         * del `div` con `onclick` y lo del botón vacío. Cada mensaje lleva delante
+         * el elemento del que habla, así que no era falso — pero filtrar una fila a
+         * lo suyo no se podía. Ahora cada nodo se lleva los suyos. */
+        if (yaEsta) (yaEsta.evid = yaEsta.evid || []).push(o.html);
+        else f.nodes.push(Object.assign({}, o.node, { evid: [o.html] }));
       }
     });
     const critObjs = {};
@@ -819,7 +841,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
 
     const findings = Object.keys(critObjs).sort(cmpSC).map(function (n) {
       const c = critObjs[n];
-      if (failMap[n]) return { c: c, verdict: "falla", sev: failMap[n].sev, evid: failMap[n].evid, nodes: failMap[n].nodes, types: failMap[n].types, scope: "componente" };
+      if (failMap[n]) return { c: c, verdict: "falla", sev: failMap[n].sev, evid: failMap[n].evid, nodes: failMap[n].nodes, types: failMap[n].types, evidSinNodo: failMap[n].sinNodo, scope: "componente" };
       if (dudaMap[n]) return { c: c, verdict: "revisar", sev: null, evid: dudaMap[n].evid, nodes: dudaMap[n].nodes, types: dudaMap[n].types, scope: "componente" };
       // Todo hallazgo lleva evidencia, también el que no es una barrera. Un informe
       // con filas «No se puede comprobar» y la casilla de evidencia vacía no le dice
@@ -2668,14 +2690,28 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     const velos = flotantes.filter(function (f) { return f.velo; });
     if (velos.length) {
       const v = velos.reduce(function (m, x) { return x.opaco > m.opaco ? x : m; }, velos[0]);
+      /* Un velo OPACO y uno TRANSLÚCIDO no invalidan lo mismo, y la nota los ataba
+       * igual: una capa al 30 % tumbaba los ocho criterios exactamente como una al
+       * 97 %. El propio texto ya distinguía los dos casos —«lo que hay debajo no se
+       * ve» frente a «la página se ve a través y la medición sirve»— así que la
+       * lista contradecía a la frase que iba al lado.
+       *
+       * Opaco: no se ve nada de lo que hay debajo, luego nada de lo medido sobre el
+       * render vale. Translúcido: la geometría es la de verdad —tamaños, foco,
+       * orden de tabulación, objetivos— y lo único que queda en duda es el COLOR,
+       * porque el velo se compone encima y el contraste real de lo de debajo es
+       * peor que el medido. Atar ahí el tamaño de los objetivos o el orden de foco
+       * sería apretar donde sí se ha medido bien. */
+      const opaco = v.opaco == null || v.opaco >= 0.9;
       res.push({ crit: "__meta", label: "Medido detrás de un velo", node: v.loc, verdict: "revisar",
-        // Con un velo delante, TODO lo que se mide sobre el render está en duda.
-        limita: ["1.4.3", "1.4.11", "1.4.1", "2.4.7", "2.4.11", "2.5.8", "2.4.3", "2.1.1"],
+        limita: opaco
+          ? ["1.4.3", "1.4.11", "1.4.1", "2.4.7", "2.4.11", "2.5.8", "2.4.3", "2.1.1"]
+          : ["1.4.3", "1.4.11", "1.4.1"],
         detail: "«" + v.loc + "» (" + v.position + ", opacidad efectiva " + (v.opaco != null ? v.opaco.toFixed(2) : "?") +
           ") cubre la pantalla entera, así que TODO lo de esta página se ha medido con él puesto. " +
-          (v.opaco >= 0.9
+          (opaco
             ? "Y es opaco: lo que hay debajo no se ve, con lo que la medición de contraste, tamaño y foco de la página no vale."
-            : "Es translúcido, así que la página se ve a través y la medición sirve, pero el contraste real de todo lo de debajo es PEOR que el medido.") +
+            : "Es translúcido, así que la página se ve a través y la geometría medida —tamaños de objetivo, foco y orden de tabulación— sigue valiendo; lo que no vale es el COLOR: el velo se compone encima, y el contraste real de todo lo de debajo es PEOR que el medido.") +
           " Lo normal es que sea un aviso de consentimiento o un modal: acéptalo o ciérralo y vuelve a medir. Hasta entonces, esta página no está auditada en el estado en que la usa la gente." });
     }
 
@@ -4397,12 +4433,26 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     en: ["the", "of", "and", "to", "in", "a", "is", "that", "for", "it", "with", "as", "was", "on", "are", "this", "be", "by", "an", "from"],
     fr: ["le", "la", "les", "des", "et", "est", "un", "une", "pour", "dans", "que", "qui", "par", "sur", "avec", "au", "du", "ne", "pas", "ce"],
     pt: ["o", "os", "as", "de", "que", "e", "em", "um", "uma", "para", "com", "não", "por", "do", "da", "dos", "das", "no", "na", "se"],
-    gl: ["o", "os", "as", "do", "da", "dos", "das", "e", "en", "un", "unha", "para", "con", "non", "que", "por", "ao", "nos", "se", "é"]
+    gl: ["o", "os", "as", "do", "da", "dos", "das", "e", "en", "un", "unha", "para", "con", "non", "que", "por", "ao", "nos", "se", "é"],
+    /* Catalán y euskera: faltaban, y en este país eso es un agujero y no un
+     * detalle. Una web pública con versión en catalán o en euskera no tenía con
+     * qué comparar —el perfil daba «sin margen» y el criterio se cerraba sin
+     * corroborar nada—, mientras los léxicos de coherencia sí los cubrían. */
+    ca: ["els", "les", "amb", "per", "als", "aquest", "aquesta", "aquests", "dels", "seva", "seu", "molt", "pero", "tambe", "hi", "ha", "fins", "qual", "mes", "son"],
+    /* El euskera es aglutinante: lo que en castellano es preposición, aquí es
+     * sufijo. Así que el perfil no son artículos sino marcas de caso y auxiliares,
+     * que es lo que de verdad se repite en cualquier texto vasco. */
+    eu: ["eta", "da", "dira", "du", "dute", "zen", "ditu", "bat", "batzuk", "edo", "ere", "hau", "hori", "bere", "guztiak", "baina", "nola", "gehiago", "egiteko", "dago"]
   };
   /* Idiomas cuyas palabras funci\u00f3n se solapan de verdad: entre ellos, el perfil no
    * decide. Con `es` declarado y perfil `gl`, lo honesto es decir que no se puede
    * saber desde el marcado, no acusar de idioma equivocado. */
-  const IDIOMAS_PROXIMOS = { es: ["gl", "pt"], gl: ["es", "pt"], pt: ["es", "gl"], fr: [], en: [] };
+  const IDIOMAS_PROXIMOS = {
+    es: ["gl", "pt", "ca"], gl: ["es", "pt"], pt: ["es", "gl"],
+    // El catalán comparte con el castellano «el», «la», «de», «que», «en», «un»,
+    // «una», «no»: el margen entre los dos no decide nada por sí solo.
+    ca: ["es"], fr: ["ca"], en: [], eu: []
+  };
 
   /**
    * Perfil de idioma por palabras funci\u00f3n, con el detalle de la medida.
@@ -4415,21 +4465,46 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     const palabras = String(texto || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
       .split(/[^a-z]+/).filter(Boolean);
     if (palabras.length < 25) return { suficiente: false, razon: "corto", palabras: palabras.length, idioma: null, detalle: "texto demasiado corto" };
+    /* Cada palabra puntúa por lo que DISTINGUE, no por aparecer.
+     *
+     * Contando todas igual, el castellano sacaba un 27 % sobre un texto catalán
+     * —«de», «la», «el», «un», «que», «no» son de los dos— y le ganaba a su propio
+     * idioma, que se quedaba en el 20 %. Con eso, una página catalana correcta no
+     * podía confirmarse nunca. Una palabra que está en N léxicos vale 1/N: las
+     * compartidas pesan poco, las propias de un idioma mandan. */
+    const enCuantos = {};
+    Object.keys(FUNCIONALES).forEach(function (k) {
+      FUNCIONALES[k].forEach(function (w) { enCuantos[w] = (enCuantos[w] || 0) + 1; });
+    });
     const punt = {};
     Object.keys(FUNCIONALES).forEach(function (k) {
-      punt[k] = palabras.filter(function (w) { return FUNCIONALES[k].indexOf(w) !== -1; }).length / palabras.length;
+      let suma = 0;
+      palabras.forEach(function (w) {
+        if (FUNCIONALES[k].indexOf(w) !== -1) suma += 1 / enCuantos[w];
+      });
+      punt[k] = suma / palabras.length;
     });
     const orden = Object.keys(punt).sort(function (a, b) { return punt[b] - punt[a]; });
     const pct = function (k) { return Math.round(punt[k] * 1000) / 10; };
+    /* La tabla entera viaja, no solo el ganador.
+     *
+     * 3.1.1 y 3.1.2 hacen dos preguntas distintas y antes compartían una sola
+     * respuesta. 3.1.2 pregunta «¿de qué idioma es ESTE bloque?» y ahí hace falta
+     * un ganador claro. 3.1.1 pregunta «¿encaja lo declarado con el texto?», que
+     * es más fácil: basta con que el idioma declarado no quede claramente por
+     * debajo de otro. Con una sola respuesta, una página catalana correcta no
+     * podía confirmarse nunca —el castellano empata con ella por las palabras que
+     * comparten— y lo mismo el gallego con el portugués. */
+    const tabla = { punt: punt, orden: orden, pct: pct };
     // Exigir margen: sin diferencia clara entre el primero y el segundo, no se dice.
     if (punt[orden[0]] < 0.08 || punt[orden[0]] < punt[orden[1]] * 1.6) {
-      return { suficiente: false, razon: "sin-margen", palabras: palabras.length, idioma: orden[0],
-        detalle: "sin margen entre «" + orden[0] + "» (" + pct(orden[0]) + " %) y «" + orden[1] + "» (" + pct(orden[1]) + " %) sobre " + palabras.length + " palabras" };
+      return Object.assign({ suficiente: false, razon: "sin-margen", palabras: palabras.length, idioma: orden[0],
+        detalle: "sin margen entre «" + orden[0] + "» (" + pct(orden[0]) + " %) y «" + orden[1] + "» (" + pct(orden[1]) + " %) sobre " + palabras.length + " palabras" }, tabla);
     }
-    return { suficiente: true, palabras: palabras.length, idioma: orden[0],
+    return Object.assign(tabla, { suficiente: true, palabras: palabras.length, idioma: orden[0],
       detalle: pct(orden[0]) + " % de palabras funci\u00f3n de \u00ab" + orden[0] + "\u00bb sobre " + palabras.length +
         " palabras, frente al " + pct(orden[1]) + " % de \u00ab" + orden[1] + "\u00bb; el perfil solo distingue " +
-        Object.keys(FUNCIONALES).join("/") };
+        Object.keys(FUNCIONALES).join("/") });
   }
   /** Compatibilidad: el nombre antiguo devuelve solo el c\u00f3digo, o `null`. */
   function idiomaProbable(texto) {
@@ -4563,25 +4638,51 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
        * Lo que se puede hacer desde el marcado es comparar la declaración con un
        * perfil de palabras función del texto visible. Es una señal, no una
        * prueba: por eso ningún resultado de aquí es `falla`. */
+      /* La pregunta de 3.1.1 es «¿ENCAJA lo declarado?», no «¿qué idioma es?».
+       *
+       * Con la segunda pregunta, una página catalana correcta no podía
+       * confirmarse nunca: el castellano empata con ella por las palabras que
+       * comparten, no hay ganador y el criterio se cerraba sin corroborar nada.
+       * Lo mismo el gallego con el portugués — y eso en un país con cuatro
+       * lenguas oficiales no es un matiz. Lo que de verdad hace falta comprobar
+       * es que el texto NO contradiga la declaración: basta con que el idioma
+       * declarado no quede claramente por debajo del que más puntúa. */
       const pista = idiomaDelTexto(textoVisible(doc));
       const decl = efectivo.toLowerCase().split("-")[0];
-      if (!pista.suficiente) {
-        // Dos motivos distintos para no poder afirmar nada, y se dicen distintos:
-        // que no haya texto, o que haya texto y el perfil no distinga.
-        out.push(F("3.1.1", "cumple-parcial", null, [pista.razon === "corto"
-          ? "Idioma declarado: lang=\"" + efectivo + "\", bien formado. No hay texto suficiente en la página (" + pista.palabras +
-            " palabra(s) reconocidas) para corroborar que el contenido esté en ese idioma: compruébalo a ojo."
-          : "Idioma declarado: lang=\"" + efectivo + "\", bien formado. El perfil de palabras función no distingue el idioma del texto (" + pista.detalle +
-            "), así que no se puede corroborar desde el marcado que el contenido esté en «" + decl + "»: compruébalo a ojo."]));
-      } else if (pista.idioma === decl) {
-        out.push(F("3.1.1", "cumple", null, ["Idioma declarado: lang=\"" + efectivo + "\", y el texto de la página concuerda (" +
-          pista.detalle + ")."]));
-      } else if (IDIOMAS_PROXIMOS[decl] && IDIOMAS_PROXIMOS[decl].indexOf(pista.idioma) !== -1) {
-        out.push(F("3.1.1", "cumple-parcial", null, ["Idioma declarado: lang=\"" + efectivo + "\". El perfil del texto se parece más a «" + pista.idioma +
-          "» (" + pista.detalle + "), pero son idiomas cercanos y las palabras función se solapan: no se puede decidir desde el marcado. Confírmalo."]));
+      const idiomas = Object.keys(FUNCIONALES);
+      const p = pista.punt || {};
+      const lider = (pista.orden || [])[0];
+      const pct = pista.pct || function () { return 0; };
+      if (pista.palabras < 25) {
+        out.push(F("3.1.1", "cumple-parcial", null, ["Idioma declarado: lang=\"" + efectivo + "\", bien formado. No hay texto suficiente en la página (" + pista.palabras +
+          " palabra(s) reconocidas) para corroborar que el contenido esté en ese idioma: compruébalo a ojo."]));
+      } else if (idiomas.indexOf(decl) === -1) {
+        // Lo honesto cuando el perfil no cubre el idioma declarado: decirlo, en
+        // vez de acusar a la página de estar en el idioma que más se le parezca.
+        out.push(F("3.1.1", "cumple-parcial", null, ["Idioma declarado: lang=\"" + efectivo + "\", bien formado. El perfil de palabras función no cubre «" + decl +
+          "» (solo distingue " + idiomas.join("/") + "), así que no se puede corroborar desde el marcado que el contenido esté en ese idioma: compruébalo a ojo."]));
+      } else if (!lider || p[lider] < 0.08) {
+        out.push(F("3.1.1", "cumple-parcial", null, ["Idioma declarado: lang=\"" + efectivo + "\", bien formado. El texto de la página no da perfil de ninguno de los idiomas que el motor distingue (" +
+          idiomas.join("/") + ") sobre " + pista.palabras + " palabras: puede estar en otro idioma, o ser texto muy técnico. Compruébalo a ojo."]));
+      } else if (lider === decl && p[decl] >= (p[pista.orden[1]] || 0) * 1.6) {
+        // El declarado gana con margen: el texto lo confirma.
+        out.push(F("3.1.1", "cumple", null, ["Idioma declarado: lang=\"" + efectivo + "\", y el texto de la página lo confirma: «" + decl + "» puntúa " +
+          pct(decl) + " % de palabras función sobre " + pista.palabras + " palabras, por delante de «" + (pista.orden[1] || "—") + "» (" + pct(pista.orden[1]) + " %)."]));
+      } else if (p[decl] * 1.6 >= p[lider]) {
+        /* Empate con un idioma cercano: el texto NO contradice la declaración,
+         * pero tampoco la confirma, porque el método no sabe separarlos. Castellano
+         * y catalán comparten «el», «la», «de», «un», «no»; gallego y portugués,
+         * casi todo. Declarar conformidad aquí sería declarar sobre una medición
+         * que no discrimina — y pasaría por buena una página catalana etiquetada
+         * como `lang="es"`, que es un caso real en una web bilingüe. */
+        const otro = lider === decl ? (pista.orden[1] || "—") : lider;
+        out.push(F("3.1.1", "cumple-parcial", null, ["Idioma declarado: lang=\"" + efectivo + "\", bien formado, y el texto no lo contradice — pero tampoco lo confirma: «" +
+          decl + "» (" + pct(decl) + " %) y «" + otro + "» (" + pct(otro) + " %) empatan sobre " + pista.palabras +
+          " palabras, porque son idiomas cercanos que comparten las palabras función. El perfil no sabe separarlos: confirma a ojo que la página está en «" + decl + "» y no en «" + otro + "»."]));
       } else {
-        out.push(F("3.1.1", "revisar", null, ["La página declara lang=\"" + efectivo + "\", pero su texto visible parece estar en «" + pista.idioma +
-          "» (" + pista.detalle + "). Si el idioma por omisión no es el declarado, el lector de pantalla lee la página con la voz equivocada y el contenido es ininteligible. " +
+        out.push(F("3.1.1", "revisar", null, ["La página declara lang=\"" + efectivo + "\", pero su texto visible puntúa mucho más como «" + lider + "» (" +
+          pct(lider) + " %) que como «" + decl + "» (" + pct(decl) + " %), sobre " + pista.palabras + " palabras. " +
+          "Si el idioma por omisión no es el declarado, el lector de pantalla lee la página con la voz equivocada y el contenido es ininteligible. " +
           "Compruébalo: si el idioma real es otro, corrige <code>&lt;html lang&gt;</code>; si la página es multilingüe, marca cada parte con su propio <code>lang</code> (3.1.2)."]));
       }
     }
@@ -5857,6 +5958,25 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       out.push(F("1.3.4", "falla", "grave", ["La página llama a <code>screen.orientation.lock()</code>: fuerza una orientación concreta."]));
       return out;
     }
+    /* Encontrar la LLAMADA ESCRITA no es haberla visto ocurrir.
+     *
+     * `bloqueoJS` significa una cosa muy concreta: la API envuelta registró la
+     * llamada mientras la página corría. Buscar el texto en los scripts en línea
+     * es otra cosa —una pista— y el orquestador ya las separa (`enScriptEnLinea`).
+     * La extensión, en cambio, pasaba el resultado de la búsqueda de texto EN EL
+     * SITIO de `bloqueoJS`, así que una coincidencia textual se convertía en una
+     * falla grave. Y se acusaba a sí misma: su propio bundle lleva la cadena
+     * «screen.orientation.lock()» dentro de los textos de evidencia de esta misma
+     * función, y al inyectarse como script en línea la búsqueda lo encontraba.
+     *
+     * Así que la pista se emite como pista: `revisar`, diciendo dónde mirar. */
+    if (trace.enScriptEnLinea) {
+      out.push(F("1.3.4", "revisar", null, [
+        "En un script en línea de la página aparece escrita una llamada a <code>screen.orientation.lock()</code> o <code>lockOrientation()</code>, pero NO se ha visto ejecutarse. " +
+        "Puede estar bajo una condición que no se cumplió, en código muerto, o dentro de una cadena de texto. Comprueba a mano si llega a bloquear la orientación."
+      ]));
+      return out;
+    }
     if ((trace.mediaBloqueante || []).length) {
       out.push(F("1.3.4", "revisar", null, ["Hay reglas CSS que ocultan contenido según la orientación (" + trace.mediaBloqueante.slice(0, 3).join(" · ") + "): comprueba que no se pierda nada al girar."]));
       return out;
@@ -7032,8 +7152,19 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
           pagina: f.url || ctx.url || "",
           evidencia: evidencia
         };
+        /* Lo que no se puede atribuir a un elemento acompaña a TODAS las filas:
+         * una observación estructural del documento («hay contenido enfocable
+         * dentro de un subárbol oculto») no es de ninguna fila en particular. */
+        const sueltas = (f.evidSinNodo || []).map(stripTags);
         const nodes = (f.nodes && f.nodes.length) ? f.nodes : [null];
         nodes.forEach(function (nd) {
+          /* Cada fila con la evidencia de SU elemento.
+           *
+           * Antes las N filas de un hallazgo salían todas con la unión de los
+           * mensajes del criterio. Cuando el nodo no trae los suyos —las capas de
+           * medición arman sus hallazgos de otra manera— se mantiene la evidencia
+           * completa, que es lo que había: menos preciso, nunca menos. */
+          const propias = (nd && nd.evid && nd.evid.length) ? nd.evid.map(stripTags).concat(sueltas) : null;
           // La letra se resuelve POR FILA, no por criterio: dos barreras del mismo
           // 1.3.1 pueden ser `-I` (una tabla) y `-D` (una lista).
           const oaw = letraOAW(f, { overrides: ctx.overrides, nodo: nd });
@@ -7045,6 +7176,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
             // enlaces dejaba veinte filas con la Página sin resolver, que es justo
             // el dato que hace falta para ir a arreglarlo.
             pagina: (nd && nd.url) || base.pagina,
+            evidencia: propias ? propias.join(" ") : base.evidencia,
             elemento: nd ? (nd.locator + (nd.name ? " «" + nd.name + "»" : "")) : "",
             // El locator se lee; el selector IDENTIFICA. Dos <img> sin id ni clase
             // son las dos «img», y con eso no se puede ir a buscar el elemento.

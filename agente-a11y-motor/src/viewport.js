@@ -200,6 +200,25 @@ export function analyzeOrientation(trace) {
     out.push(F("1.3.4", "falla", "grave", ["La página llama a <code>screen.orientation.lock()</code>: fuerza una orientación concreta."]));
     return out;
   }
+  /* Encontrar la LLAMADA ESCRITA no es haberla visto ocurrir.
+   *
+   * `bloqueoJS` significa una cosa muy concreta: la API envuelta registró la
+   * llamada mientras la página corría. Buscar el texto en los scripts en línea
+   * es otra cosa —una pista— y el orquestador ya las separa (`enScriptEnLinea`).
+   * La extensión, en cambio, pasaba el resultado de la búsqueda de texto EN EL
+   * SITIO de `bloqueoJS`, así que una coincidencia textual se convertía en una
+   * falla grave. Y se acusaba a sí misma: su propio bundle lleva la cadena
+   * «screen.orientation.lock()» dentro de los textos de evidencia de esta misma
+   * función, y al inyectarse como script en línea la búsqueda lo encontraba.
+   *
+   * Así que la pista se emite como pista: `revisar`, diciendo dónde mirar. */
+  if (trace.enScriptEnLinea) {
+    out.push(F("1.3.4", "revisar", null, [
+      "En un script en línea de la página aparece escrita una llamada a <code>screen.orientation.lock()</code> o <code>lockOrientation()</code>, pero NO se ha visto ejecutarse. " +
+      "Puede estar bajo una condición que no se cumplió, en código muerto, o dentro de una cadena de texto. Comprueba a mano si llega a bloquear la orientación."
+    ]));
+    return out;
+  }
   if ((trace.mediaBloqueante || []).length) {
     out.push(F("1.3.4", "revisar", null, ["Hay reglas CSS que ocultan contenido según la orientación (" + trace.mediaBloqueante.slice(0, 3).join(" · ") + "): comprueba que no se pierda nada al girar."]));
     return out;

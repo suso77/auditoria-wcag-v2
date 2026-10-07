@@ -68,6 +68,20 @@ test("las notas de lo que NO se ha podido medir sí atan criterios", () => {
     const i = MEASURE_SRC.indexOf('label: "' + etq + '"');
     assert.ok(i > 0, "sigue emitiéndose: " + etq);
     const obj = MEASURE_SRC.slice(i, MEASURE_SRC.indexOf("});", i));
-    assert.match(obj, /limita\s*:\s*\[/, etq + " debe declarar qué criterios limita");
+    assert.match(obj, /limita\s*:/, etq + " debe declarar qué criterios limita");
   });
+});
+
+test("el velo opaco y el translúcido no atan lo mismo", () => {
+  /* Un velo al 30 % deja medir la GEOMETRÍA —tamaños de objetivo, foco, orden de
+   * tabulación— y solo pone en duda el color. Atando los ocho criterios igual que
+   * uno opaco, una capa translúcida tumbaba mediciones correctas: eso es ruido, y
+   * el ruido entierra barreras igual que el silencio. */
+  const i = MEASURE_SRC.indexOf('label: "Medido detrás de un velo"');
+  const obj = MEASURE_SRC.slice(i, MEASURE_SRC.indexOf("detail:", i));
+  assert.match(obj, /limita\s*:\s*opaco\s*\?/, "la lista tiene que depender de la opacidad: " + obj.slice(0, 120));
+  // La lista corta (translúcida) solo lleva criterios de COLOR.
+  const corta = obj.slice(obj.lastIndexOf(":") + 1);
+  assert.match(corta, /1\.4\.3/);
+  assert.doesNotMatch(corta, /2\.5\.8|2\.4\.3|2\.1\.1/, "la geometría medida tras un velo translúcido sigue valiendo");
 });

@@ -348,3 +348,20 @@ test("1.3.4: una llamada a lock() manda sobre todo lo demás", () => {
   assert.equal(r[0].verdict, "falla");
   assert.equal(r[0].sev, "grave");
 });
+
+test("encontrar la llamada ESCRITA no es haberla visto ocurrir (1.3.4)", () => {
+  // `bloqueoJS` significa que la API envuelta registró la llamada. La extensión
+  // pasaba ahí el resultado de buscar el texto en los scripts en línea, así que
+  // una coincidencia textual salía como falla grave — y el propio bundle lleva
+  // la cadena dentro de sus mensajes de evidencia, con lo que el agente se
+  // acusaba a sí mismo: comprobado inyectándolo en cuatro páginas limpias.
+  const visto = analyzeOrientation({ bloqueoJS: true });
+  assert.equal(visto[0].verdict, "falla");
+
+  const soloEscrito = analyzeOrientation({ bloqueoJS: false, enScriptEnLinea: true });
+  assert.equal(soloEscrito[0].verdict, "revisar");
+  assert.match(soloEscrito[0].evid[0], /NO se ha visto ejecutarse/);
+
+  // Y la pista no tapa a la observación: si se vio ocurrir, manda la falla.
+  assert.equal(analyzeOrientation({ bloqueoJS: true, enScriptEnLinea: true })[0].verdict, "falla");
+});

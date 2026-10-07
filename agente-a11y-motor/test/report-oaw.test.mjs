@@ -73,3 +73,43 @@ test("la cobertura de la muestra viaja en su propia columna del CSV", () => {
   assert.match(csv.split("\r\n")[0], /Cobertura de la muestra/);
   assert.match(csv, /7 de 10 página\(s\) analizadas/);
 });
+
+/* ── Cada fila con la evidencia de SU elemento (v0.38.0) ───────────────────── */
+test("una barrera con varios elementos no reparte la evidencia de todos a cada fila", async () => {
+  const { understand, analyze, setDOMParser } = await import("../src/engine.js");
+  const { DOMParser } = await import("linkedom");
+  setDOMParser(DOMParser);
+  // Tres problemas distintos de 4.1.2 en tres elementos distintos.
+  const { findings } = analyze(understand(
+    '<div tabindex="0" onclick="abrir()">Abrir el panel</div>' +
+    '<div role="slider" tabindex="0" aria-label="Volumen"></div>' +
+    "<button></button>"
+  ));
+  const filas = barreras(findings).filter((r) => r.criterio === "4.1.2");
+  assert.equal(filas.length, 3);
+
+  const slider = filas.find((r) => /Volumen/.test(r.elemento));
+  assert.match(slider.evidencia, /aria-valuenow/, "la fila del deslizador dice lo suyo");
+  // Y NO arrastra lo de los otros dos, que es lo que pasaba: las tres filas
+  // salían con la unión de los mensajes del criterio.
+  assert.doesNotMatch(slider.evidencia, /Abrir el panel/);
+  assert.doesNotMatch(slider.evidencia, /anunciaría solo como «button»/);
+
+  const boton = filas.find((r) => r.elemento === "button");
+  assert.match(boton.evidencia, /sin nombre accesible/);
+  assert.doesNotMatch(boton.evidencia, /aria-valuenow/);
+});
+
+test("lo que no es de ningún elemento acompaña a todas las filas", async () => {
+  const { understand, analyze, setDOMParser } = await import("../src/engine.js");
+  const { DOMParser } = await import("linkedom");
+  setDOMParser(DOMParser);
+  // Una observación estructural (contenido enfocable dentro de un subárbol
+  // oculto) no se le puede cargar a una fila concreta: va en todas.
+  const { findings } = analyze(understand(
+    '<div aria-hidden="true"><a href="/x">Oculto pero enfocable</a></div><button></button>'
+  ));
+  const filas = barreras(findings).filter((r) => r.criterio === "4.1.2");
+  assert.ok(filas.length >= 1);
+  assert.ok(filas.every((r) => /subárbol oculto/.test(r.evidencia)), JSON.stringify(filas.map((r) => r.evidencia.slice(0, 80))));
+});

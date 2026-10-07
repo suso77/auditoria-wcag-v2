@@ -86,8 +86,19 @@ export function barreras(findings, ctx) {
         pagina: f.url || ctx.url || "",
         evidencia: evidencia
       };
+      /* Lo que no se puede atribuir a un elemento acompaña a TODAS las filas:
+       * una observación estructural del documento («hay contenido enfocable
+       * dentro de un subárbol oculto») no es de ninguna fila en particular. */
+      const sueltas = (f.evidSinNodo || []).map(stripTags);
       const nodes = (f.nodes && f.nodes.length) ? f.nodes : [null];
       nodes.forEach(function (nd) {
+        /* Cada fila con la evidencia de SU elemento.
+         *
+         * Antes las N filas de un hallazgo salían todas con la unión de los
+         * mensajes del criterio. Cuando el nodo no trae los suyos —las capas de
+         * medición arman sus hallazgos de otra manera— se mantiene la evidencia
+         * completa, que es lo que había: menos preciso, nunca menos. */
+        const propias = (nd && nd.evid && nd.evid.length) ? nd.evid.map(stripTags).concat(sueltas) : null;
         // La letra se resuelve POR FILA, no por criterio: dos barreras del mismo
         // 1.3.1 pueden ser `-I` (una tabla) y `-D` (una lista).
         const oaw = letraOAW(f, { overrides: ctx.overrides, nodo: nd });
@@ -99,6 +110,7 @@ export function barreras(findings, ctx) {
           // enlaces dejaba veinte filas con la Página sin resolver, que es justo
           // el dato que hace falta para ir a arreglarlo.
           pagina: (nd && nd.url) || base.pagina,
+          evidencia: propias ? propias.join(" ") : base.evidencia,
           elemento: nd ? (nd.locator + (nd.name ? " «" + nd.name + "»" : "")) : "",
           // El locator se lee; el selector IDENTIFICA. Dos <img> sin id ni clase
           // son las dos «img», y con eso no se puede ir a buscar el elemento.

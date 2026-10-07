@@ -200,16 +200,68 @@
       .slice(0, 40)
       .map(function (el) { return { locator: locator(el), texto: (el.getAttribute("title") || "").trim() }; });
 
+    /* Los scripts en línea de LA PÁGINA, no los del agente.
+     *
+     * El núcleo se inyecta en la pestaña, y su propio texto contiene la cadena
+     * «screen.orientation.lock()» dentro de los mensajes de evidencia de 1.3.4.
+     * Buscando en todos los `script` sin `src`, el agente se encontraba a sí
+     * mismo y acusaba a la página de bloquear la orientación — comprobado
+     * inyectando el bundle en cuatro páginas limpias: las cuatro «fallaban».
+     *
+     * El núcleo generado lleva una marca literal en su cabecera y este fichero
+     * se delata por su propio espacio de nombres. Se descartan los dos: lo que
+     * queda es el guion DE LA PÁGINA, que es lo que se quería mirar. */
+    const MARCA_NUCLEO = "__A11Y_NUCLEO_GENERADO__";
+    const MARCA_AGENTE = "__a11yAgente";
     const guion = Array.prototype.slice.call(document.querySelectorAll("script:not([src])"))
+      .filter(function (s) {
+        if (s.dataset && s.dataset.a11yAgente) return false;
+        const t = s.textContent || "";
+        return t.indexOf(MARCA_NUCLEO) === -1 && t.indexOf(MARCA_AGENTE) === -1;
+      })
       .map(function (s) { return s.textContent || ""; }).join("");
+
+    /* 1.3.4: las reglas `@media (orientation:…)` se BUSCAN, no se dan por vacías.
+     *
+     * Aquí se pasaba `mediaBloqueante: []` escrito a mano, sin haber mirado una
+     * sola hoja de estilo: una lista vacía que parecía el resultado de una
+     * búsqueda. Ahora se recorre el CSSOM igual que hace el orquestador, y las
+     * hojas de otro origen —que lanzan al tocar `cssRules`— se CUENTAN, para que
+     * el criterio no pueda declararse conforme sobre un CSS que no se ha leído. */
+    const media = [];
+    let hojasIlegibles = 0;
+    Array.prototype.forEach.call(document.styleSheets, function (ss) {
+      let reglas = null;
+      try { reglas = ss.cssRules; } catch (e) { hojasIlegibles++; return; }
+      if (!reglas) return;
+      Array.prototype.forEach.call(reglas, function (r) {
+        const cond = r.conditionText || (r.media && r.media.mediaText) || "";
+        if (r.type === 4 && /orientation/i.test(cond)) {
+          const txt = Array.prototype.map.call(r.cssRules || [], function (x) { return x.cssText; }).join(" ");
+          if (/display\s*:\s*none|visibility\s*:\s*hidden|transform\s*:\s*rotate/i.test(txt)) media.push(cond);
+        }
+      });
+    });
 
     return [].concat(
       NS.analyzeResize(diff(antes, resize)),
       NS.analyzeTextSpacing(diff(antes, espaciado)),
+      // `hovers` va vacío a propósito: la extensión no puede hacer la sonda de
+      // puntero (hace falta mover el ratón de verdad), y el analizador distingue
+      // «vacío» de «no se ejecutó» y lo dice en la evidencia.
       NS.analyzeHoverContent({ titles: titles, hovers: [] }),
+      /* Y sin `textoVertical`/`textoHorizontal`: la extensión no puede cambiar el
+       * tamaño de la ventana, así que no ha comparado las dos orientaciones. El
+       * analizador lo convierte en `revisar` diciendo exactamente eso, en vez de
+       * dar por buena una comparación que no se ha hecho. */
+      /* `bloqueoJS` NO: eso significa «la API envuelta registró la llamada», y la
+       * extensión no envuelve nada —se inyecta cuando la página ya ha corrido—.
+       * Lo que tiene es una búsqueda de texto, que es una pista, y va como tal. */
       NS.analyzeOrientation({
-        bloqueoJS: /screen\s*\.\s*orientation\s*\.\s*lock\s*\(|lockOrientation\s*\(/.test(guion),
-        mediaBloqueante: []
+        bloqueoJS: false,
+        enScriptEnLinea: /screen\s*\.\s*orientation\s*\.\s*lock\s*\(|lockOrientation\s*\(/.test(guion),
+        mediaBloqueante: media,
+        hojasIlegibles: hojasIlegibles
       })
     );
   }

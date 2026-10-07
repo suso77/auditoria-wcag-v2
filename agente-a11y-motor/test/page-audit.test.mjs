@@ -421,3 +421,39 @@ test("sin lang en <html>, 3.1.2 tampoco se declara conforme", () => {
   const v = verdicts('<html><head><title>t</title></head><body><main>' + PARRAFO_ES + '</main></body></html>');
   assert.deepEqual(v["3.1.2"], ["revisar"]);
 });
+
+/* ── El perfil de idioma cubre las lenguas cooficiales (v0.38.0) ───────────── */
+const PARRAFO_CA = "<p>El centre de visitants obre tots els dies de la setmana des de les nou del matí fins a les set de la tarda, i l'entrada al museu és gratuïta per als nens menors de dotze anys. Aquesta visita també es pot reservar amb molt de temps.</p>";
+const PARRAFO_EU = "<p>Bisitarien zentroa asteko egun guztietan dago zabalik goizeko bederatzietatik arratsaldeko zazpiak arte, eta museoko sarrera doakoa da hamabi urtetik beherako haurrentzat. Bisita gidatuak ere badaude eta horiek guztiak eskatu daitezke.</p>";
+const pagLang = (lang, cuerpo) => '<html lang="' + lang + '"><head><title>t</title></head><body><main>' + cuerpo + "</main></body></html>";
+
+test("el euskera se reconoce: declarado bien confirma, declarado mal se acusa", () => {
+  // Antes el perfil solo distinguía es/en/fr/pt/gl, así que una web pública en
+  // euskera no tenía con qué compararse.
+  assert.deepEqual(verdicts(pagLang("eu", PARRAFO_EU))["3.1.1"], ["cumple"]);
+  assert.deepEqual(verdicts(pagLang("es", PARRAFO_EU))["3.1.1"], ["revisar"]);
+  assert.deepEqual(verdicts(pagLang("eu", PARRAFO_ES))["3.1.1"], ["revisar"]);
+});
+
+test("con catalán y castellano el perfil NO decide, y lo dice en vez de firmar", () => {
+  /* Comparten «el», «la», «de», «un», «no»: empatan. Declarar conformidad ahí
+   * sería declarar sobre una medición que no discrimina, y daría por buena una
+   * página catalana etiquetada como `lang="es"` — un caso real en una web
+   * bilingüe. Así que ninguna de las dos direcciones se firma. */
+  const ca = verdicts(pagLang("ca", PARRAFO_CA))["3.1.1"];
+  assert.deepEqual(ca, ["cumple-parcial"]);
+  assert.deepEqual(verdicts(pagLang("es", PARRAFO_CA))["3.1.1"], ["cumple-parcial"]);
+  // Y el veredicto nombra el empate concreto, que es lo que hay que ir a mirar.
+  const f = auditPageHtml(pagLang("ca", PARRAFO_CA), DOMParser).find((x) => x.c.n === "3.1.1");
+  assert.match(f.evid[0], /empatan/);
+  assert.match(f.evid[0], /confirma a ojo/);
+});
+
+test("un idioma que el perfil no cubre se declara como tal, no se acusa", () => {
+  // Con `lang="de"` sobre texto alemán, lo honesto es decir que el motor no
+  // distingue ese idioma — no señalar el que más se le parezca.
+  const aleman = "<p>Das Besucherzentrum ist an allen Tagen der Woche von neun Uhr morgens bis sieben Uhr abends geöffnet, und der Eintritt in das Museum ist für Kinder unter zwölf Jahren frei.</p>";
+  const f = auditPageHtml(pagLang("de", aleman), DOMParser).find((x) => x.c.n === "3.1.1");
+  assert.equal(f.verdict, "cumple-parcial");
+  assert.match(f.evid[0], /no cubre «de»/);
+});

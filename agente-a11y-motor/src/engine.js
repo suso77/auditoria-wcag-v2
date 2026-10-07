@@ -646,21 +646,36 @@ function analyze(m) {
     }
     const lvl = (WCAG_IX[o.crit] || {}).lvl;
     const sev = o.sev || severityByCrit(o.crit, lvl);
-    const f = failMap[o.crit] || (failMap[o.crit] = { sev: sev, evid: [], nodes: [], types: [] });
+    const f = failMap[o.crit] || (failMap[o.crit] = { sev: sev, evid: [], nodes: [], types: [], sinNodo: [] });
     if (SEV_RANK[sev] > SEV_RANK[f.sev]) f.sev = sev;
     f.evid.push(o.html);
     if (o.type && f.types.indexOf(o.type) === -1) f.types.push(o.type);
+    // Las observaciones que no son DE un elemento (las estructurales del
+    // documento) se apartan: no se le pueden cargar a ninguna fila en concreto,
+    // así que acompañan a todas.
+    if (!(o.node && o.node.locator)) f.sinNodo.push(o.html);
     // Deduplicación por IDENTIDAD del nodo, no por su locator: dos <img> sin id
     // ni clase comparten locator («img») y se fusionaban en uno solo, así que dos
     // barreras distintas salían como una sola fila en el IRA. El locator sirve
     // para leerlo; para contar hace falta la identidad.
     if (o.node && o.node.locator) {
-      const mismo = f.nodes.some(function (x) {
-        return (x.id != null && o.node.id != null)
+      let yaEsta = null;
+      f.nodes.forEach(function (x) {
+        const mismo = (x.id != null && o.node.id != null)
           ? x.id === o.node.id
           : (x.locator === o.node.locator && x.role === o.node.role);
+        if (mismo) yaEsta = x;
       });
-      if (!mismo) f.nodes.push(o.node);
+      /* La evidencia se queda PEGADA a su elemento.
+       *
+       * El hallazgo junta en `evid` todos los mensajes del criterio, y la hoja de
+       * Barreras saca una fila por elemento: las N filas salían con la UNIÓN de
+       * los mensajes, así que la fila de un `role="slider"` arrastraba también lo
+       * del `div` con `onclick` y lo del botón vacío. Cada mensaje lleva delante
+       * el elemento del que habla, así que no era falso — pero filtrar una fila a
+       * lo suyo no se podía. Ahora cada nodo se lleva los suyos. */
+      if (yaEsta) (yaEsta.evid = yaEsta.evid || []).push(o.html);
+      else f.nodes.push(Object.assign({}, o.node, { evid: [o.html] }));
     }
   });
   const critObjs = {};
@@ -671,7 +686,7 @@ function analyze(m) {
 
   const findings = Object.keys(critObjs).sort(cmpSC).map(function (n) {
     const c = critObjs[n];
-    if (failMap[n]) return { c: c, verdict: "falla", sev: failMap[n].sev, evid: failMap[n].evid, nodes: failMap[n].nodes, types: failMap[n].types, scope: "componente" };
+    if (failMap[n]) return { c: c, verdict: "falla", sev: failMap[n].sev, evid: failMap[n].evid, nodes: failMap[n].nodes, types: failMap[n].types, evidSinNodo: failMap[n].sinNodo, scope: "componente" };
     if (dudaMap[n]) return { c: c, verdict: "revisar", sev: null, evid: dudaMap[n].evid, nodes: dudaMap[n].nodes, types: dudaMap[n].types, scope: "componente" };
     // Todo hallazgo lleva evidencia, también el que no es una barrera. Un informe
     // con filas «No se puede comprobar» y la casilla de evidencia vacía no le dice

@@ -199,12 +199,26 @@ const FUNCIONALES = {
   en: ["the", "of", "and", "to", "in", "a", "is", "that", "for", "it", "with", "as", "was", "on", "are", "this", "be", "by", "an", "from"],
   fr: ["le", "la", "les", "des", "et", "est", "un", "une", "pour", "dans", "que", "qui", "par", "sur", "avec", "au", "du", "ne", "pas", "ce"],
   pt: ["o", "os", "as", "de", "que", "e", "em", "um", "uma", "para", "com", "não", "por", "do", "da", "dos", "das", "no", "na", "se"],
-  gl: ["o", "os", "as", "do", "da", "dos", "das", "e", "en", "un", "unha", "para", "con", "non", "que", "por", "ao", "nos", "se", "é"]
+  gl: ["o", "os", "as", "do", "da", "dos", "das", "e", "en", "un", "unha", "para", "con", "non", "que", "por", "ao", "nos", "se", "é"],
+  /* Catalán y euskera: faltaban, y en este país eso es un agujero y no un
+   * detalle. Una web pública con versión en catalán o en euskera no tenía con
+   * qué comparar —el perfil daba «sin margen» y el criterio se cerraba sin
+   * corroborar nada—, mientras los léxicos de coherencia sí los cubrían. */
+  ca: ["els", "les", "amb", "per", "als", "aquest", "aquesta", "aquests", "dels", "seva", "seu", "molt", "pero", "tambe", "hi", "ha", "fins", "qual", "mes", "son"],
+  /* El euskera es aglutinante: lo que en castellano es preposición, aquí es
+   * sufijo. Así que el perfil no son artículos sino marcas de caso y auxiliares,
+   * que es lo que de verdad se repite en cualquier texto vasco. */
+  eu: ["eta", "da", "dira", "du", "dute", "zen", "ditu", "bat", "batzuk", "edo", "ere", "hau", "hori", "bere", "guztiak", "baina", "nola", "gehiago", "egiteko", "dago"]
 };
 /* Idiomas cuyas palabras funci\u00f3n se solapan de verdad: entre ellos, el perfil no
  * decide. Con `es` declarado y perfil `gl`, lo honesto es decir que no se puede
  * saber desde el marcado, no acusar de idioma equivocado. */
-const IDIOMAS_PROXIMOS = { es: ["gl", "pt"], gl: ["es", "pt"], pt: ["es", "gl"], fr: [], en: [] };
+const IDIOMAS_PROXIMOS = {
+  es: ["gl", "pt", "ca"], gl: ["es", "pt"], pt: ["es", "gl"],
+  // El catalán comparte con el castellano «el», «la», «de», «que», «en», «un»,
+  // «una», «no»: el margen entre los dos no decide nada por sí solo.
+  ca: ["es"], fr: ["ca"], en: [], eu: []
+};
 
 /**
  * Perfil de idioma por palabras funci\u00f3n, con el detalle de la medida.
@@ -217,21 +231,46 @@ function idiomaDelTexto(texto) {
   const palabras = String(texto || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .split(/[^a-z]+/).filter(Boolean);
   if (palabras.length < 25) return { suficiente: false, razon: "corto", palabras: palabras.length, idioma: null, detalle: "texto demasiado corto" };
+  /* Cada palabra puntúa por lo que DISTINGUE, no por aparecer.
+   *
+   * Contando todas igual, el castellano sacaba un 27 % sobre un texto catalán
+   * —«de», «la», «el», «un», «que», «no» son de los dos— y le ganaba a su propio
+   * idioma, que se quedaba en el 20 %. Con eso, una página catalana correcta no
+   * podía confirmarse nunca. Una palabra que está en N léxicos vale 1/N: las
+   * compartidas pesan poco, las propias de un idioma mandan. */
+  const enCuantos = {};
+  Object.keys(FUNCIONALES).forEach(function (k) {
+    FUNCIONALES[k].forEach(function (w) { enCuantos[w] = (enCuantos[w] || 0) + 1; });
+  });
   const punt = {};
   Object.keys(FUNCIONALES).forEach(function (k) {
-    punt[k] = palabras.filter(function (w) { return FUNCIONALES[k].indexOf(w) !== -1; }).length / palabras.length;
+    let suma = 0;
+    palabras.forEach(function (w) {
+      if (FUNCIONALES[k].indexOf(w) !== -1) suma += 1 / enCuantos[w];
+    });
+    punt[k] = suma / palabras.length;
   });
   const orden = Object.keys(punt).sort(function (a, b) { return punt[b] - punt[a]; });
   const pct = function (k) { return Math.round(punt[k] * 1000) / 10; };
+  /* La tabla entera viaja, no solo el ganador.
+   *
+   * 3.1.1 y 3.1.2 hacen dos preguntas distintas y antes compartían una sola
+   * respuesta. 3.1.2 pregunta «¿de qué idioma es ESTE bloque?» y ahí hace falta
+   * un ganador claro. 3.1.1 pregunta «¿encaja lo declarado con el texto?», que
+   * es más fácil: basta con que el idioma declarado no quede claramente por
+   * debajo de otro. Con una sola respuesta, una página catalana correcta no
+   * podía confirmarse nunca —el castellano empata con ella por las palabras que
+   * comparten— y lo mismo el gallego con el portugués. */
+  const tabla = { punt: punt, orden: orden, pct: pct };
   // Exigir margen: sin diferencia clara entre el primero y el segundo, no se dice.
   if (punt[orden[0]] < 0.08 || punt[orden[0]] < punt[orden[1]] * 1.6) {
-    return { suficiente: false, razon: "sin-margen", palabras: palabras.length, idioma: orden[0],
-      detalle: "sin margen entre «" + orden[0] + "» (" + pct(orden[0]) + " %) y «" + orden[1] + "» (" + pct(orden[1]) + " %) sobre " + palabras.length + " palabras" };
+    return Object.assign({ suficiente: false, razon: "sin-margen", palabras: palabras.length, idioma: orden[0],
+      detalle: "sin margen entre «" + orden[0] + "» (" + pct(orden[0]) + " %) y «" + orden[1] + "» (" + pct(orden[1]) + " %) sobre " + palabras.length + " palabras" }, tabla);
   }
-  return { suficiente: true, palabras: palabras.length, idioma: orden[0],
+  return Object.assign(tabla, { suficiente: true, palabras: palabras.length, idioma: orden[0],
     detalle: pct(orden[0]) + " % de palabras funci\u00f3n de \u00ab" + orden[0] + "\u00bb sobre " + palabras.length +
       " palabras, frente al " + pct(orden[1]) + " % de \u00ab" + orden[1] + "\u00bb; el perfil solo distingue " +
-      Object.keys(FUNCIONALES).join("/") };
+      Object.keys(FUNCIONALES).join("/") });
 }
 /** Compatibilidad: el nombre antiguo devuelve solo el c\u00f3digo, o `null`. */
 function idiomaProbable(texto) {
@@ -365,25 +404,51 @@ export function auditPageDoc(doc) {
      * Lo que se puede hacer desde el marcado es comparar la declaración con un
      * perfil de palabras función del texto visible. Es una señal, no una
      * prueba: por eso ningún resultado de aquí es `falla`. */
+    /* La pregunta de 3.1.1 es «¿ENCAJA lo declarado?», no «¿qué idioma es?».
+     *
+     * Con la segunda pregunta, una página catalana correcta no podía
+     * confirmarse nunca: el castellano empata con ella por las palabras que
+     * comparten, no hay ganador y el criterio se cerraba sin corroborar nada.
+     * Lo mismo el gallego con el portugués — y eso en un país con cuatro
+     * lenguas oficiales no es un matiz. Lo que de verdad hace falta comprobar
+     * es que el texto NO contradiga la declaración: basta con que el idioma
+     * declarado no quede claramente por debajo del que más puntúa. */
     const pista = idiomaDelTexto(textoVisible(doc));
     const decl = efectivo.toLowerCase().split("-")[0];
-    if (!pista.suficiente) {
-      // Dos motivos distintos para no poder afirmar nada, y se dicen distintos:
-      // que no haya texto, o que haya texto y el perfil no distinga.
-      out.push(F("3.1.1", "cumple-parcial", null, [pista.razon === "corto"
-        ? "Idioma declarado: lang=\"" + efectivo + "\", bien formado. No hay texto suficiente en la página (" + pista.palabras +
-          " palabra(s) reconocidas) para corroborar que el contenido esté en ese idioma: compruébalo a ojo."
-        : "Idioma declarado: lang=\"" + efectivo + "\", bien formado. El perfil de palabras función no distingue el idioma del texto (" + pista.detalle +
-          "), así que no se puede corroborar desde el marcado que el contenido esté en «" + decl + "»: compruébalo a ojo."]));
-    } else if (pista.idioma === decl) {
-      out.push(F("3.1.1", "cumple", null, ["Idioma declarado: lang=\"" + efectivo + "\", y el texto de la página concuerda (" +
-        pista.detalle + ")."]));
-    } else if (IDIOMAS_PROXIMOS[decl] && IDIOMAS_PROXIMOS[decl].indexOf(pista.idioma) !== -1) {
-      out.push(F("3.1.1", "cumple-parcial", null, ["Idioma declarado: lang=\"" + efectivo + "\". El perfil del texto se parece más a «" + pista.idioma +
-        "» (" + pista.detalle + "), pero son idiomas cercanos y las palabras función se solapan: no se puede decidir desde el marcado. Confírmalo."]));
+    const idiomas = Object.keys(FUNCIONALES);
+    const p = pista.punt || {};
+    const lider = (pista.orden || [])[0];
+    const pct = pista.pct || function () { return 0; };
+    if (pista.palabras < 25) {
+      out.push(F("3.1.1", "cumple-parcial", null, ["Idioma declarado: lang=\"" + efectivo + "\", bien formado. No hay texto suficiente en la página (" + pista.palabras +
+        " palabra(s) reconocidas) para corroborar que el contenido esté en ese idioma: compruébalo a ojo."]));
+    } else if (idiomas.indexOf(decl) === -1) {
+      // Lo honesto cuando el perfil no cubre el idioma declarado: decirlo, en
+      // vez de acusar a la página de estar en el idioma que más se le parezca.
+      out.push(F("3.1.1", "cumple-parcial", null, ["Idioma declarado: lang=\"" + efectivo + "\", bien formado. El perfil de palabras función no cubre «" + decl +
+        "» (solo distingue " + idiomas.join("/") + "), así que no se puede corroborar desde el marcado que el contenido esté en ese idioma: compruébalo a ojo."]));
+    } else if (!lider || p[lider] < 0.08) {
+      out.push(F("3.1.1", "cumple-parcial", null, ["Idioma declarado: lang=\"" + efectivo + "\", bien formado. El texto de la página no da perfil de ninguno de los idiomas que el motor distingue (" +
+        idiomas.join("/") + ") sobre " + pista.palabras + " palabras: puede estar en otro idioma, o ser texto muy técnico. Compruébalo a ojo."]));
+    } else if (lider === decl && p[decl] >= (p[pista.orden[1]] || 0) * 1.6) {
+      // El declarado gana con margen: el texto lo confirma.
+      out.push(F("3.1.1", "cumple", null, ["Idioma declarado: lang=\"" + efectivo + "\", y el texto de la página lo confirma: «" + decl + "» puntúa " +
+        pct(decl) + " % de palabras función sobre " + pista.palabras + " palabras, por delante de «" + (pista.orden[1] || "—") + "» (" + pct(pista.orden[1]) + " %)."]));
+    } else if (p[decl] * 1.6 >= p[lider]) {
+      /* Empate con un idioma cercano: el texto NO contradice la declaración,
+       * pero tampoco la confirma, porque el método no sabe separarlos. Castellano
+       * y catalán comparten «el», «la», «de», «un», «no»; gallego y portugués,
+       * casi todo. Declarar conformidad aquí sería declarar sobre una medición
+       * que no discrimina — y pasaría por buena una página catalana etiquetada
+       * como `lang="es"`, que es un caso real en una web bilingüe. */
+      const otro = lider === decl ? (pista.orden[1] || "—") : lider;
+      out.push(F("3.1.1", "cumple-parcial", null, ["Idioma declarado: lang=\"" + efectivo + "\", bien formado, y el texto no lo contradice — pero tampoco lo confirma: «" +
+        decl + "» (" + pct(decl) + " %) y «" + otro + "» (" + pct(otro) + " %) empatan sobre " + pista.palabras +
+        " palabras, porque son idiomas cercanos que comparten las palabras función. El perfil no sabe separarlos: confirma a ojo que la página está en «" + decl + "» y no en «" + otro + "»."]));
     } else {
-      out.push(F("3.1.1", "revisar", null, ["La página declara lang=\"" + efectivo + "\", pero su texto visible parece estar en «" + pista.idioma +
-        "» (" + pista.detalle + "). Si el idioma por omisión no es el declarado, el lector de pantalla lee la página con la voz equivocada y el contenido es ininteligible. " +
+      out.push(F("3.1.1", "revisar", null, ["La página declara lang=\"" + efectivo + "\", pero su texto visible puntúa mucho más como «" + lider + "» (" +
+        pct(lider) + " %) que como «" + decl + "» (" + pct(decl) + " %), sobre " + pista.palabras + " palabras. " +
+        "Si el idioma por omisión no es el declarado, el lector de pantalla lee la página con la voz equivocada y el contenido es ininteligible. " +
         "Compruébalo: si el idioma real es otro, corrige <code>&lt;html lang&gt;</code>; si la página es multilingüe, marca cada parte con su propio <code>lang</code> (3.1.2)."]));
     }
   }
