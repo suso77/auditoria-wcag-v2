@@ -68,3 +68,37 @@ test("crossCheck: pipeline completo con runAxe inyectado (sin navegador)", async
 test("crossCheck: exige un runAxe", async () => {
   await assert.rejects(() => crossCheck("<button>x</button>", {}), /runAxe/);
 });
+
+/* ── Revisión (v0.39.0): lo que el cruce afirmaba sin poder sostenerlo ────── */
+test("si el motor no ha construido modelo, «soloMotor: 0» no se lee como conformidad", async () => {
+  /* `understand()` devuelve null cuando no hay ni un elemento expuesto, y
+   * `crossCheck` fabricaba `{findings: []}` que entraba en la reconciliación
+   * como una comprobación limpia. «soloMotor: 0» era indistinguible de «el
+   * motor comprobó y no encontró nada». */
+  const viol = [{ id: "color-contrast", help: "x", tags: ["wcag2aa", "wcag143"], nodes: [{ target: ["p"] }] }];
+  for (const html of ["solo texto sin etiquetas", "", "<!-- nada -->"]) {
+    const r = await crossCheck(html, { runAxe: () => viol });
+    assert.equal(r.motorMiro, false, JSON.stringify(html));
+    assert.equal(r.reconciliation.summary.motorSinModelo, true);
+    assert.match(r.reconciliation.summary.nota, /no ha mirado nada/);
+  }
+  // Con un elemento de verdad, no se marca nada.
+  const ok = await crossCheck('<img src="a.png">', { runAxe: () => viol });
+  assert.equal(ok.motorMiro, true);
+  assert.equal(ok.reconciliation.summary.motorSinModelo, undefined);
+});
+
+test("el «acuerdo» dice que es por criterio, no por elemento", () => {
+  // Se construía solo porque coincide el número de criterio: el motor acusando a
+  // `img.logo` y axe a otro `img` de la página salían como «acuerdo: 1».
+  const f = { c: { n: "1.1.1", t: "Contenido no textual", lvl: "A" }, verdict: "falla", sev: "grave",
+    nodes: [{ locator: "img.logo", path: "html > body > img:nth-of-type(1)" }] };
+  const axe = [{ id: "image-alt", help: "y", tags: ["wcag2a", "wcag111"], nodes: [{ target: ["main > img:nth-child(7)"] }] }];
+  const rec = reconcile([f], axe);
+  assert.equal(rec.summary.acuerdo, 1);
+  assert.equal(rec.summary.nivel, "criterio");
+  assert.match(rec.summary.nota, /no necesariamente el mismo elemento/);
+  assert.equal(rec.agreements[0].nivel, "criterio");
+  // Cuántos elementos trae cada fuente, y que la coincidencia no está comprobada.
+  assert.deepEqual(rec.agreements[0].elementos, { motor: 1, axe: 1, coinciden: null });
+});

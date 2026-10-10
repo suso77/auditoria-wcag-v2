@@ -129,7 +129,9 @@ test("la ayuda siempre en el mismo sitio → cumple-parcial (que sea suficiente 
 test("el mismo mecanismo que se muda de la cabecera al pie → falla 3.2.6", () => {
   const out = analyzeHelpConsistency([ay([["ayuda", "cabecera"]], "/1"), ay([["ayuda", "pie"]], "/2")]);
   assert.deepEqual(v(out), ["3.2.6/falla"]);
-  assert.match(out[0].evid[0], /cambia de sitio/);
+  // El texto cambió en v0.39.0: lo que acusa el criterio es que NO quede un sitio
+  // común a todas las páginas que ofrecen el mecanismo, no que haya más de uno.
+  assert.match(out[0].evid[0], /no aparece en ningún sitio común/);
 });
 
 test("regresión: dos mecanismos en regiones distintas NO son incoherencia por su orden", () => {
@@ -157,13 +159,21 @@ test("páginas sin ayuda se avisan, no se penalizan", () => {
 
 const via = (vias) => ({ url: "/x", navs: [], enlaces: [], ayuda: [], vias });
 
-test("dos o más vías → cumple 2.4.5", () => {
-  assert.deepEqual(v(analyzeMultipleWays([via({ buscador: true, navegacion: true })])), ["2.4.5/cumple"]);
+test("dos o más vías → cumple-parcial 2.4.5 (presencia sí, funcionamiento no)", () => {
+  /* Era `cumple`. Lo detectado es la PRESENCIA de los mecanismos en el marcado;
+   * que el buscador encuentre, que el mapa esté completo o que la navegación
+   * lleve a todas las páginas (G126/G185) no se ve en el marcado y no se ha
+   * comprobado. Firmar conformidad sobre eso era declarar bueno un mecanismo que
+   * nadie ha usado. */
+  const out = analyzeMultipleWays([via({ buscador: true, navegacion: true })]);
+  assert.deepEqual(v(out), ["2.4.5/cumple-parcial"]);
+  assert.match(out[0].evid[0], /que funcionen/);
 });
 
 test("se suman las vías de toda la muestra, no de una página", () => {
   const out = analyzeMultipleWays([via({ buscador: true }), via({ mapaWeb: true })]);
-  assert.deepEqual(v(out), ["2.4.5/cumple"]);
+  assert.deepEqual(v(out), ["2.4.5/cumple-parcial"]);
+  assert.match(out[0].evid[0], /buscador, mapa web/);
 });
 
 test("una sola vía → revisar, con la excepción del paso de un proceso", () => {
@@ -183,8 +193,9 @@ test("regresión: 2.4.5 no se falla desde UNA sola página", () => {
   const out = analyzeMultipleWays([via({})]);
   assert.deepEqual(v(out), ["2.4.5/revisar"]);
   assert.match(out[0].evid[0], /criterio de SITIO/);
-  // En cambio encontrar DOS vías en una página sí demuestra que el sitio las tiene.
-  assert.deepEqual(v(analyzeMultipleWays([via({ buscador: true, navegacion: true })])), ["2.4.5/cumple"]);
+  // En cambio encontrar DOS vías en una página sí demuestra que el sitio las tiene
+  // —presentes; que funcionen lo juzga una persona, de ahí el `cumple-parcial`.
+  assert.deepEqual(v(analyzeMultipleWays([via({ buscador: true, navegacion: true })])), ["2.4.5/cumple-parcial"]);
 });
 
 /* ── Huella sobre HTML real ── */
@@ -236,9 +247,17 @@ test("analyzeCoherence cubre los cuatro criterios y los marca como ámbito de si
   assert.ok(out.every((f) => f.evid && f.evid.length), "todo hallazgo lleva evidencia");
 });
 
-test("sin huellas no se inventa nada", () => {
-  assert.deepEqual(analyzeCoherence([]), []);
-  assert.deepEqual(analyzeCoherence(null), []);
+test("sin huellas no se inventa nada, pero tampoco se calla", () => {
+  /* Devolvía `[]`, y ese es el camino real cuando la capa de huella se cae en
+   * todas las páginas o está apagada: los cuatro criterios de sitio desaparecían
+   * del informe sin una palabra, y un criterio que no aparece se lee igual que
+   * uno conforme. Ahora dicen que no se han comparado — que no es inventar: es
+   * lo contrario. */
+  [analyzeCoherence([]), analyzeCoherence(null), analyzeCoherence(undefined)].forEach((out) => {
+    assert.deepEqual(v(out).sort(), ["2.4.5/revisar", "3.2.3/revisar", "3.2.4/revisar", "3.2.6/revisar"]);
+    assert.ok(out.every((f) => /no se ha podido tomar la huella/i.test(f.evid[0])));
+    assert.ok(!out.some((f) => f.verdict === "falla"), "no se acusa a nadie");
+  });
 });
 
 test("el código inyectable compila y devuelve la huella", () => {
@@ -517,4 +536,120 @@ test("3.2.4: el id no cuenta como componente, porque muchos sitios lo derivan de
     pagina324('<header><nav><a id="que-hacer" class="menus_item" href="/e.html">Qué hacer</a></nav></header><main><h1>b</h1></main>', "http://s/b")
   ]);
   assert.ok(f.some((x) => x.verdict === "falla"), JSON.stringify(f.map((x) => x.verdict + ": " + x.evid)));
+});
+
+/* ── Revisión de los criterios de sitio (v0.39.0) ────────────────────────────
+ *
+ * Ocho defectos confirmados ejecutando: cuatro inventaban barreras sobre marcado
+ * correcto y cuatro declaraban conformidad sobre lo que no se había comparado.
+ */
+const H = (url, body) => huella('<!doctype html><html lang="es"><body>' + body + "</body></html>", url);
+const unCrit = (hs, n) => analyzeCoherence(hs).filter((f) => f.c.n === n);
+
+const MENU = '<header><nav aria-label="Principal"><a href="/">Inicio</a><a href="/blog">Blog</a><a href="/servicios">Servicios</a></nav></header>';
+
+test("3.2.3 compara cada navegación con la SUYA, no todas revueltas", () => {
+  /* `seqNav` concatenaba todos los `nav` de la página en una secuencia, así que
+   * unas migas de pan que repiten destinos del menú en otro orden producían un
+   * `falla` diciendo que «el orden de la navegación cambia» en una página donde
+   * el menú es idéntico. Es el patrón más común de la web. */
+  const conMigas = [
+    H("https://e.es/", MENU),
+    H("https://e.es/s/uno", '<nav aria-label="Migas de pan"><a href="/">Inicio</a><a href="/servicios">Servicios</a></nav>' + MENU),
+  ];
+  const f = unCrit(conMigas, "3.2.3");
+  assert.deepEqual(v(f), ["3.2.3/cumple"]);
+  assert.match(f[0].evid[0], /navegación\(es\) que se repiten/);
+
+  // Y el menú que SÍ cambia de orden sigue siendo una barrera.
+  const revuelto = MENU.replace('<a href="/blog">Blog</a><a href="/servicios">Servicios</a>',
+    '<a href="/servicios">Servicios</a><a href="/blog">Blog</a>');
+  assert.deepEqual(v(unCrit([H("https://e.es/", MENU), H("https://e.es/otra", revuelto)], "3.2.3")), ["3.2.3/falla"]);
+
+  // Sin ninguna navegación emparejable no se firma: no se ha comparado nada.
+  const sinPareja = unCrit([
+    H("https://e.es/a", '<nav aria-label="Alfa"><a href="/1">Uno</a><a href="/2">Dos</a></nav>'),
+    H("https://e.es/b", '<nav aria-label="Beta"><a href="/3">Tres</a><a href="/4">Cuatro</a></nav>'),
+  ], "3.2.3");
+  assert.deepEqual(v(sinPareja), ["3.2.3/revisar"]);
+});
+
+test("3.2.4: un tercer nombre no entierra la incoherencia del menú", () => {
+  /* La convivencia se preguntaba del GRUPO: «¿conviven dos cualesquiera de estos
+   * nombres en alguna página?», y bastaba una tarjeta «Leer más» para descartar
+   * el grupo entero. Medido: el mismo menú incoherente pasaba de `revisar` a
+   * `cumple` solo por añadir la tarjeta. */
+  const A = '<nav><a href="/servicios">Servicios</a><a href="/blog">Blog</a></nav>';
+  const B = '<nav><a href="/servicios">Nuestros servicios</a><a href="/blog">Blog</a></nav>';
+  const T = '<main><article><a href="/servicios">Leer más</a></article></main>';
+  assert.deepEqual(v(unCrit([H("https://e.es/a", A), H("https://e.es/b", B)], "3.2.4")), ["3.2.4/revisar"]);
+  assert.deepEqual(v(unCrit([H("https://e.es/a", A), H("https://e.es/b", B + T)], "3.2.4")), ["3.2.4/revisar"]);
+  assert.deepEqual(v(unCrit([H("https://e.es/a", A + T), H("https://e.es/b", B + T)], "3.2.4")), ["3.2.4/revisar"]);
+  // Y el menú coherente con su tarjeta no se acusa: son componentes distintos.
+  assert.deepEqual(v(unCrit([H("https://e.es/a", A + T), H("https://e.es/b", A + T)], "3.2.4")), ["3.2.4/cumple"]);
+});
+
+test("3.2.4: la clase que marca el ítem actual no parte el componente", () => {
+  // `a.nav-link.active` en su página y `a.nav-link` en las demás partía el grupo,
+  // y el criterio decía «Ningún destino se repite» —falso— perdiendo la barrera.
+  const f = unCrit([
+    H("https://e.es/a", '<nav><a class="nav-link active" href="/a">Inicio</a><a class="nav-link" href="/b">B</a></nav>'),
+    H("https://e.es/b", '<nav><a class="nav-link" href="/a">Portada</a><a class="nav-link active" href="/b">B</a></nav>'),
+  ], "3.2.4");
+  assert.deepEqual(v(f), ["3.2.4/falla"]);
+  assert.match(f[0].evid[0], /«Inicio» \/ «Portada»/);
+  // Clases que de verdad distinguen componentes siguen distinguiéndolos.
+  assert.deepEqual(v(unCrit([
+    H("https://e.es/a", '<nav><a class="menu-link" href="/x">Alfa</a></nav><main><a class="card-link" href="/x">Omega</a></main>'),
+    H("https://e.es/b", '<nav><a class="menu-link" href="/x">Alfa</a></nav><main><a class="card-link" href="/x">Omega</a></main>'),
+  ], "3.2.4")), ["3.2.4/cumple"]);
+});
+
+test("3.2.6: el mecanismo que está en dos sitios y en uno común no se ha movido", () => {
+  // Se guardaba solo la PRIMERA aparición de cada tipo: «Contacto» en cabecera y
+  // pie frente a solo pie daba `falla`, y el del pie no se ha movido.
+  assert.deepEqual(v(unCrit([
+    H("https://e.es/a", '<header><a href="/contacto">Contacto</a></header><footer><a href="/contacto">Contacto</a></footer>'),
+    H("https://e.es/b", '<footer><a href="/contacto">Contacto</a></footer>'),
+  ], "3.2.6")), ["3.2.6/cumple-parcial"]);
+  // Mudarse de verdad sigue siendo barrera.
+  assert.deepEqual(v(unCrit([
+    H("https://e.es/a", '<header><a href="/ayuda">Ayuda</a></header>'),
+    H("https://e.es/b", '<footer><a href="/ayuda">Ayuda</a></footer>'),
+  ], "3.2.6")), ["3.2.6/falla"]);
+  // Y una región que el marcado no resuelve deja el criterio a revisión.
+  assert.deepEqual(v(unCrit([
+    H("https://e.es/a", '<nav><a href="/contacto">Contacto</a></nav>'),
+    H("https://e.es/b", '<header><nav><a href="/contacto">Contacto</a></nav></header>'),
+  ], "3.2.6")), ["3.2.6/revisar"]);
+});
+
+test("3.2.6 clasifica por el NOMBRE del enlace, no por su ruta", () => {
+  // `<a href="/contacto/empleo">Trabaja con nosotros</a>` se registraba como
+  // mecanismo de «contacto» y luego se le acusaba de cambiar de sitio.
+  assert.deepEqual(v(unCrit([
+    H("https://e.es/a", '<main><a href="/contacto/empleo">Trabaja con nosotros</a></main><footer><a href="/ayuda">Ayuda</a></footer>'),
+    H("https://e.es/b", '<footer><a href="/ayuda">Ayuda</a><a href="/contacto/empleo">Trabaja con nosotros</a></footer>'),
+  ], "3.2.6")), ["3.2.6/cumple-parcial"]);
+  // Un enlace de icono sin nombre sí se clasifica por el último tramo del destino.
+  assert.deepEqual(v(unCrit([
+    H("https://e.es/a", '<footer><a href="/ayuda"><img src="i.png" alt=""></a></footer>'),
+    H("https://e.es/b", '<footer><a href="/ayuda"><img src="i.png" alt=""></a></footer>'),
+  ], "3.2.6")), ["3.2.6/cumple-parcial"]);
+});
+
+test("2.4.5: un buscador es un campo donde escribir, no una etiqueta", () => {
+  const NAV3 = '<nav><a href="/1">Uno</a><a href="/2">Dos</a><a href="/3">Tres</a></nav>';
+  const dos = (extra) => v(unCrit([H("https://e.es/a", NAV3 + extra), H("https://e.es/b", NAV3 + extra)], "2.4.5"));
+  // Vacíos: no son una vía.
+  assert.deepEqual(dos('<div role="search"></div>'), ["2.4.5/revisar"]);
+  assert.deepEqual(dos('<form action="/buscar"></form>'), ["2.4.5/revisar"]);
+  // Con campo: sí.
+  assert.deepEqual(dos('<div role="search"><input type="text" name="q"></div>'), ["2.4.5/cumple-parcial"]);
+  assert.deepEqual(dos('<form action="/buscar"><input name="q"></form>'), ["2.4.5/cumple-parcial"]);
+  // Un sitemap.xml es para las máquinas; un ancla de la misma página no localiza otra.
+  assert.deepEqual(dos('<footer><a href="/sitemap.xml">RSS y datos</a></footer>'), ["2.4.5/revisar"]);
+  assert.deepEqual(dos('<main><a href="#toc">Índice</a></main>'), ["2.4.5/revisar"]);
+  // Y el mapa web de verdad sigue contando.
+  assert.deepEqual(dos('<footer><a href="/mapa-web">Mapa web</a></footer>'), ["2.4.5/cumple-parcial"]);
 });

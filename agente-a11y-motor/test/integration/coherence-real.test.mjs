@@ -75,7 +75,9 @@ test("un sitio coherente no dispara ninguno de los cuatro criterios", { skip }, 
   const { m } = await sitio(["/", "/servicios", "/contacto"]);
   assert.equal(m["3.2.3"][0].verdict, "cumple", JSON.stringify(m["3.2.3"][0].evid));
   assert.equal(m["3.2.4"][0].verdict, "cumple", JSON.stringify(m["3.2.4"][0].evid));
-  assert.equal(m["2.4.5"][0].verdict, "cumple");
+  // `cumple-parcial` desde v0.39.0: lo detectado es la PRESENCIA de las vías
+  // (un campo de búsqueda, un mapa web, un menú), no que funcionen.
+  assert.equal(m["2.4.5"][0].verdict, "cumple-parcial");
   assert.equal(m["3.2.6"][0].verdict, "cumple-parcial");
 });
 
@@ -104,7 +106,10 @@ test("un destino renombrado → falla 3.2.4 con los dos nombres", { skip }, asyn
 test("la ayuda que se muda del pie a la cabecera → falla 3.2.6", { skip }, async () => {
   const { m } = await sitio(["/", "/ayuda-movida"]);
   assert.equal(m["3.2.6"][0].verdict, "falla", JSON.stringify(m["3.2.6"][0].evid));
-  assert.match(m["3.2.6"][0].evid[0], /cambia de sitio/);
+  // El texto cambió con la revisión: lo que acusa el criterio es que no quede un
+  // sitio COMÚN a todas las páginas que ofrecen el mecanismo.
+  assert.match(m["3.2.6"][0].evid[0], /no aparece en ningún sitio común/);
+  assert.match(m["3.2.6"][0].evid[0], /pie .* cabecera|cabecera .* pie/);
 });
 
 test("regresión: un sitio con la ayuda siempre en el pie no dispara 3.2.6", { skip }, async () => {

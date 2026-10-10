@@ -5200,9 +5200,28 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       if (!enSitioDeContacto) return null;
       return /^tel:/i.test(href) ? "teléfono" : "correo";
     }
+    /* El NOMBRE decide; el destino solo corrobora, y solo si apunta al mecanismo.
+     *
+     * Probando el regex contra el `href` entero, cualquier URL que llevara la
+     * palabra en cualquier segmento se convertía en mecanismo de ayuda: medido,
+     * `<a href="/contacto/empleo">Trabaja con nosotros</a>` quedaba registrado como
+     * mecanismo de «contacto» y después 3.2.6 emitía un `falla` diciendo que ese
+     * mecanismo —que no existe— cambiaba de sitio entre páginas. Una oferta de
+     * empleo no es un mecanismo de ayuda por vivir bajo /contacto/.
+     *
+     * Ahora manda el nombre accesible, que es lo que lee quien usa la página. El
+     * destino solo entra cuando el nombre no dice nada (un enlace de icono) y,
+     * además, solo si la palabra está en el ÚLTIMO segmento de la ruta: `/contacto`
+     * y `/es/ayuda/` sí; `/contacto/empleo` no. */
     for (const a of AYUDA) {
       if (a.tipo === "correo" || a.tipo === "teléfono") continue;
-      if (a.re.test(href) || a.re.test(nombre)) return a.tipo;
+      if (a.re.test(nombre)) return a.tipo;
+    }
+    if (String(nombre || "").trim()) return null;   // tiene nombre y no habla de ayuda
+    const ultimo = String(href || "").split(/[?#]/)[0].replace(/\/+$/, "").split("/").pop() || "";
+    for (const a of AYUDA) {
+      if (a.tipo === "correo" || a.tipo === "teléfono") continue;
+      if (a.re.test(ultimo.replace(/[-_]+/g, " "))) return a.tipo;
     }
     return null;
   }
@@ -5262,9 +5281,30 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
    * propósito: muchos sitios lo derivan del texto del enlace, y entonces cambiaría
    * justo cuando el nombre cambia, que es lo que hay que detectar.
    */
+  /* Las clases de ESTADO no son parte de la identidad del componente.
+   *
+   * Casi todos los menús marcan el ítem de la página actual con una clase, así que
+   * el mismo enlace es `a.nav-link.active` en su propia página y `a.nav-link` en
+   * las demás. Con esas clases dentro de la identidad, el grupo se partía en dos,
+   * ninguna de las mitades llegaba a dos páginas y 3.2.4 emitía «Ningún destino se
+   * repite entre las páginas de la muestra» —falso— perdiendo por el camino la
+   * incoherencia real del menú. Medido con el patrón `.active`, que es universal.
+   *
+   * Se quitan las que marcan «este es el actual» en los vocabularios en los que se
+   * escriben de verdad, incluidas las de las plantillas más usadas (`is-active`,
+   * `uk-active`, `nav-item--current`…). Lo que queda es el componente.
+   */
+  const CLASE_ESTADO = /^(?:is[-_]?|uk[-_]?|js[-_]?|has[-_]?)?(?:active|activo|activa|current|actual|selected|seleccionado|seleccionada|selecionado|aktiboa|on|here|open|abierto|expanded|hover|focus|visited|disabled|deshabilitado)$/i;
+  function esClaseDeEstado(c) {
+    if (CLASE_ESTADO.test(c)) return true;
+    // Variantes con separador de modificador: `nav-item--current`, `menu__link_active`.
+    const ultimo = c.split(/--|__|-{1}|_{1}/).pop();
+    return !!ultimo && ultimo !== c && CLASE_ESTADO.test(ultimo);
+  }
   function componenteDe(el) {
     const t = tagOf(el);
-    const cs = (el.getAttribute("class") || "").trim().split(/\s+/).filter(Boolean).sort();
+    const cs = (el.getAttribute("class") || "").trim().split(/\s+/)
+      .filter(Boolean).filter(function (c) { return !esClaseDeEstado(c); }).sort();
     return cs.length ? t + "." + cs.join(".") : t;
   }
   /**
@@ -5336,7 +5376,23 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         if (!href) return;
         items.push({ href: href, name: nombreDe(a), locator: loc(a) });
       });
-      if (items.length) navs.push({ locator: loc(nav), label: nombreDe(nav) || (nav.getAttribute("aria-label") || ""), items: items });
+      if (items.length) navs.push({
+        locator: loc(nav),
+        label: nombreDe(nav) || (nav.getAttribute("aria-label") || ""),
+        /* La etiqueta EXPLÍCITA, aparte: es la que sirve para emparejar un `nav`
+         * con el suyo en otra página. `label` cae al texto del propio `nav` cuando
+         * no hay `aria-label`, y ese texto son los enlaces concatenados: usarlo
+         * como clave hace que unas migas de pan no se emparejen nunca con otras,
+         * porque su contenido cambia en cada página. */
+        etiqueta: (nav.getAttribute("aria-label") || "").trim() ||
+          (function () {
+            const id = nav.getAttribute("aria-labelledby");
+            if (!id) return "";
+            const r = doc.getElementById(id.split(/\s+/)[0]);
+            return r ? (r.textContent || "").replace(/\s+/g, " ").trim() : "";
+          })(),
+        items: items
+      });
     });
 
     // Todos los enlaces de la página, en orden: identidad para 3.2.4 y 3.2.6.
@@ -5348,27 +5404,60 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       enlaces.push({ href: href, raw: raw, name: nombreDe(a), locator: loc(a), comp: componenteDe(a), region: regionDe(a), orden: enlaces.length });
     });
 
-    // Ayuda: mecanismos reconocibles, en el orden en que aparecen.
+    /* Ayuda: mecanismos reconocibles, TODAS sus apariciones por región.
+     *
+     * Se guardaba solo la PRIMERA aparición de cada tipo, en orden de DOM, con su
+     * región. Medido: una página con «Contacto» en la cabecera y también en el pie
+     * registraba «cabecera», y otra que solo lo tiene en el pie registraba «pie»;
+     * 3.2.6 emitía entonces un `falla` diciendo que el mecanismo cambia de sitio,
+     * cuando el del pie está en el mismo sitio en las dos. Lo que hace falta para
+     * comparar no es dónde aparece primero, sino en qué sitios aparece. */
     const ayuda = [];
     enlaces.forEach(function (e) {
       const t = tipoAyuda(e.name, e.raw, e.region);
-      if (t && !ayuda.some(function (x) { return x.tipo === t; })) {
-        ayuda.push({ tipo: t, name: e.name, href: e.href, locator: e.locator, region: e.region, orden: e.orden });
-      }
+      if (!t) return;
+      const r = e.region || "otra";
+      if (ayuda.some(function (x) { return x.tipo === t && x.region === r; })) return;
+      ayuda.push({ tipo: t, name: e.name, href: e.href, locator: e.locator, region: r, orden: e.orden });
     });
 
     // Vías de localización (2.4.5).
     // OJO: visible, como el resto de la huella. Sin el filtro, un buscador dentro
     // de un menú móvil con `display:none` contaba como vía de localización y
     // empujaba 2.4.5 a «cumple» con algo que el usuario no puede usar.
-    const buscador = Array.prototype.slice.call(doc.querySelectorAll('input[type=search],[role=search]'))
-      .some(function (el) { return !ocultoEl(el, win); }) ||
+    /* Un buscador es un CAMPO donde escribir, no una etiqueta que lo anuncie.
+     *
+     * Bastaba un `[role=search]` vacío, o un `<form>` sin un solo control cuyo
+     * `action` o `class` llevara la palabra «buscar», para que 2.4.5 contara una
+     * vía de localización. Medido: `<div role="search"></div>` más un menú de tres
+     * enlaces daba «El sitio ofrece 2 vías… buscador». Ahora el contenedor tiene
+     * que tener dentro algo donde se pueda escribir y visible, que es lo que hace
+     * falta para localizar una página. */
+    const conCampo = function (el) {
+      if (!el || ocultoEl(el, win)) return false;
+      const campos = el.querySelectorAll ? el.querySelectorAll("input:not([type=hidden]),textarea,select,[contenteditable=true],[role=searchbox],[role=combobox]") : [];
+      return Array.prototype.slice.call(campos).some(function (c) { return !ocultoEl(c, win); });
+    };
+    const buscador =
+      Array.prototype.slice.call(doc.querySelectorAll("input[type=search]")).some(function (el) { return !ocultoEl(el, win); }) ||
+      Array.prototype.slice.call(doc.querySelectorAll("[role=search]")).some(conCampo) ||
       Array.prototype.slice.call(doc.querySelectorAll("form")).some(function (f) {
-        if (ocultoEl(f, win)) return false;
+        if (!conCampo(f)) return false;
         return /buscar|buscador|search|busqueda|búsqueda|procura|bilatu|搜索|搜寻|搜尋|查询|查詢/i.test((f.getAttribute("action") || "") + " " + (f.id || "") + " " + (f.className || "") + " " + (f.getAttribute("role") || ""));
       });
-    const mapaWeb = enlaces.some(function (e) { return MAPA_RE.test(e.name) || MAPA_RE.test(e.href); });
-    const indice = enlaces.some(function (e) { return INDICE_RE.test(e.name); });
+    /* `sitemap.xml` es para las máquinas, no una vía para localizar una página.
+     * Contaba como mapa web porque `MAPA_RE` casa con «sitemap» en el `href`. */
+    const mapaWeb = enlaces.some(function (e) {
+      if (/sitemap[^/]*\.xml(\?|#|$)/i.test(e.href || "")) return false;
+      return MAPA_RE.test(e.name) || MAPA_RE.test(e.href);
+    });
+    /* Un «Índice» que apunta a un ancla DE LA MISMA PÁGINA es el sumario del
+     * artículo, no un índice del sitio: no sirve para localizar otra página. */
+    const indice = enlaces.some(function (e) {
+      // Un ancla de la MISMA página no sirve para localizar otra página.
+      if (/^#/.test(String(e.raw || "").trim())) return false;
+      return INDICE_RE.test(e.name);
+    });
     const navegacion = navs.some(function (n) { return n.items.length >= 3; });
 
     return {
@@ -5408,6 +5497,35 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     return out;
   }
 
+  /* Cada navegación se compara CON LA SUYA, no todas revueltas en una.
+   *
+   * `seqNav` concatena todos los `nav` de la página en una sola secuencia, y eso
+   * convierte el patrón más común de la web en una barrera inventada: unas migas
+   * de pan repiten destinos del menú en otro orden («Inicio → Servicios» frente a
+   * «Inicio → Blog → Servicios»), así que 3.2.3 emitía un `falla` diciendo que el
+   * orden de la navegación cambia en una página donde el menú no se ha movido un
+   * píxel. Medido con un menú idéntico en las dos páginas.
+   *
+   * 3.2.3 habla de los mecanismos de navegación que SE REPITEN: el menú con el
+   * menú, las migas con las migas. La clave de emparejamiento es la etiqueta
+   * accesible del `nav` —que es justo lo que distingue «Principal» de «Migas de
+   * pan»— y, si no la tiene, su locator, que en una plantilla es estable. */
+  function claveNav(n) {
+    const et = String((n && n.etiqueta) || "").replace(/\s+/g, " ").trim().toLowerCase();
+    return et || String((n && n.locator) || "nav");
+  }
+  function navsPorClave(h) {
+    const m = {};
+    (h.navs || []).forEach(function (n) {
+      const k = claveNav(n);
+      // Dos navs con la misma clave en una página: se concatenan, que es lo que
+      // hacía antes para TODOS, y aquí sí es lo correcto.
+      if (!m[k]) m[k] = [];
+      n.items.forEach(function (it) { if (m[k].indexOf(it.href) === -1) m[k].push(it.href); });
+    });
+    return m;
+  }
+
   /** 3.2.3 Navegación coherente. */
   function analyzeNavConsistency(huellas) {
     const conNav = (huellas || []).filter(function (h) { return seqNav(h).length >= 2; });
@@ -5439,30 +5557,47 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
      * se comparan todos los pares. Con muestras de quince páginas son ciento cinco
      * comparaciones de listas cortas: nada. */
     const base = conNav[0], seqBase = seqNav(base);
+    const porPagina = conNav.map(function (h) { return { h: h, navs: navsPorClave(h) }; });
     const problemas = [];
     const vistos = {};
-    for (let i = 0; i < conNav.length; i++) {
-      for (let j = i + 1; j < conNav.length; j++) {
-        const inv = ordenRelativo(seqNav(conNav[i]), seqNav(conNav[j]));
-        if (!inv) continue;
-        // Una misma inversión aparece en varios pares: se cuenta una vez, y con las
-        // dos páginas que la demuestran.
-        const clave = inv.antes + "|" + inv.despues;
-        if (vistos[clave]) continue;
-        vistos[clave] = 1;
-        problemas.push({ pagina: conNav[j].url, contra: conNav[i].url, inv: inv });
+    const comparadas = {};     // qué navegaciones se han llegado a comparar
+    for (let i = 0; i < porPagina.length; i++) {
+      for (let j = i + 1; j < porPagina.length; j++) {
+        const A = porPagina[i], B = porPagina[j];
+        Object.keys(A.navs).forEach(function (k) {
+          if (!B.navs[k]) return;                       // esa navegación no está en la otra página
+          comparadas[k] = 1;
+          const inv = ordenRelativo(A.navs[k], B.navs[k]);
+          if (!inv) return;
+          // Una misma inversión aparece en varios pares: se cuenta una vez, y con
+          // las dos páginas que la demuestran.
+          const clave = k + "|" + inv.antes + "|" + inv.despues;
+          if (vistos[clave]) return;
+          vistos[clave] = 1;
+          problemas.push({ nav: k, pagina: B.h.url, contra: A.h.url, inv: inv });
+        });
       }
     }
-    if (!problemas.length) {
-      return [F("3.2.3", "cumple", null, [
-        "La navegación repetida mantiene el mismo orden relativo en las " + conNav.length + " páginas de la muestra que la tienen (" +
-        seqBase.slice(0, 8).map(etiqueta).join(" → ") + (seqBase.length > 8 ? " → …" : "") + ")."
+    if (problemas.length) {
+      return [F("3.2.3", "falla", "moderada", problemas.slice(0, 5).map(function (p) {
+        return "En " + (p.pagina || "(página)") + ", dentro de la navegación «" + p.nav + "», el orden cambia: " + etiqueta(p.inv.despues) +
+          " aparece antes que " + etiqueta(p.inv.antes) + ", al revés que en " + (p.contra || base.url || "otra página de la muestra") + ".";
+      }), problemas.slice(0, 8).map(function (p) { return { locator: p.pagina || "(página)", name: "orden alterado en «" + p.nav + "»" }; }))];
+    }
+    /* Y si no se ha podido emparejar NINGUNA navegación entre páginas, no hay nada
+     * comparado: decirlo, en vez de firmar «mantiene el mismo orden relativo». */
+    const nComparadas = Object.keys(comparadas).length;
+    if (!nComparadas) {
+      return [F("3.2.3", "revisar", null, [
+        "Ninguna navegación se repite entre las " + conNav.length + " páginas de la muestra con la misma etiqueta o el mismo selector, así que no se ha podido comparar ningún orden. " +
+        "Puede ser que cada plantilla monte su menú de otra manera: compruébalo a mano."
       ])];
     }
-    return [F("3.2.3", "falla", "moderada", problemas.slice(0, 5).map(function (p) {
-      return "En " + (p.pagina || "(página)") + " el orden de la navegación cambia: " + etiqueta(p.inv.despues) +
-        " aparece antes que " + etiqueta(p.inv.antes) + ", al revés que en " + (p.contra || base.url || "otra página de la muestra") + ".";
-    }), problemas.slice(0, 8).map(function (p) { return { locator: p.pagina || "(página)", name: "orden alterado" }; }))];
+    return [F("3.2.3", "cumple", null, [
+      "Las " + nComparadas + " navegación(es) que se repiten entre páginas (" + Object.keys(comparadas).slice(0, 4).join(", ") +
+      ") mantienen el mismo orden relativo en las " + conNav.length + " páginas de la muestra que las tienen (" +
+      seqBase.slice(0, 8).map(etiqueta).join(" → ") + (seqBase.length > 8 ? " → …" : "") + ")."
+    ])];
   }
 
   /**
@@ -5496,9 +5631,15 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         if (!nom) return;
         const k = clave(e.href, e.comp || e.locator);
         if (!porHref[k]) porHref[k] = { href: e.href, region: e.region, comp: e.comp || e.locator, nombres: {}, locator: e.locator };
-        if (!porHref[k].nombres[nom]) porHref[k].nombres[nom] = { crudo: e.name, paginas: [] };
+        if (!porHref[k].nombres[nom]) porHref[k].nombres[nom] = { crudo: e.name, paginas: [], regiones: [] };
         const p = porHref[k].nombres[nom].paginas;
         if (p.indexOf(h.url) === -1) p.push(h.url);
+        // La región DE CADA NOMBRE, no solo la del primer enlace del grupo: es lo
+        // que separa el ítem del menú de la tarjeta del contenido cuando la página
+        // tiene landmarks. Sin landmarks todos caen en «otra» y no distingue nada,
+        // que es por lo que no puede ser parte de la clave del grupo.
+        const rs = porHref[k].nombres[nom].regiones;
+        if (rs.indexOf(e.region || "otra") === -1) rs.push(e.region || "otra");
         // Para poder decir, sin acusar, que un destino se nombra distinto según
         // desde dónde se enlace: es normal, pero conviene saberlo.
         if (!regionesPorHref[e.href]) regionesPorHref[e.href] = {};
@@ -5519,34 +5660,103 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       });
       return Object.keys(paginas).length >= 2;
     });
+    /* La convivencia es de un PAR de nombres, no del grupo entero.
+     *
+     * Preguntando «¿conviven dos cualesquiera de estos nombres en alguna página?»
+     * y descartando el grupo completo cuando la respuesta es sí, un tercer nombre
+     * entierra una incoherencia real. Medido: un destino que el menú llama
+     * «Servicios» en una página y «Nuestros servicios» en otra se detecta
+     * correctamente… hasta que una de esas páginas añade una tarjeta «Leer más» al
+     * mismo destino. «Leer más» convive con «Nuestros servicios», el grupo entero
+     * se descartaba, y el criterio pasaba de `revisar` a `cumple`. Añadir una
+     * tarjeta no arregla un menú incoherente.
+     *
+     * Así que se comparan los PARES: el par que convive en alguna página son dos
+     * componentes distintos y no se compara; el par que nunca convive sí. */
+    const sinComparar = [];
+    const comparados = [];
     comunes.forEach(function (k) {
       const g = porHref[k];
       const noms = Object.keys(g.nombres);
-      if (noms.length < 2) return;
-      /* Dos nombres que CONVIVEN en una misma página no son una identificación
-       * incoherente: son dos enlaces distintos.
+      if (noms.length < 2) { comparados.push(k); return; }   // un solo nombre: coherente
+      const conviven = function (a, b) {
+        return g.nombres[a].paginas.some(function (u) { return g.nombres[b].paginas.indexOf(u) !== -1; });
+      };
+      /* Convivir acredita que ese nombre es de OTRO componente, así que sale del
+       * grupo — no solo de ese par.
        *
-       * Esta comprobación ya estaba, con el comentario correcto y la pregunta
-       * equivocada: preguntaba si algún nombre se ve en alguna página donde el otro no
-       * esté, y eso es verdad en cuanto un nombre está en todas las páginas y el otro
-       * solo en la portada — que es justo el caso del menú y la tarjeta. Lo que hay que
-       * preguntar es lo que decía el comentario: ¿hay ALGUNA página donde se vean los
-       * dos? Si la hay, son dos componentes, y comparar sus nombres no mide nada. */
-      const convivenEnAlguna = noms.some(function (a) {
-        return noms.some(function (b) {
-          if (a === b) return false;
-          return g.nombres[a].paginas.some(function (u) { return g.nombres[b].paginas.indexOf(u) !== -1; });
-        });
+       * Con los pares a secas, el nombre de la tarjeta («Leer más») convive con el
+       * del menú en la página donde están los dos, pero NO con el nombre que el
+       * menú tiene en la otra página, así que esa pareja se comparaba y el
+       * criterio acusaba al par menú-contra-tarjeta: dos componentes distintos,
+       * que es justo lo que este bloque existe para no hacer. Quitando del grupo
+       * el nombre que convive, queda el componente que se repite entre páginas —el
+       * menú— y se compara consigo mismo, que es lo que pide el criterio.
+       *
+       * Cuando dos nombres conviven, el que se va es el que aparece en MENOS
+       * páginas: el menú está en todas, la tarjeta en unas pocas. Si empatan no se
+       * puede decidir cuál es el componente que se repite, y el grupo se queda sin
+       * comparar en vez de acusar a ciegas. */
+      const nPaginas = function (n) { return g.nombres[n].paginas.length; };
+      const regionesDeNombre = function (n) { return g.nombres[n].regiones || ["otra"]; };
+
+      /* Primero la REGIÓN, que es el dato bueno cuando existe.
+       *
+       * Si los nombres de este destino se reparten por regiones —el menú en
+       * «navegación», la tarjeta en «contenido»— entonces están separados por algo
+       * objetivo y se comparan solo entre los de la misma región: el menú consigo
+       * mismo. Eso resuelve el caso que la convivencia no sabe resolver, porque
+       * con dos páginas el menú y la tarjeta empatan a una página cada uno. */
+      let vivos = null;
+      const porRegion = {};
+      noms.forEach(function (n) {
+        regionesDeNombre(n).forEach(function (r) { (porRegion[r] = porRegion[r] || []).push(n); });
       });
-      if (convivenEnAlguna) return;
-      // ¿Uno contiene a otro? Entonces es matiz, no contradicción.
-      const anidados = noms.every(function (a) {
-        return noms.some(function (b) { return b !== a && (b.indexOf(a) !== -1 || a.indexOf(b) !== -1); });
+      const regionesUtiles = Object.keys(porRegion).filter(function (r) { return r !== "otra" && porRegion[r].length >= 2; });
+      if (Object.keys(porRegion).filter(function (r) { return r !== "otra"; }).length > 1 && regionesUtiles.length) {
+        // Hay señal de región Y alguna región con dos nombres que comparar.
+        vivos = porRegion[regionesUtiles[0]];
+      }
+
+      /* Y si la región no separa nada (un sitio sin landmarks: todo «otra»), queda
+       * la convivencia: un nombre que se ve en la MISMA página que otro es de otro
+       * componente, así que sale del grupo. El que se va es el que aparece en menos
+       * páginas —el menú está en todas, la tarjeta en unas pocas—; si empatan, no se
+       * puede decidir y el grupo se queda sin comparar en vez de acusar a ciegas. */
+      let empate = false;
+      if (!vivos) {
+        vivos = noms.slice();
+        for (;;) {
+          let par = null;
+          for (let i = 0; i < vivos.length && !par; i++) {
+            for (let j = i + 1; j < vivos.length && !par; j++) {
+              if (conviven(vivos[i], vivos[j])) par = [vivos[i], vivos[j]];
+            }
+          }
+          if (!par) break;
+          if (nPaginas(par[0]) === nPaginas(par[1])) { empate = true; break; }
+          const fuera = nPaginas(par[0]) < nPaginas(par[1]) ? par[0] : par[1];
+          vivos = vivos.filter(function (n) { return n !== fuera; });
+        }
+      }
+      if (empate || vivos.length < 2) { sinComparar.push(g.href); return; }
+      const pares = [];
+      for (let i = 0; i < vivos.length; i++) {
+        for (let j = i + 1; j < vivos.length; j++) pares.push([vivos[i], vivos[j]]);
+      }
+      if (!pares.length) { sinComparar.push(g.href); return; }
+      comparados.push(k);
+      // Un par «anidado» (uno contiene al otro) es matiz; uno sin nada en común,
+      // contradicción. El grupo se clasifica por el par PEOR que se haya comparado.
+      const contradice = pares.filter(function (par) {
+        return par[1].indexOf(par[0]) === -1 && par[0].indexOf(par[1]) === -1;
       });
+      const usados = (contradice.length ? contradice : pares)[0];
       const donde = " (" + g.comp + (g.region && g.region !== "otra" ? ", en " + g.region : "") + ")";
-      const detalle = g.href + donde + " → " + noms.map(function (n) { return "«" + g.nombres[n].crudo + "»"; }).join(" / ");
-      (anidados ? revisiones : fallas).push({ href: g.href, detalle: detalle, locator: g.locator });
+      const detalle = g.href + donde + " → " + usados.map(function (n) { return "«" + g.nombres[n].crudo + "»"; }).join(" / ");
+      (contradice.length ? fallas : revisiones).push({ href: g.href, detalle: detalle, locator: g.locator });
     });
+
     /* Un destino nombrado distinto SEGÚN DESDE DÓNDE se enlace no es una falla de
      * 3.2.4 —son componentes distintos— pero sí es algo que conviene saber, así que se
      * dice sin acusar y sin cambiar el veredicto. */
@@ -5573,10 +5783,22 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       ? " " + porRegiones.length + " destino(s) se nombran distinto según desde dónde se enlacen (menú, pie o contenido): son componentes distintos, no una identificación incoherente, pero ahí están: " +
         porRegiones.slice(0, 3).join(", ") + "."
       : "";
+    /* La cuenta de la conformidad es la de lo COMPARADO, no la de lo visto.
+     *
+     * Decía «Los N destino(s) … se identifican siempre con el mismo nombre» con N =
+     * todos los destinos repetidos, incluidos los que se habían descartado por
+     * convivencia sin comparar nada. Ahora la frase cuenta los comparados y, si ha
+     * quedado alguno fuera, lo dice. */
+    const colaSinComparar = sinComparar.length
+      ? " Otros " + sinComparar.length + " destino(s) no se han comparado: sus nombres conviven en una misma página, así que son componentes distintos que van al mismo sitio (" +
+        sinComparar.slice(0, 3).join(", ") + ")."
+      : "";
     if (!out.length) {
-      out.push(comunes.length
-        ? F("3.2.4", "cumple", null, ["Los " + comunes.length + " destino(s) que aparecen en dos o más páginas de la muestra, dentro de una misma región, se identifican siempre con el mismo nombre." + nota])
-        : F("3.2.4", "revisar", null, ["Ningún destino se repite entre las páginas de la muestra (" + (huellas || []).length + " página(s)): no hay nada que comparar, así que la coherencia de identificación NO se ha comprobado." + nota]));
+      out.push(comparados.length
+        ? F("3.2.4", "cumple", null, ["Los " + comparados.length + " destino(s) que aparecen en dos o más páginas de la muestra, dentro de una misma región, se identifican siempre con el mismo nombre." + colaSinComparar + nota])
+        : F("3.2.4", "revisar", null, [(comunes.length
+            ? "Ninguno de los " + comunes.length + " destino(s) repetidos entre páginas se ha podido comparar: en todos ellos los nombres conviven en una misma página, así que son componentes distintos. La coherencia de identificación NO se ha comprobado."
+            : "Ningún destino se repite entre las páginas de la muestra (" + (huellas || []).length + " página(s)): no hay nada que comparar, así que la coherencia de identificación NO se ha comprobado.") + nota]));
     }
     return out;
   }
@@ -5618,12 +5840,47 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       });
     });
 
-    const movidos = Object.keys(porTipo).filter(function (t) { return Object.keys(porTipo[t]).length > 1; });
+    /* «Cambia de sitio» es que NO HAYA NINGÚN sitio común, no que haya varios.
+     *
+     * La comprobación era «¿aparece este tipo en más de una región?» y eso acusa a
+     * dos marcados correctos: una página con el mecanismo en la cabecera Y en el
+     * pie frente a otra que solo lo tiene en el pie (el del pie no se ha movido), y
+     * cualquier sitio cuyas plantillas difieran en el envoltorio. Lo que de verdad
+     * contradice 3.2.6 es que no quede un sitio donde el mecanismo esté en TODAS
+     * las páginas que lo ofrecen. */
+    const regionesDe = function (h, t) {
+      return (h.ayuda || []).filter(function (a) { return a.tipo === t; }).map(function (a) { return a.region || "otra"; });
+    };
+    /* Y hay regiones que el marcado NO resuelve: un `<nav>` suelto, sin landmark
+     * que lo envuelva, puede estar pintado arriba, abajo o en un lateral, y «otra»
+     * es literalmente «no se sabe». Comparar esas con una región concreta no
+     * decide nada, así que el criterio queda a revisión en vez de acusar. */
+    const AMBIGUAS = { "navegación": 1, otra: 1 };
+    const movidos = [], dudosos = [];
+    Object.keys(porTipo).forEach(function (t) {
+      const paginas = conAyuda.filter(function (h) { return regionesDe(h, t).length; });
+      if (paginas.length < 2) return;
+      let comun = null;
+      paginas.forEach(function (h) {
+        const rs = regionesDe(h, t);
+        comun = comun === null ? rs.slice() : comun.filter(function (r) { return rs.indexOf(r) !== -1; });
+      });
+      if (comun.length) return;                               // hay un sitio común: no se ha movido
+      const hayAmbigua = paginas.some(function (h) { return regionesDe(h, t).some(function (r) { return AMBIGUAS[r]; }); });
+      (hayAmbigua ? dudosos : movidos).push({ tipo: t, paginas: paginas });
+    });
+    const dondeEsta = function (x) {
+      return x.paginas.slice(0, 3).map(function (h) { return regionesDe(h, x.tipo).join("+") + " en " + (h.url || "(página)"); }).join(" · ");
+    };
     if (movidos.length) {
-      return [F("3.2.6", "falla", "moderada", movidos.slice(0, 4).map(function (t) {
-        const regs = porTipo[t];
-        return "El mecanismo de ayuda «" + t + "» cambia de sitio entre páginas: " +
-          Object.keys(regs).map(function (r) { return r + " en " + regs[r].slice(0, 3).map(function (u) { return u || "(página)"; }).join(", "); }).join(" · ") + ".";
+      return [F("3.2.6", "falla", "moderada", movidos.slice(0, 4).map(function (x) {
+        return "El mecanismo de ayuda «" + x.tipo + "» no aparece en ningún sitio común a todas las páginas que lo ofrecen: " + dondeEsta(x) + ".";
+      }))];
+    }
+    if (dudosos.length) {
+      return [F("3.2.6", "revisar", null, dudosos.slice(0, 4).map(function (x) {
+        return "El mecanismo de ayuda «" + x.tipo + "» no coincide de región entre páginas (" + dondeEsta(x) +
+          "), pero al menos una de esas regiones no la resuelve el marcado —un <code>&lt;nav&gt;</code> sin landmark que lo envuelva, o contenido sin región— así que no se puede decidir desde aquí si está en el mismo sitio. Míralo en pantalla.";
       }))];
     }
 
@@ -5650,8 +5907,19 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     }
 
     const tipos = Object.keys(porTipo);
+    // El sitio COMÚN, no el primero que se vio: con el mecanismo en la cabecera y
+    // en el pie, nombrar solo «cabecera» describe mal lo que se ha comprobado.
+    const comunDe = function (t) {
+      const paginas = conAyuda.filter(function (h) { return regionesDe(h, t).length; });
+      let c = null;
+      paginas.forEach(function (h) {
+        const rs = regionesDe(h, t);
+        c = c === null ? rs.slice() : c.filter(function (r) { return rs.indexOf(r) !== -1; });
+      });
+      return (c && c.length) ? c.join(" y ") : (Object.keys(porTipo[t])[0] || "otra");
+    };
     const ev = ["Los mecanismos de ayuda (" + tipos.join(", ") + ") aparecen siempre en la misma parte de la página (" +
-      tipos.map(function (t) { return t + " → " + Object.keys(porTipo[t])[0]; }).join(", ") + ") en las " + conAyuda.length + " páginas que los ofrecen."];
+      tipos.map(function (t) { return t + " → " + comunDe(t); }).join(", ") + ") en las " + conAyuda.length + " páginas que los ofrecen."];
     const faltan = (huellas || []).filter(function (h) { return !(h.ayuda || []).length; });
     if (faltan.length) ev.push(faltan.length + " página(s) de la muestra no ofrecen ninguno; el criterio no les aplica, pero comprueba que sea intencionado.");
     return [F("3.2.6", "cumple-parcial", null, ev)];
@@ -5669,7 +5937,20 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     const ETQ = { buscador: "buscador", mapaWeb: "mapa web", indice: "índice o directorio", navegacion: "navegación del sitio" };
     const hay = Object.keys(union).filter(function (k) { return union[k]; });
     if (hay.length >= 2) {
-      return [F("2.4.5", "cumple", null, ["El sitio ofrece " + hay.length + " vías para localizar una página: " + hay.map(function (k) { return ETQ[k]; }).join(", ") + "."])];
+      /* `cumple-parcial`, no `cumple`: lo detectado es la PRESENCIA de las vías,
+       * no que funcionen.
+       *
+       * Las cuatro señales son marcado: un campo de búsqueda visible, un enlace
+       * cuyo nombre o destino habla de mapa del sitio, otro que habla de índice, y
+       * una navegación con tres enlaces o más. Que el buscador devuelva resultados
+       * útiles, que el mapa esté completo, o que ese menú de tres ítems lleve de
+       * verdad a todas las páginas —que es lo que piden las técnicas G126 y G185—
+       * no se ve en el marcado y no se ha comprobado. Firmar «el sitio ofrece dos
+       * vías» sobre eso era declarar conforme un mecanismo que nadie ha usado. */
+      return [F("2.4.5", "cumple-parcial", null, [
+        "Se detectan " + hay.length + " vías para localizar una página: " + hay.map(function (k) { return ETQ[k]; }).join(", ") + ". " +
+        "Eso es la presencia de los mecanismos en el marcado, que es la parte automatizable; que funcionen —que el buscador encuentre, que el mapa esté completo, que la navegación lleve a todas las páginas (G126/G185)— hay que usarlos para saberlo. Pruébalos y firma el criterio."
+      ])];
     }
     // Encontrar DOS vías en una sola página sí demuestra que el sitio las ofrece.
     // No encontrarlas, en cambio, no demuestra nada si solo se ha mirado una
@@ -5691,7 +5972,19 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
 
   /** Los cuatro criterios de coherencia sobre la muestra. */
   function analyzeCoherence(huellas) {
-    if (!huellas || !huellas.length) return [];
+    /* Sin huellas no se devuelve una lista VACÍA: se dice que no se ha comparado.
+     *
+     * Era `return []`, y ese es el camino real cuando la capa de la huella se cae
+     * en todas las páginas o está apagada: los cuatro criterios de sitio —2.4.5,
+     * 3.2.3, 3.2.4 y 3.2.6— desaparecían del informe sin una palabra. El export
+     * OAW los rescata como «No evaluado» porque pide todos los criterios, pero
+     * cualquier otro consumidor (la CLI, la extensión, el rollup de la muestra) no
+     * veía nada, y un criterio que no aparece se lee igual que uno conforme. */
+    if (!huellas || !huellas.length) {
+      const porque = "No se ha podido tomar la huella de ninguna página de la muestra, así que los criterios de SITIO no se han comparado: " +
+        "no es que el sitio sea coherente, es que no se ha mirado. Comprueba los errores de la capa de huella y vuelve a ejecutar.";
+      return ["2.4.5", "3.2.3", "3.2.4", "3.2.6"].map(function (n) { return F(n, "revisar", null, [porque]); });
+    }
     return [].concat(
       analyzeMultipleWays(huellas),
       analyzeNavConsistency(huellas),

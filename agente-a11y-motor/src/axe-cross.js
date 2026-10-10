@@ -37,7 +37,23 @@ export function reconcile(engineFallas, axeViolations) {
     if (axeBySC.has(sc)) {
       const rules = axeBySC.get(sc).rules;
       rules.forEach(function (r) { agreedRuleIds.add(r.id); });
-      agreements.push({ sc: sc, title: e.title, sev: e.sev, axeRules: rules });
+      /* «Acuerdo» es que las dos fuentes señalan el mismo CRITERIO, no el mismo
+       * elemento, y eso hay que decirlo donde se lee.
+       *
+       * `agreements` se construye solo porque coincide el número de criterio:
+       * comprobado, el motor acusando a `img.logo` y axe a otro `img` de la
+       * página salen como «acuerdo: 1». No se pueden comparar los elementos aquí
+       * —axe los nombra con su propio selector mínimo y el motor con su ruta
+       * canónica, y casarlos exige la página abierta, que es lo que hace
+       * `audit-run`—, así que lo que se publica es cuántos elementos trae cada
+       * fuente y que la coincidencia NO está comprobada a nivel de elemento. */
+      const nMotor = e.findings.reduce(function (n, f) { return n + ((f.nodes && f.nodes.length) || 0); }, 0);
+      const nAxe = rules.reduce(function (n, r) { return n + (r.nodes || 0); }, 0);
+      agreements.push({
+        sc: sc, title: e.title, sev: e.sev, axeRules: rules,
+        nivel: "criterio",
+        elementos: { motor: nMotor, axe: nAxe, coinciden: null }
+      });
     } else {
       onlyEngine.push({ sc: sc, title: e.title, sev: e.sev });
     }
@@ -57,7 +73,12 @@ export function reconcile(engineFallas, axeViolations) {
     agreements: agreements,
     onlyEngine: onlyEngine,
     onlyAxe: onlyAxe,
-    summary: { acuerdo: agreements.length, soloMotor: onlyEngine.length, soloAxe: onlyAxe.length }
+    summary: {
+      acuerdo: agreements.length, soloMotor: onlyEngine.length, soloAxe: onlyAxe.length,
+      // Para que nadie lea «acuerdo» como «las dos fuentes señalan lo mismo».
+      nivel: "criterio",
+      nota: "El acuerdo es por CRITERIO: las dos fuentes señalan el mismo subcriterio, no necesariamente el mismo elemento. Casar los elementos exige la página abierta (lo hace la orquestación, no esta reconciliación)."
+    }
   };
 }
 
@@ -75,12 +96,25 @@ export async function crossCheck(html, opts) {
   if (!opts || typeof opts.runAxe !== "function") {
     throw new Error("crossCheck necesita opts.runAxe(html) → violations[]");
   }
+  /* Si el motor NO ha llegado a construir el modelo, se dice.
+   *
+   * `understand()` devuelve `null` cuando no hay ni un elemento expuesto (texto
+   * suelto, un comentario, cadena vacía), y aquí se fabricaba `{findings: []}`
+   * que entraba en la reconciliación como si fuera una comprobación completa y
+   * limpia: `soloMotor: 0` se lee «el motor comprobó y no encontró nada», y era
+   * «el motor no miró nada». Sin error, sin aviso y sin contador. */
   const model = understand(html);
+  const motorMiro = !!model;
   const engine = model ? analyze(model) : { summary: null, findings: [] };
   const engineFallas = engine.findings.filter(function (f) { return f.verdict === "falla"; });
   const violations = await opts.runAxe(html);
   const rec = reconcile(engineFallas, violations);
-  return { model: model, engine: engine, axeViolations: violations, reconciliation: rec };
+  if (!motorMiro) {
+    rec.motorSinModelo = true;
+    rec.summary.motorSinModelo = true;
+    rec.summary.nota = "El motor NO ha construido ningún modelo de accesibilidad para este marcado (no hay un solo elemento expuesto), así que «soloMotor: 0» no significa que no haya encontrado nada: significa que no ha mirado nada. " + rec.summary.nota;
+  }
+  return { model: model, motorMiro: motorMiro, engine: engine, axeViolations: violations, reconciliation: rec };
 }
 
 /**
