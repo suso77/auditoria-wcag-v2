@@ -829,8 +829,20 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
          * del `div` con `onclick` y lo del botón vacío. Cada mensaje lleva delante
          * el elemento del que habla, así que no era falso — pero filtrar una fila a
          * lo suyo no se podía. Ahora cada nodo se lleva los suyos. */
-        if (yaEsta) (yaEsta.evid = yaEsta.evid || []).push(o.html);
-        else f.nodes.push(Object.assign({}, o.node, { evid: [o.html] }));
+        /* Y el TIPO de regla también se queda pegado al nodo.
+         *
+         * `f.types` junta los tipos de todo el criterio, y la letra del subcriterio
+         * OAW de 4.1.2 se decide con ellos: un solo deslizador sin `aria-valuenow`
+         * ponía `aria-missing-state` en la lista del criterio y TODAS las filas de
+         * 4.1.2 de la página salían con la letra -B («estados y propiedades»),
+         * incluidos un botón vacío y un div sin nombre, que son -A («nombre y
+         * rol»). Medido en el entregable del sitio de prueba. */
+        if (yaEsta) {
+          (yaEsta.evid = yaEsta.evid || []).push(o.html);
+          if (o.type && (yaEsta.types = yaEsta.types || []).indexOf(o.type) === -1) yaEsta.types.push(o.type);
+        } else {
+          f.nodes.push(Object.assign({}, o.node, { evid: [o.html], types: o.type ? [o.type] : [] }));
+        }
       }
     });
     const critObjs = {};
@@ -7148,6 +7160,23 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   /** Criterios con varias letras posibles: los resuelve `granular()`. */
   const GRANULARES = ["1.1.1", "1.3.1", "4.1.2"];
 
+  /* Qué letra es el CASO GENERAL de cada criterio granular — y de cuáles no lo es
+   * ninguna.
+   *
+   * La cabecera de este módulo dice, con razón, que no se inventan letras y que es
+   * mejor dejar la casilla pendiente «en vez de colocar una -A por defecto que
+   * pasaría por buena». Y luego, cuando ninguna señal decidía, colocaba una -A por
+   * defecto. En 1.1.1 eso es correcto: su -A está documentada como el caso general.
+   * En 1.3.1 NO: su -A es «relación programática campo↔etiqueta, pares
+   * etiqueta/valor», que es un caso concreto, así que marcar ahí un hallazgo que no
+   * se ha podido clasificar afirma algo sobre él que nadie ha comprobado. Lo mismo
+   * en 4.1.2, donde -A es «nombre y rol» y -B «estados y propiedades».
+   *
+   * Medido sobre los hallazgos que produce el motor: todos se deciden por
+   * estructura o por texto, ninguno llega a esta rama. Los que llegan vienen de
+   * otras capas sin tipo de regla, y son justo los que no se pueden clasificar. */
+  const LETRA_GENERAL = { "1.1.1": "A" };
+
   /** Letras válidas de cada criterio granular, con su significado. */
   const LETRAS = {
     "1.1.1": {
@@ -7174,10 +7203,34 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
    * `tag`, `tag#id`, `tag.clase` o `tag[type=…]`; si el nodo trae `tag` propio,
    * ese manda. Nada de esto depende de cómo esté redactado el hallazgo.
    */
+  /* La etiqueta es la del ÚLTIMO tramo del selector, no la del primero.
+   *
+   * Esto leía el primer token, y en un selector descendente el primer token es un
+   * ANTEPASADO. Los hallazgos de axe traen su propio selector mínimo
+   * («main > img:nth-child(7)») y los de medición la ruta canónica («html > body >
+   * table:nth-of-type(1)»), así que:
+   *   · un `img` dentro de `main` se leía como «main» y 1.3.1 recibía la letra -Q
+   *     con el motivo «el nodo es una región, navegación o encabezado» — una
+   *     afirmación falsa sobre el nodo, y la letra decide en qué fila de la
+   *     plantilla oficial acaba la barrera;
+   *   · una tabla con ruta canónica se leía como «html» y perdía la señal
+   *     estructural que le daba su letra -I.
+   * Medido con los cuatro casos. El último tramo es el elemento del que habla el
+   * hallazgo, que es lo que hay que clasificar.
+   */
   function tagDe(node) {
     if (!node) return "";
     if (node.tag) return String(node.tag).toLowerCase();
-    const m = /^([a-z][a-z0-9-]*)/i.exec(String(node.locator || ""));
+    const ultimoTramo = function (sel) {
+      const s = String(sel || "").trim();
+      if (!s) return "";
+      // Los separadores de combinador; el último trozo es el elemento.
+      const partes = s.split(/\s*(?:>|\+|~|\s)\s*/).filter(Boolean);
+      return partes.length ? partes[partes.length - 1] : "";
+    };
+    // La ruta canónica identifica mejor que el locator legible, cuando viene.
+    const fuente = ultimoTramo(node.path) || ultimoTramo(node.locator);
+    const m = /^([a-z][a-z0-9-]*)/i.exec(fuente);
     return m ? m[1].toLowerCase() : "";
   }
 
@@ -7189,6 +7242,13 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   const REGION_ROLES = ["navigation", "main", "banner", "contentinfo", "complementary", "region", "heading", "search", "article"];
   const GRUPO_TAGS = ["fieldset", "legend", "optgroup"];
   const GRUPO_ROLES = ["group", "radiogroup"];
+  /* Un CAMPO de formulario en 1.3.1 es la letra -A por derecho propio: su
+   * definición en la plantilla es «relación programática campo↔etiqueta, pares
+   * etiqueta/valor». Esto no estaba, así que un `input` caía en la rama por
+   * defecto —acertando la letra por casualidad y diciendo «ninguna señal
+   * distingue el caso» sobre un nodo que sí la da—. */
+  const CAMPO_TAGS = ["input", "select", "textarea", "label", "output", "progress", "meter", "form"];
+  const CAMPO_ROLES = ["textbox", "searchbox", "combobox", "listbox", "checkbox", "radio", "switch", "slider", "spinbutton", "option", "form"];
 
   // Tipos de regla del motor que hablan de ESTADOS/propiedades ARIA, no de nombre
   // ni de rol. Es lo que separa 9.4.1.2-B de 9.4.1.2-A sin mirar la redacción.
@@ -7216,6 +7276,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       if (enLista(tag, LISTA_TAGS) || enLista(role, LISTA_ROLES) || enLista("list-no-items", types)) return { letra: "D", motivo: "el nodo es una lista o un elemento de lista" };
       if (enLista(tag, GRUPO_TAGS) || enLista(role, GRUPO_ROLES)) return { letra: "Ñ", motivo: "el nodo es una agrupación de controles" };
       if (enLista(tag, REGION_TAGS) || enLista(role, REGION_ROLES)) return { letra: "Q", motivo: "el nodo es una región, navegación o encabezado" };
+      if (enLista(tag, CAMPO_TAGS) || enLista(role, CAMPO_ROLES)) return { letra: "A", motivo: "el nodo es un campo de formulario o su etiqueta" };
       return null;
     }
 
@@ -7228,6 +7289,58 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     }
 
     return null;
+  }
+
+  /* ── Señal de la REGLA de axe: un hecho, no prosa ──────────────────────────
+   *
+   * Los hallazgos de axe llegan con el id de la regla que saltó (viaja en
+   * `node.name`, que es donde lo pone la orquestación) y eso identifica el caso
+   * con precisión: `list` habla de listas, `th-has-data-cells` de tablas,
+   * `landmark-one-main` de regiones. Es exactamente la clase de señal que este
+   * módulo prefiere al texto, y no se estaba usando: la evidencia de axe está en
+   * INGLÉS («Form elements must have labels») y el léxico de `CLAVES` es español,
+   * así que esos hallazgos no casaban con nada y acababan en la letra por defecto.
+   *
+   * Los ids salen de `axe.getRules()` de la versión instalada (4.13.0), filtrados
+   * por su etiqueta `wcagXYZ`: no hay ninguno inventado. Las reglas que no dicen
+   * de qué caso hablan se dejan fuera a propósito —`aria-hidden-body` o
+   * `p-as-heading` no deciden letra— para que caigan en la rama que lo declara. */
+  const REGLA_AXE = {
+    "1.3.1": {
+      // Listas
+      list: "D", listitem: "D", "definition-list": "D", dlitem: "D",
+      // Tablas
+      "table-fake-caption": "I", "td-has-header": "I", "td-headers-attr": "I", "th-has-data-cells": "I",
+      // Estructura de widgets compuestos: agrupaciones de controles
+      "aria-required-children": "Ñ", "aria-required-parent": "Ñ",
+      // Un párrafo con pinta de encabezado que no se marca como tal es estructura
+      // de encabezados, que es lo que describe la letra -Q.
+      "p-as-heading": "Q"
+    },
+    "4.1.2": {
+      // Nombre y rol
+      "button-name": "A", "input-button-name": "A", "link-name": "A", "select-name": "A",
+      "summary-name": "A", "area-alt": "A", "aria-command-name": "A", "aria-input-field-name": "A",
+      "aria-toggle-field-name": "A", "aria-tab-name": "A", "aria-tooltip-name": "A",
+      label: "A", "frame-title": "A", "frame-title-unique": "A", "aria-roles": "A",
+      "aria-deprecated-role": "A", "nested-interactive": "A",
+      // Estados y propiedades
+      "aria-allowed-attr": "B", "aria-prohibited-attr": "B", "aria-required-attr": "B",
+      "aria-valid-attr": "B", "aria-valid-attr-value": "B", "aria-conditional-attr": "B",
+      "aria-braille-equivalent": "B", "aria-roledescription": "B", "duplicate-id-aria": "B"
+    },
+    "1.1.1": {
+      "image-alt": "A", "input-image-alt": "A", "object-alt": "A", "role-img-alt": "A",
+      "svg-img-alt": "A", "aria-meter-name": "A", "aria-progressbar-name": "A"
+    }
+  };
+  /** La regla de axe que trae el nodo → letra, o null. */
+  function porReglaAxe(crit, node) {
+    const tabla = REGLA_AXE[crit];
+    if (!tabla || !node) return null;
+    const regla = String(node.name || "").trim().toLowerCase();
+    if (!regla || !tabla[regla]) return null;
+    return { letra: tabla[regla], motivo: "la regla de axe que saltó es «" + regla + "»" };
   }
 
   /* ── Señales de texto (solo cuando no hay estructura que mirar) ───────────── */
@@ -7322,11 +7435,30 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     }
 
     if (GRANULARES.indexOf(crit) !== -1) {
-      const est = porEstructura(crit, node, finding.types);
+      /* Los tipos DEL NODO manda sobre los del criterio.
+       *
+       * `finding.types` junta los tipos de todas las reglas que saltaron en ese
+       * criterio, en toda la página. Decidiendo con esa lista, un solo deslizador
+       * sin `aria-valuenow` hacía que TODAS las filas de 4.1.2 salieran con la
+       * letra -B, incluidos un botón vacío y un div sin nombre, que son -A. Cada
+       * fila del informe habla de UN elemento, así que la letra se decide con lo
+       * que saltó en ESE elemento. */
+      const tipos = (node && node.types && node.types.length) ? node.types : finding.types;
+      const est = porEstructura(crit, node, tipos);
       if (est) return { subcriterio: clausula(crit) + "-" + est.letra, via: "estructura", motivo: est.motivo };
+      // La regla de axe antes que el texto: es un hecho y el texto es prosa.
+      const axe = porReglaAxe(crit, node);
+      if (axe) return { subcriterio: clausula(crit) + "-" + axe.letra, via: "regla-axe", motivo: axe.motivo };
       const txt = porTexto(crit, finding);
       if (txt) return { subcriterio: clausula(crit) + "-" + txt.letra, via: "texto", motivo: txt.motivo };
-      return { subcriterio: clausula(crit) + "-A", via: "general", motivo: "ninguna señal distingue el caso: letra general del criterio" };
+      const gen = LETRA_GENERAL[crit];
+      if (gen) return { subcriterio: clausula(crit) + "-" + gen, via: "general", motivo: "ninguna señal distingue el caso: letra general del criterio" };
+      const posibles = Object.keys(LETRAS[crit] || {}).map(function (l) { return "-" + l + " (" + LETRAS[crit][l] + ")"; }).join(", ");
+      return {
+        subcriterio: null, via: "sin-decidir",
+        motivo: "ninguna señal distingue qué caso de " + crit + " es este hallazgo, y este criterio no tiene una letra «general»: " +
+          "asígnala a mano entre " + posibles + "."
+      };
     }
 
     if (MAPA_DIRECTO[crit]) return { subcriterio: MAPA_DIRECTO[crit], via: "directo", motivo: "el criterio tiene un único subcriterio en la plantilla" };
@@ -7351,6 +7483,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   NS.NO_EN_PLANTILLA = NO_EN_PLANTILLA;
   NS.MAPA_DIRECTO = MAPA_DIRECTO;
   NS.GRANULARES = GRANULARES;
+  NS.LETRA_GENERAL = LETRA_GENERAL;
   NS.LETRAS = LETRAS;
   NS.tagDe = tagDe;
   NS.letraOAW = letraOAW;

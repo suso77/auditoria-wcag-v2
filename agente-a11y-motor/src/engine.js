@@ -674,8 +674,20 @@ function analyze(m) {
        * del `div` con `onclick` y lo del botón vacío. Cada mensaje lleva delante
        * el elemento del que habla, así que no era falso — pero filtrar una fila a
        * lo suyo no se podía. Ahora cada nodo se lleva los suyos. */
-      if (yaEsta) (yaEsta.evid = yaEsta.evid || []).push(o.html);
-      else f.nodes.push(Object.assign({}, o.node, { evid: [o.html] }));
+      /* Y el TIPO de regla también se queda pegado al nodo.
+       *
+       * `f.types` junta los tipos de todo el criterio, y la letra del subcriterio
+       * OAW de 4.1.2 se decide con ellos: un solo deslizador sin `aria-valuenow`
+       * ponía `aria-missing-state` en la lista del criterio y TODAS las filas de
+       * 4.1.2 de la página salían con la letra -B («estados y propiedades»),
+       * incluidos un botón vacío y un div sin nombre, que son -A («nombre y
+       * rol»). Medido en el entregable del sitio de prueba. */
+      if (yaEsta) {
+        (yaEsta.evid = yaEsta.evid || []).push(o.html);
+        if (o.type && (yaEsta.types = yaEsta.types || []).indexOf(o.type) === -1) yaEsta.types.push(o.type);
+      } else {
+        f.nodes.push(Object.assign({}, o.node, { evid: [o.html], types: o.type ? [o.type] : [] }));
+      }
     }
   });
   const critObjs = {};

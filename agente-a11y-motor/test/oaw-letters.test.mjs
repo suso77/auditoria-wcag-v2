@@ -28,10 +28,65 @@ test("1.3.1 sobre una lista → -D; sobre un fieldset → -Ñ; sobre nav → -Q"
   assert.equal(letraOAW(f("1.3.1", { locator: "h2.titulo", role: "heading" })).subcriterio, "9.1.3.1-Q");
 });
 
-test("1.3.1 sin señal de estructura cae a -A, y lo admite", () => {
+test("1.3.1 sobre un campo de formulario es la letra -A por estructura", () => {
+  /* Esto caía en la rama por defecto y acertaba la letra por casualidad, con el
+   * motivo «ninguna señal distingue el caso» sobre un nodo que sí la da: la
+   * definición de la -A en la plantilla es «relación programática
+   * campo↔etiqueta, pares etiqueta/valor», que es exactamente un campo. */
   const r = letraOAW(f("1.3.1", { locator: "input.correo", role: "textbox" }));
   assert.equal(r.subcriterio, "9.1.3.1-A");
-  assert.equal(r.via, "general");
+  assert.equal(r.via, "estructura");
+  assert.match(r.motivo, /campo de formulario/);
+});
+
+test("1.3.1 que no se puede clasificar NO recibe una -A por defecto", () => {
+  /* La cabecera del módulo dice que no se inventan letras y que es mejor dejar
+   * la casilla pendiente «en vez de colocar una -A por defecto que pasaría por
+   * buena» — y luego la colocaba. En 1.1.1 la -A está documentada como el caso
+   * general y ahí sí; en 1.3.1 la -A es un caso CONCRETO. */
+  const r = letraOAW(f("1.3.1", { locator: "main > img:nth-child(7)" }));
+  assert.equal(r.subcriterio, null);
+  assert.equal(r.via, "sin-decidir");
+  assert.match(r.motivo, /no tiene una letra «general»/);
+  assert.match(r.motivo, /-I \(tablas/);
+  // 1.1.1 sí tiene letra general documentada.
+  const g = letraOAW(f("1.1.1", { locator: "x" }));
+  assert.equal(g.subcriterio, "9.1.1.1-A");
+  assert.equal(g.via, "general");
+});
+
+test("la etiqueta se lee del ÚLTIMO tramo del selector, no del primero", () => {
+  /* En un selector descendente el primer token es un ANTEPASADO. Los hallazgos
+   * de axe traen su selector mínimo y los de medición la ruta canónica, así que
+   * un `img` dentro de `main` se leía como «main» y 1.3.1 recibía la letra -Q
+   * con el motivo «el nodo es una región» — falso sobre ese nodo—, y una tabla
+   * con ruta canónica se leía como «html» y perdía su letra -I. */
+  assert.equal(tagDe({ locator: "main > img:nth-child(7)" }), "img");
+  assert.equal(tagDe({ locator: "html > body > table:nth-of-type(1)" }), "table");
+  assert.equal(tagDe({ locator: "div.wrap > ul > li" }), "li");
+  assert.equal(tagDe({ locator: "input[type=checkbox]" }), "input");
+  assert.equal(tagDe({ tag: "TD", locator: "main > img" }), "td", "el tag propio manda");
+  // Y la tabla con ruta canónica recupera su letra.
+  const r = letraOAW(f("1.3.1", { locator: "table", path: "html > body > table:nth-of-type(1)" }));
+  assert.equal(r.subcriterio, "9.1.3.1-I");
+});
+
+test("la REGLA de axe decide la letra, que es un hecho y no prosa", () => {
+  /* La evidencia de axe está en inglés y el léxico de texto es español, así que
+   * esos hallazgos no casaban con nada y acababan en la letra por defecto. El id
+   * de la regla viaja en el nodo y dice de qué caso habla. */
+  const deAxe = (crit, regla, loc) => ({ c: { n: crit, t: crit, lvl: "A" }, verdict: "falla",
+    evid: ["axe-core «" + regla + "»: Form elements must have labels"],
+    nodes: [{ locator: loc, name: regla, path: "" }] });
+  const r1 = letraOAW(deAxe("4.1.2", "button-name", "header > button"));
+  assert.equal(r1.subcriterio, "9.4.1.2-A");
+  assert.equal(r1.via, "regla-axe");
+  const r2 = letraOAW(deAxe("4.1.2", "aria-required-attr", "div[role=slider]"));
+  assert.equal(r2.subcriterio, "9.4.1.2-B", "los estados son la letra -B");
+  const r3 = letraOAW(deAxe("1.3.1", "aria-required-children", "div[role=tablist]"));
+  assert.equal(r3.subcriterio, "9.1.3.1-Ñ");
+  // Una regla que no decide el caso no se fuerza.
+  assert.equal(letraOAW(deAxe("1.3.1", "aria-hidden-body", "body")).via, "sin-decidir");
 });
 
 test("regresión: la estructura MANDA sobre lo que diga la redacción", () => {
@@ -256,4 +311,25 @@ test("regresión: la evidencia no pierde los nombres de etiqueta que nombra", ()
     evid: ["La página no tiene <title> en <head> o está vacío."] }]);
   assert.match(out.barreras[0].evidencia, /<title>/);
   assert.match(out.barreras[0].evidencia, /<head>/);
+});
+
+test("la letra se decide con lo que saltó en ESE elemento, no en todo el criterio", () => {
+  /* `finding.types` junta los tipos de todas las reglas del criterio en toda la
+   * página, y la letra de 4.1.2 se decidía con esa lista: un solo deslizador sin
+   * `aria-valuenow` ponía `aria-missing-state` en la lista y TODAS las filas de
+   * 4.1.2 salían con la letra -B («estados y propiedades»), incluidos un botón
+   * vacío y un div sin nombre, que son -A («nombre y rol»). Medido en el
+   * entregable de un sitio de prueba: tres filas, las tres mal salvo una. */
+  const { findings } = analyze(understand(
+    '<div tabindex="0" onclick="f()">Abrir el panel</div>' +
+    '<div role="slider" tabindex="0" aria-label="Volumen"></div>' +
+    "<button></button>"
+  ));
+  const filas = oawExport(findings).barreras.filter((r) => r.criterio === "4.1.2");
+  assert.equal(filas.length, 3);
+  const porElemento = {};
+  filas.forEach((r) => { porElemento[r.elemento] = r.subcriterioOAW; });
+  assert.equal(porElemento["div «Volumen»"], "9.4.1.2-B", "el deslizador sin estado es -B");
+  assert.equal(porElemento["div"], "9.4.1.2-A", "el div sin nombre es -A, no -B");
+  assert.equal(porElemento["button"], "9.4.1.2-A", "el botón vacío es -A, no -B");
 });
