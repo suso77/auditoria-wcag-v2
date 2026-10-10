@@ -64,6 +64,16 @@ const NO_HTML = /\.(pdf|docx?|xlsx?|pptx?|zip|rar|7z|gz|tar|csv|jpe?g|png|gif|we
 export function parseRobots(texto, agente) {
   const reglas = [];
   let aplicando = false;
+  // Las líneas User-agent CONSECUTIVAS forman un solo grupo (RFC 9309 §2.2.1), y
+  // sus reglas valen para todos los agentes nombrados. Antes cada línea
+  // sobreescribía a la anterior, así que en
+  //     User-agent: *
+  //     User-agent: Googlebot
+  //     Disallow: /panel
+  // la última línea ponía `aplicando` en falso y el Disallow se perdía: el
+  // rastreador entraba en /panel, que es justo lo que robots.txt estaba pidiendo
+  // que no tocara. Mientras se encadenan User-agent, el grupo solo suma.
+  let enCabecera = false;
   String(texto || "").split(/\r?\n/).forEach(function (linea) {
     const l = linea.replace(/#.*$/, "").trim();
     if (!l) return;
@@ -72,9 +82,12 @@ export function parseRobots(texto, agente) {
     const clave = m[1].toLowerCase(), valor = m[2].trim();
     if (clave === "user-agent") {
       const ua = valor.toLowerCase();
-      aplicando = (ua === "*" || (agente && ua === String(agente).toLowerCase()));
+      const nos = (ua === "*" || (agente && ua === String(agente).toLowerCase()));
+      aplicando = enCabecera ? (aplicando || nos) : nos;
+      enCabecera = true;
       return;
     }
+    enCabecera = false;
     if (!aplicando) return;
     if (clave === "disallow" || clave === "allow") {
       if (clave === "disallow" && valor === "") return; // "Disallow:" vacío = permite todo
@@ -251,6 +264,20 @@ export async function crawlSite(inicio, opts) {
     const candidatas = [];
     const cola = [{ url: raiz.href, prof: 0 }];
     const saltadas = { robots: 0, destructiva: 0, externa: 0, noHtml: 0 };
+    /* QUÉ se saltó, no solo cuántas. La regla de rutas destructivas es —y debe
+       seguir siendo— conservadora: visitar un GET que borra algo hace daño de
+       verdad, mientras que saltarse una página solo encoge la muestra. Pero
+       medido sobre rutas corrientes, se salta también `/consejos/como-eliminar-
+       manchas` o `/blog/borrar-el-pasado`, y antes eso solo se veía como un
+       número en un contador que nadie lee. Lo mismo con robots.txt, que puede
+       esconder una sección entera del sitio. Ahora se nombran, con tope para no
+       inundar el informe. */
+    const detalle = { robots: [], destructiva: [] };
+    const TOPE_DETALLE = 25;
+    const anotar = function (tipo, url) {
+      saltadas[tipo]++;
+      if (detalle[tipo] && detalle[tipo].length < TOPE_DETALLE && detalle[tipo].indexOf(url) === -1) detalle[tipo].push(url);
+    };
 
     while (cola.length && candidatas.length < max) {
       const actual = cola.shift();
@@ -261,8 +288,8 @@ export async function crawlSite(inicio, opts) {
       if (vistas.has(clave)) continue;
       vistas.add(clave);
 
-      if (NO_VISITAR.test(u.pathname + u.search)) { saltadas.destructiva++; continue; }
-      if (!robots.permite(u.pathname)) { saltadas.robots++; continue; }
+      if (NO_VISITAR.test(u.pathname + u.search)) { anotar("destructiva", u.href); continue; }
+      if (!robots.permite(u.pathname)) { anotar("robots", u.href); continue; }
 
       let datos = null;
       try {
@@ -274,11 +301,23 @@ export async function crawlSite(inicio, opts) {
         datos = await page.evaluate(new Function(EXTRAER));
       } catch (e) {
         errores.push({ url: u.href, error: (e && e.message) || String(e) });
+        // La pausa también después de un error. Sin esto, un sitio que responde
+        // 500 o agota el tiempo se recorría a toda velocidad —justo cuando menos
+        // conviene insistir— y el rastreo dejaba de parecer una auditoría.
+        if (pausa) await page.waitForTimeout(pausa);
         continue;
       }
 
       const ruta = u.pathname + (u.search || "");
-      datos["señales"].esInicio = (u.pathname === "/" || u.pathname === "");
+      /* La portada no siempre vive en «/». Muchísimos sitios arrancan en /es/ o
+         /es/index.html, y con la comprobación de antes NINGUNA página quedaba
+         marcada como inicio: la categoría «Página de inicio» —esencial en
+         WCAG-EM— se declaraba ausente en un sitio que obviamente la tiene, y la
+         muestra salía sin portada. La URL de arranque de la auditoría ES la
+         portada a estos efectos. */
+      const esArranque = (u.href === raiz.href) ||
+        (u.host === raiz.host && u.pathname.replace(/\/+$/, "") === raiz.pathname.replace(/\/+$/, "") && !u.search);
+      datos["señales"].esInicio = (u.pathname === "/" || u.pathname === "" || esArranque);
       candidatas.push({
         url: u.href, ruta: ruta, titulo: datos.titulo, lang: datos.lang,
         plantilla: datos.plantilla, "señales": datos["señales"], profundidad: actual.prof
@@ -292,7 +331,7 @@ export async function crawlSite(inicio, opts) {
           if (d.protocol !== "http:" && d.protocol !== "https:") return;
           if (!mismaRaiz(d, raiz)) { saltadas.externa++; return; }
           if (NO_HTML.test(d.pathname)) { saltadas.noHtml++; return; }
-          if (NO_VISITAR.test(d.pathname + d.search) || noVisitarPorTexto(e.texto)) { saltadas.destructiva++; return; }
+          if (NO_VISITAR.test(d.pathname + d.search) || noVisitarPorTexto(e.texto)) { anotar("destructiva", d.href); return; }
           d.hash = "";
           cola.push({ url: d.href, prof: actual.prof + 1 });
         });
@@ -300,11 +339,24 @@ export async function crawlSite(inicio, opts) {
       if (pausa) await page.waitForTimeout(pausa);
     }
 
+    const nombrar = function (urls, total) {
+      return urls.slice(0, 8).map(function (x) { return x; }).join(", ") + (total > urls.length ? " … (y " + (total - urls.length) + " más)" : (urls.length > 8 ? ", …" : ""));
+    };
+    if (saltadas.destructiva) {
+      avisos.push("No se han visitado " + saltadas.destructiva + " URL por parecer acciones destructivas (cerrar sesión, borrar, anular): " +
+        nombrar(detalle.destructiva, saltadas.destructiva) + ". La regla es deliberadamente prudente, así que puede haber ahí páginas de contenido: " +
+        "si alguna lo es, añádela a la muestra a mano.");
+    }
+    if (saltadas.robots) {
+      avisos.push("robots.txt ha dejado fuera " + saltadas.robots + " URL: " + nombrar(detalle.robots, saltadas.robots) +
+        ". Esa parte del sitio NO está auditada; si entra en el alcance, hay que rastrearla con robots: \"ignorar\" y decirlo en el informe.");
+    }
     if (candidatas.length >= max) avisos.push("Se alcanzó el tope de " + max + " páginas rastreadas: puede haber más sitio sin explorar.");
     return {
       inicio: raiz.href,
       candidatas: candidatas,
       saltadas: saltadas,
+      saltadasDetalle: detalle,
       avisos: avisos,
       errores: errores,
       procedencia: {
@@ -333,7 +385,7 @@ export async function muestrearSitio(inicio, opts) {
     porcentajeAleatorio: opts.porcentajeAleatorio
   });
   return Object.assign({}, sel, {
-    rastreo: { candidatas: r.candidatas.length, saltadas: r.saltadas, avisos: r.avisos, errores: r.errores },
+    rastreo: { candidatas: r.candidatas.length, saltadas: r.saltadas, saltadasDetalle: r.saltadasDetalle, avisos: r.avisos, errores: r.errores },
     procedencia: r.procedencia,
     justificacion: justificarMuestra(sel),
     avisos: (sel.avisos || []).concat(r.avisos)

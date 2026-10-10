@@ -242,3 +242,24 @@ test("sin ni un píxel por debajo, sigue siendo «pasa»", () => {
   assert.equal(r.verdict, "pasa");
   assert.match(detallePixeles(r, "rgb(255 255 255)"), /todo el texto llega al mínimo/);
 });
+
+/* ── El fondo se leía sin mirar su alfa ──
+ *
+ * Con el driver de hoy no pasa: Playwright compone la captura sobre el fondo de
+ * la página y el alfa sale 255 en todos los píxeles (medido). Pero de aquí sale
+ * un ratio de contraste que acaba en un informe con efectos legales, así que si
+ * la captura llegara con transparencia el color leído no sería el que se ve, y
+ * el ratio estaría calculado contra un fondo que nadie tiene delante.
+ */
+test("una captura de fondo con transparencia no se dictamina: se dice", () => {
+  const c = capturas(40, 40, () => BLANCO, filas(), null);
+  // Se translucida la captura del fondo, dejando intactas las dos sondas.
+  for (let i = 3; i < c.fondo.data.length; i += 4) c.fondo.data[i] = 128;
+  const r = analizarPixeles(c, NEGRO);
+  assert.equal(r.determinado, false, JSON.stringify(r).slice(0, 200));
+  assert.match(r.motivo, /transparencia/);
+  assert.match(r.motivo, /fondo inexistente/);
+  // Y el control: la misma captura con alfa 255 sí se dictamina.
+  const limpia = capturas(40, 40, () => BLANCO, filas(), null);
+  assert.equal(analizarPixeles(limpia, NEGRO).determinado, true);
+});

@@ -28,11 +28,104 @@ import { resolverContrastePorPixeles } from "./pixel-contrast.js";
 import { rollupSample } from "./sample-audit.js";
 import { reconcile } from "./axe-cross.js";
 import { cuadernoDeMuestra, findingsDelCuaderno } from "./cuaderno.js";
-import { WCAG22, enClause } from "./engine.js";
+import { WCAG22, enClause, capaQueMide } from "./engine.js";
 import { aplicaCoberturas } from "./verdicts.js";
 
 const WIX = {};
 WCAG22.forEach(function (c) { WIX[c.n] = { t: c.t, lvl: c.lvl }; });
+
+/* ── El barrido de los criterios que nadie nombró ────────────────────────────
+ *
+ * La regla de oro del proyecto dice que un criterio sin comprobar NO puede
+ * exportarse como conforme, y hasta aquí se cumplía criterio a criterio. Lo que
+ * no se comprobaba era el conjunto: si NINGUNA capa emitía un hallazgo para un
+ * criterio, ese criterio simplemente no existía en el informe, y en la plantilla
+ * del IRA eso se imprime «No evaluado» —o peor, se queda en blanco— sin que
+ * nadie haya dicho que no se miró. El silencio y la conformidad se parecen
+ * demasiado en un informe, y esto era silencio puro.
+ *
+ * Medido sobre una página del sitio de pruebas:
+ *   · con las capas POR DEFECTO, once criterios salían sin una sola frase
+ *     (1.2.1, 1.2.2, 1.2.3, 1.4.2, 2.1.4, 2.2.2, 4.1.3 y los cuatro de
+ *     coherencia, que sí los decide `auditSite`);
+ *   · con `capas.render: false` —una opción legítima— eran CUARENTA Y NUEVE de
+ *     los cincuenta y cinco, y el informe no decía en ninguna parte que no se
+ *     hubiera medido nada.
+ *
+ * El barrido no inventa un veredicto: pone `revisar`, que no es conforme, y
+ * explica cuál de las tres cosas pasó. Se alimenta de `CAPA_QUE_MIDE`, que ya
+ * era la única tabla de qué capa mide qué, así que un criterio nuevo entra aquí
+ * solo. */
+
+/** De la prosa de `CAPA_QUE_MIDE` a las banderas de `capas`. */
+const CAPA_POR_PALABRA = [
+  ["píxeles", "pixeles"], ["adaptación", "viewport"], ["dinámico", "dynamic"],
+  ["coherencia", "coherencia"], ["medición", "render"], ["página", "render"]
+];
+function capasDe(n) {
+  const prosa = capaQueMide(n) || "";
+  const out = [];
+  CAPA_POR_PALABRA.forEach(function (par) {
+    if (prosa.indexOf(par[0]) !== -1 && out.indexOf(par[1]) === -1) out.push(par[1]);
+  });
+  return out;
+}
+function critDe(n) { return { n: n, t: (WIX[n] ? WIX[n].t : n), lvl: (WIX[n] ? WIX[n].lvl : "A") }; }
+
+/**
+ * Las banderas de capa de una pasada, con los valores por defecto puestos.
+ *
+ * Vive aquí fuera porque la necesitan dos: `auditRun`, para decidir qué corre, y
+ * el barrido de `auditSite`, para saber qué corrió. Cuando estaba dentro de
+ * `auditRun`, el barrido de sitio leía `opts.capas` en crudo y con las opciones
+ * por defecto —que es el caso normal— creía que NINGUNA capa se había ejecutado.
+ */
+export function capasEfectivas(capas) {
+  return Object.assign({ render: true, viewport: true, dynamic: false, axe: true, huella: true, pixeles: true }, capas || {});
+}
+
+/**
+ * Los criterios de los que no habló nadie, con un `revisar` que dice por qué.
+ *
+ * @param {Array} findings  los hallazgos ya reunidos
+ * @param {object} capas    las banderas de capa de esta pasada
+ * @param {{ sitio?:boolean, omitir?:Array<string> }} [opts]
+ *        `sitio: true` incluye los criterios de coherencia (que una página sola
+ *        no puede decidir y `auditSite` sí).
+ */
+export function criteriosEnSilencio(findings, capas, opts) {
+  opts = opts || {};
+  const dichos = {};
+  (findings || []).forEach(function (f) { if (f && f.c && f.c.n) dichos[f.c.n] = 1; });
+  const out = [];
+  WCAG22.forEach(function (c) {
+    if (dichos[c.n]) return;
+    if (opts.omitir && opts.omitir.indexOf(c.n) !== -1) return;
+    const suyas = capasDe(c.n);
+    const esDeSitio = suyas.indexOf("coherencia") !== -1;
+    // Una página sola no puede dictaminar los criterios de sitio: los decide
+    // `auditSite` cruzando la muestra. Ahí sí se barren.
+    if (esDeSitio && !opts.sitio) return;
+    const corridas = suyas.filter(function (k) {
+      return k === "coherencia" ? !!opts.sitio : !!(capas && capas[k]);
+    });
+    let razon;
+    if (!suyas.length) {
+      razon = "ninguna capa del agente mide este criterio aparte del motor, y el motor no ha encontrado en el marcado nada a lo que aplique: nadie lo ha comprobado.";
+    } else if (!corridas.length) {
+      razon = "la capa que lo mide (" + capaQueMide(c.n) + ") no se ha ejecutado en esta pasada, así que este criterio NO se ha comprobado.";
+    } else {
+      razon = "la capa que lo mide (" + capaQueMide(c.n) + ") sí se ha ejecutado y no ha dicho nada de este criterio: " +
+        "lo más probable es que no haya encontrado contenido al que aplique, pero el agente no lo afirma.";
+    }
+    out.push({
+      c: critDe(c.n), verdict: "revisar", sev: null,
+      evid: [razon + " Queda sin dictamen: «revisar» no es conforme y no puede exportarse como cumplido."],
+      scope: "cobertura", origen: "barrido", en: enClause(c.n)
+    });
+  });
+  return out;
+}
 
 // Gravedad de axe → la nuestra.
 const SEV_AXE = { critical: "crítica", serious: "grave", moderate: "moderada", minor: "leve" };
@@ -161,7 +254,7 @@ function versionAxe() {
  */
 export async function auditRun(target, opts) {
   opts = opts || {};
-  const capas = Object.assign({ render: true, viewport: true, dynamic: false, axe: true, huella: true, pixeles: true }, opts.capas || {});
+  const capas = capasEfectivas(opts.capas);
   const t0 = Date.now();
   const { chromium } = await import("playwright");
   const browser = await chromium.launch(launchOptions(opts.launchOptions));
@@ -322,6 +415,17 @@ export async function auditRun(target, opts) {
     (dynamic && dynamic.avisos || []).forEach(function (a) { avisos.push(a); });
     ((render && render.coberturas) || []).forEach(function (c) { avisos.push(c.detail); });
 
+    /* Y lo último: nombrar los criterios de los que no habló nadie. Va aquí, con
+       todas las capas ya volcadas en `findings`, porque solo entonces se sabe
+       qué quedó en silencio. Los de coherencia no, que los decide `auditSite`. */
+    const silencio = criteriosEnSilencio(findings, capas, { sitio: false });
+    if (silencio.length) {
+      findings = findings.concat(silencio);
+      avisos.push("Hay " + silencio.length + " criterio(s) de los que ninguna capa ha dicho nada en esta página (" +
+        silencio.map(function (f) { return f.c.n; }).join(", ") + "): salen como «revisar» explicando por qué, " +
+        "no en blanco. Un criterio sin comprobar no puede exportarse como conforme.");
+    }
+
     const cuenta = {};
     findings.forEach(function (f) { cuenta[f.verdict] = (cuenta[f.verdict] || 0) + 1; });
 
@@ -448,6 +552,14 @@ export async function auditSite(targets, opts) {
   coherencia.forEach(function (f) { findings.push(Object.assign({ url: "(toda la muestra)" }, f)); });
   deJuicio.forEach(function (f) { findings.push(Object.assign({ url: "(toda la muestra)" }, f)); });
 
+  /* El barrido del SITIO. El de cada página ya habló de lo suyo, pero los
+     criterios de coherencia solo se pueden decidir aquí, y si `analyzeCoherence`
+     no emitiera nada —muestra de una sola página, huellas que no se pudieron
+     sacar— se quedaban en blanco en el agregado. Se barre sobre lo ya reunido,
+     con los de sitio incluidos esta vez. */
+  const silencioSitio = criteriosEnSilencio(findings, Object.assign(capasEfectivas((opts || {}).capas), { coherencia: true }), { sitio: true });
+  silencioSitio.forEach(function (f) { findings.push(Object.assign({ url: "(toda la muestra)" }, f)); });
+
   // El rollup necesita ver la coherencia y el cuaderno en todas las páginas para
   // que el peor veredicto del criterio sea el del sitio, no el de una suelta.
   const pages = paginas.map(function (p) {
@@ -461,7 +573,7 @@ export async function auditSite(targets, opts) {
       // página caída y el guardia de «muestra incompleta» no se disparaba nunca.
       error: p.error || null,
       analizada: !p.error && propios.length > 0,
-      findings: propios.concat(coherencia).concat(deJuicio)
+      findings: propios.concat(coherencia).concat(deJuicio).concat(silencioSitio)
     };
   });
 

@@ -4106,6 +4106,9 @@
         // Lo que la propia nota dice que no está comprobado: contraste, tamaño
         // de los objetivos y foco de lo que haya dentro del componente.
         limita: ["1.4.3", "1.4.11", "2.4.7", "2.5.8", "2.4.3", "2.1.1"],
+        // Y esconde contenido, no solo medidas: invalida los «no aplica» de la
+        // página, que son afirmaciones sobre lo que no se ha podido ver.
+        ocultaContenido: true,
         detail: "hay " + cerrados.length + " componente(s) que parecen llevar un shadow root CERRADO (" +
           cerrados.slice(0, 5).map(function (el) { return locatorM(el); }).join(", ") + (cerrados.length > 5 ? ", …" : "") +
           "): su contenido no se puede inspeccionar desde fuera, así que el contraste, el tamaño de los objetivos y el foco de lo que haya dentro NO están comprobados. Compruébalo con el inspector del navegador o pídeselo a quien mantenga el componente." });

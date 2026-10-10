@@ -295,10 +295,15 @@ export async function analyzeRendered(target, opts) {
         coberturasPropias.push({
           crit: "__meta", label: "Shadow DOM cerrado", node: censoCDP.total + " componente(s)", verdict: "revisar",
           limita: ["1.4.3", "1.4.11", "2.4.7", "2.5.8", "2.4.3", "2.1.1"],
+          /* Y además esconde CONTENIDO, no solo medidas. Es lo que invalida los
+             «no aplica» de la página: un `<video>` dentro de un shadow cerrado
+             daba 1.2.5 «no aplica · la página no tiene ningún vídeo» tres líneas
+             debajo de esta misma nota. Lo usa `aplicaCoberturas`. */
+          ocultaContenido: true,
           detail: "hay " + censoCDP.total + " shadow root(s) CERRADO(s) en la página (" +
             censoCDP.hosts.slice(0, 5).map(function (h) { return h.loc; }).join(", ") +
             (censoCDP.total > 5 ? ", …" : "") +
-            "), contados por el protocolo del navegador y no por aproximación. Su contenido no se puede inspeccionar desde fuera, así que el contraste, el tamaño de los objetivos y el foco de lo que haya dentro NO están comprobados. Compruébalo con el inspector o pídeselo a quien mantenga el componente.",
+            "), contados por el protocolo del navegador y no por aproximación. Su contenido no se puede inspeccionar desde fuera, así que el contraste, el tamaño de los objetivos y el foco de lo que haya dentro NO están comprobados, y tampoco se puede afirmar que algo no exista en la página. Compruébalo con el inspector o pídeselo a quien mantenga el componente.",
           rutas: censoCDP.hosts.map(function (h) { return h.ruta; }).filter(Boolean)
         });
       }

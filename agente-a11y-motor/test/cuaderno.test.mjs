@@ -612,3 +612,75 @@ test("2.3.1 no afirma que nada puede destellar si no ha leído el CSS", () => {
   const sinCss = cuad("<main><p>Texto.</p></main>", { cssLeido: false });
   assert.equal(fichaDe(sinCss, "2.3.1").veredicto, "revisar");
 });
+
+/* ── 2.4.4: sin nombre NO es lo mismo que nombre vago ──
+ *
+ * `NOMBRES_VACIOS` va anclada entre ^ y $ y no tiene alternativa vacía, así que
+ * un enlace SIN nombre accesible no casaba, contaba como «tiene nombre propio»
+ * y la ficha firmaba `cumple-parcial` escribiendo «todos tienen nombre propio».
+ * Medido sobre una página con cuatro de seis enlaces sin nombre: una afirmación
+ * falsa en la evidencia, con veredicto casi conforme y `queMirar` vacío — es
+ * decir, diciendo que no hay nada que mirar en el criterio que más barreras
+ * masivas produce en una auditoría real.
+ */
+
+test("regresión: enlaces sin nombre accesible NO salen como «todos tienen nombre propio»", () => {
+  const f = fichaDe(cuad(`<main><h1>h</h1>
+    <a href="/a"><img src="i.png"></a>
+    <a href="/b"><svg viewBox="0 0 1 1"><path/></svg></a>
+    <a href="/c"></a>
+    <a href="/noticia">Incendio en el puerto de Vigo</a></main>`), "2.4.4");
+  assert.notEqual(f.veredicto, "cumple-parcial", "tres de cuatro no tienen nombre");
+  assert.equal(f.queMirar.length, 3, "y los tres van al expediente");
+  assert.match(f.loQueYaSabemos.join(" "), /nombre que no existe no puede describir el destino/);
+  assert.match(f.pregunta, /3 de los 4/);
+});
+
+test("2.4.4 solo firma «cumple-parcial» cuando TODOS tienen nombre y ninguno es vago", () => {
+  const bien = fichaDe(cuad('<main><h1>h</h1><a href="/a">Incendio en el puerto</a><a href="/b">Pleno de octubre</a></main>'), "2.4.4");
+  assert.equal(bien.veredicto, "cumple-parcial");
+  assert.match(bien.loQueYaSabemos.join(" "), /tienen nombre accesible/);
+  const vago = fichaDe(cuad('<main><h1>h</h1><a href="/a">Incendio</a><a href="/b">Leer más</a></main>'), "2.4.4");
+  assert.equal(vago.veredicto, null, "un nombre vago deja el criterio pendiente de juicio");
+});
+
+test("el nombre accesible lo calcula el motor: aria-labelledby cuenta", () => {
+  // El cálculo propio del cuaderno se dejaba fuera `aria-labelledby`, así que un
+  // enlace nombrado así se leía como SIN nombre — y con el arreglo de arriba eso
+  // habría sido un falso positivo nuevo en la dirección contraria.
+  const f = fichaDe(cuad('<main><h1>h</h1><a href="/a" aria-labelledby="t1">x</a><span id="t1">Ver el expediente completo</span></main>'), "2.4.4");
+  assert.equal(f.veredicto, "cumple-parcial", JSON.stringify(f.loQueYaSabemos));
+});
+
+/* ── «No aplica» en 1.4.5 y 3.3.8: dos supuestos que no eran los únicos ── */
+
+test("1.4.5: una imagen de FONDO no deja el criterio en «no aplica»", () => {
+  // El hero con el titular incrustado —el caso típico de 1.4.5— casi nunca es
+  // un `<img>`: es un `background-image`. Sin mirarlo, una página cuya única
+  // imagen es de fondo firmaba «no aplica · no tiene imágenes con contenido».
+  const conFondo = fichaDe(cuad('<main><h1>h</h1><div class="hero">Bienvenida a la provincia</div></main>',
+    { css: ".hero{background-image:url(hero.jpg)}" }), "1.4.5");
+  assert.notEqual(conFondo.veredicto, "no-aplica");
+  assert.match(conFondo.loQueYaSabemos.join(" "), /imágenes de fondo/);
+  // Y un degradado no es una imagen con texto: atar de más también estorba.
+  const degradado = fichaDe(cuad('<main><h1>h</h1><div class="hero">x</div></main>',
+    { css: ".hero{background:linear-gradient(#000,#fff)}" }), "1.4.5");
+  assert.equal(degradado.veredicto, "no-aplica");
+});
+
+test("3.3.8: un acceso por código de un solo uso SÍ es autenticación", () => {
+  // 3.3.8 admite el código solo si se puede pegar, así que un acceso sin
+  // contraseña le aplica de lleno. Antes firmaba «no hay proceso de
+  // autenticación que evaluar» sobre un formulario de acceso.
+  const otp = fichaDe(cuad('<main><h1>h</h1><form><label for="c">Código recibido</label>' +
+    '<input type="text" id="c" name="otp" autocomplete="one-time-code"><button>Entrar</button></form></main>'), "3.3.8");
+  assert.notEqual(otp.veredicto, "no-aplica");
+  assert.match(otp.loQueYaSabemos.join(" "), /pegarlo/);
+  assert.ok(otp.queMirar.length >= 1);
+  const porNombre = fichaDe(cuad('<main><h1>h</h1><form><input type="email" name="correo">' +
+    '<input type="text" name="codigo_verificacion"><button>Entrar</button></form></main>'), "3.3.8");
+  assert.notEqual(porNombre.veredicto, "no-aplica");
+  // Un buscador no es un acceso: la señal tiene que seguir siendo estrecha.
+  const buscador = fichaDe(cuad('<main><h1>h</h1><form><input type="text" name="buscar"><button>Buscar</button></form></main>'), "3.3.8");
+  assert.equal(buscador.veredicto, "no-aplica");
+});

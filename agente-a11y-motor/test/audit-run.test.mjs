@@ -1,7 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { seleccionarMuestra } from "../src/sampling.js";
-import { axeFindingsNuevos } from "../src/audit-run.js";
+import { axeFindingsNuevos, criteriosEnSilencio, capasEfectivas } from "../src/audit-run.js";
+import { WCAG22 } from "../src/engine.js";
+import { esConforme } from "../src/verdicts.js";
 
 const viol = (id, sc, impact, targets) => ({
   id, impact, help: "Ayuda de " + id, tags: ["wcag2a", "wcag" + sc.replace(/\./g, "")],
@@ -137,4 +139,57 @@ test("el target de axe se acepta como lista o como cadena", () => {
   const comoCadena = { id: "image-alt", impact: "critical", help: "h", tags: ["wcag2a", "wcag111"],
     nodes: [{ target: "main > img" }] };
   assert.equal(axeFindingsNuevos([comoCadena], {})[0].nodes[0].locator, "main > img");
+});
+
+/* ── El barrido de los criterios que nadie nombró ──
+ *
+ * Un criterio del que ninguna capa habla no aparecía en el informe, y en la
+ * plantilla del IRA eso se imprime «No evaluado» o se queda en blanco sin que
+ * nadie haya dicho que no se miró. Medido: con las capas por defecto once
+ * criterios salían sin una frase, y con `render: false`, cuarenta y nueve.
+ */
+
+test("ningún criterio se queda sin una frase, ni con todas las capas apagadas", () => {
+  const apagadas = { render: false, viewport: false, dynamic: false, pixeles: false, axe: false, huella: false };
+  const out = criteriosEnSilencio([], apagadas, { sitio: true });
+  assert.equal(out.length, WCAG22.length, "los 55 tienen que salir nombrados");
+  assert.ok(out.every((f) => f.verdict === "revisar"), "y todos como «revisar»");
+  assert.ok(out.every((f) => !esConforme(f.verdict)), "«revisar» no es conforme: no puede exportarse como cumplido");
+  assert.ok(out.every((f) => f.evid.join(" ").length > 40), "cada uno con su explicación");
+});
+
+test("el barrido NO pisa a quien ya habló", () => {
+  const yaDicho = [{ c: { n: "1.1.1", t: "x", lvl: "A" }, verdict: "falla", sev: "grave", evid: ["una barrera real"] }];
+  const out = criteriosEnSilencio(yaDicho, capasEfectivas(), { sitio: true });
+  assert.ok(!out.some((f) => f.c.n === "1.1.1"), "1.1.1 ya tenía veredicto");
+  assert.ok(out.length === WCAG22.length - 1);
+});
+
+test("distingue «la capa no se ejecutó» de «se ejecutó y no dijo nada»", () => {
+  // 4.1.3 lo mide la capa dinámica, que viene APAGADA por defecto.
+  const apagada = criteriosEnSilencio([], capasEfectivas(), { sitio: true }).find((f) => f.c.n === "4.1.3");
+  assert.match(apagada.evid.join(" "), /no se ha ejecutado/, apagada.evid.join(" "));
+  assert.match(apagada.evid.join(" "), /dinámico/);
+  const encendida = criteriosEnSilencio([], capasEfectivas({ dynamic: true }), { sitio: true }).find((f) => f.c.n === "4.1.3");
+  assert.match(encendida.evid.join(" "), /sí se ha ejecutado y no ha dicho nada/, encendida.evid.join(" "));
+  assert.match(encendida.evid.join(" "), /el agente no lo afirma/);
+});
+
+test("una página sola no dictamina los criterios de sitio: los deja para la muestra", () => {
+  const dePagina = criteriosEnSilencio([], capasEfectivas(), { sitio: false }).map((f) => f.c.n);
+  ["2.4.5", "3.2.3", "3.2.4", "3.2.6"].forEach((n) => {
+    assert.ok(!dePagina.includes(n), n + " lo decide auditSite cruzando la muestra, no una página");
+  });
+  const deSitio = criteriosEnSilencio([], capasEfectivas(), { sitio: true }).map((f) => f.c.n);
+  ["2.4.5", "3.2.3", "3.2.4", "3.2.6"].forEach((n) => assert.ok(deSitio.includes(n), n + " sí se barre en el sitio"));
+});
+
+test("capasEfectivas pone los valores por defecto, y la dinámica no se enciende sola", () => {
+  // El barrido de sitio leía `opts.capas` en crudo: con las opciones por defecto
+  // —el caso normal— creía que ninguna capa se había ejecutado y lo decía.
+  const d = capasEfectivas();
+  assert.equal(d.render, true);
+  assert.equal(d.dynamic, false, "la capa dinámica pulsa y envía: sigue siendo opt-in");
+  assert.equal(capasEfectivas({ dynamic: true }).dynamic, true);
+  assert.equal(capasEfectivas({ render: false }).render, false);
 });

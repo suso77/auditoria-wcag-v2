@@ -86,39 +86,207 @@ CONTENIDOS.forEach(function (c) { CONT_IX[c.id] = c; });
 
 /* ── Clasificación por URL y por señales ─────────────────────────────────── */
 
-const URL_RE = [
-  ["accesibilidad", /(accesibilidad|accessibility|declaraci[oó]n[-\s]de[-\s]accesibilidad)/i],
-  ["mapa-web", /(mapa[-\s]?web|mapa[-\s]del[-\s]sitio|sitemap|[ií]ndice[-\s]del[-\s]sitio)/i],
-  ["contacto", /(contacto|contactar|contact)/i],
-  ["ayuda", /(ayuda|help|faq|preguntas[-\s]frecuentes|soporte|support)/i],
-  ["legal", /(aviso[-\s]?legal|privacidad|privacy|cookies|t[eé]rminos|terminos|legal)/i],
-  ["busqueda", /(buscar|busqueda|search|resultados)/i],
-  ["acceso", /(login|acceso|iniciar[-\s]?sesi[oó]n|iniciar[-\s]?sesion|registro|signin|sign[-\s]?up|alta)/i]
-];
+/**
+ * ANTES ESTO ERAN SIETE EXPRESIONES DE SUBCADENA, y clasificaba mal casi todo.
+ * Medido sobre nueve rutas de aspecto corriente, ocho salían con categoría:
+ *
+ *   /accesorios                     → «Acceso o registro»   («acceso» dentro de accesorios)
+ *   /productos/altavoces-bluetooth  → «Acceso o registro»   («alta» dentro de altavoces)
+ *   /registro-civil-tramites        → «Acceso o registro»
+ *   /noticias/resultados-del-partido→ «Resultados de búsqueda»
+ *   /blog/comercio-ilegal-de-especies → «Aviso legal»       («legal» dentro de ilegal)
+ *   /servicios/soporte-vital-basico → «Ayuda»
+ *   /es/destinos/contactos-culturales → «Contacto»
+ *
+ * Y el daño no se queda en la lista: la cobertura que va al IRA decía que la
+ * muestra incluía contacto, ayuda, aviso legal, resultados de búsqueda y acceso
+ * —cinco categorías, ninguna presente— y los avisos de «no se ha encontrado
+ * ninguna página de esta categoría», que son los que mandan a la persona
+ * auditora a comprobarlo a mano, desaparecían por estar «cubiertas».
+ *
+ * La regla nueva no mira subcadenas: parte la ruta en segmentos y los segmentos
+ * en palabras, y exige dos cosas a la vez:
+ *
+ *  1. que alguna palabra sea CLAVE de la categoría (palabra entera: «acceso» ya
+ *     no lo encuentra dentro de «accesorios»), y
+ *  2. que TODAS las demás palabras del segmento sean de la categoría, de apoyo o
+ *     conectores. Así `/aviso-legal` y `/contactar-con-nosotros` pasan, y
+ *     `/comercio-ilegal-de-especies` o `/contactos-culturales` no.
+ *
+ * Lo que trae una palabra clave pero no encaja del todo no se tira en silencio:
+ * se devuelve en `posibles` y la selección lo nombra en un aviso. Descartar de
+ * más deja el mismo agujero que clasificar de más, solo que al revés.
+ */
+
+/** Palabras que no dicen de qué va la página: solo unen a las que sí. */
+const CONECTORES = {
+  de: 1, del: 1, la: 1, las: 1, el: 1, los: 1, un: 1, una: 1, unos: 1, unas: 1,
+  y: 1, e: 1, o: 1, u: 1, con: 1, a: 1, al: 1, en: 1, para: 1, por: 1, sobre: 1,
+  the: 1, of: 1, and: 1, to: 1, for: 1, our: 1, my: 1, us: 1,
+  pagina: 1, paginas: 1, page: 1, pages: 1, web: 1, site: 1, portal: 1,
+  html: 1, htm: 1, php: 1, asp: 1, aspx: 1, jsp: 1, shtml: 1, xhtml: 1,
+  index: 1, default: 1, home: 1, inicio: 1, content: 1, contenido: 1
+};
+
+/**
+ * Vocabulario por categoría. `clave`: al menos una tiene que estar. `apoyo`: se
+ * toleran, pero no bastan. `combos`: pares que juntos valen como clave («mapa» a
+ * secas es un mapa interactivo; «mapa» + «web» es el mapa del sitio).
+ */
+const VOCABULARIO = {
+  accesibilidad: {
+    clave: ["accesibilidad", "accessibility", "accesibilidade", "acessibilidade", "erabilerraztasuna"],
+    apoyo: ["declaracion", "declaracio", "declaration", "statement", "aviso", "informe", "politica", "policy", "conformidad", "nivel", "compromiso"]
+  },
+  "mapa-web": {
+    clave: ["sitemap", "mapaweb"],
+    combos: [["mapa", "web"], ["mapa", "sitio"], ["mapa", "contenidos"], ["mapa", "navegacion"], ["indice", "sitio"], ["indice", "contenidos"], ["arbol", "contenidos"]],
+    apoyo: ["mapa", "indice", "sitio", "contenidos", "navegacion", "arbol", "estructura"]
+  },
+  contacto: {
+    clave: ["contacto", "contactos", "contactar", "contacta", "contactanos", "contact", "kontaktua"],
+    apoyo: ["nosotros", "nos", "directorio", "atencion", "ciudadano", "ciudadana", "cliente", "clientes", "formulario", "donde", "estamos", "localizacion", "telefono", "telefonos", "email", "correo", "informacion", "escribenos", "buzon"]
+  },
+  ayuda: {
+    clave: ["ayuda", "help", "faq", "faqs", "soporte", "support", "laguntza"],
+    combos: [["preguntas", "frecuentes"], ["preguntas", "habituales"], ["dudas", "frecuentes"]],
+    apoyo: ["preguntas", "frecuentes", "habituales", "dudas", "tecnico", "tecnica", "usuario", "usuarios", "centro", "asistencia", "online"]
+  },
+  legal: {
+    clave: ["legal", "legales", "privacidad", "privacy", "cookies", "terminos", "condiciones", "terms", "conditions", "lopd", "rgpd", "gdpr"],
+    apoyo: ["aviso", "avisos", "politica", "politicas", "policy", "uso", "datos", "personales", "proteccion", "nota", "texto", "informacion", "legalidad", "notice"]
+  },
+  busqueda: {
+    clave: ["buscar", "busqueda", "buscador", "search", "bilaketa", "procura"],
+    apoyo: ["resultados", "resultado", "results", "avanzada", "avanzado", "general", "contenidos", "q"]
+  },
+  acceso: {
+    clave: ["login", "signin", "signup", "acceso", "acceder", "registro", "registrarse", "registrate", "identificacion", "identificate", "autenticacion", "sarbidea"],
+    combos: [["iniciar", "sesion"], ["mi", "cuenta"], ["area", "privada"], ["zona", "privada"], ["darse", "alta"], ["sign", "in"], ["sign", "up"], ["log", "in"]],
+    apoyo: ["sesion", "usuario", "usuarios", "clientes", "privado", "privada", "area", "zona", "intranet", "cuenta", "mi", "iniciar", "nuevo", "nueva", "alta", "sign", "log", "in", "up", "darse"]
+  }
+};
+/** Parámetros de consulta que delatan una página de resultados de búsqueda. */
+const PARAM_BUSQUEDA = { q: 1, s: 1, query: 1, busqueda: 1, buscar: 1, search: 1, keyword: 1, keywords: 1, palabra: 1, texto: 1, term: 1, termino: 1 };
+
+function sinTildes(t) {
+  return String(t == null ? "" : t).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+}
+function palabras(txt) {
+  return sinTildes(txt).split(/[^a-z0-9]+/).filter(Boolean);
+}
+function decodeSeguro(t) {
+  try { return decodeURIComponent(String(t).replace(/\+/g, " ")); } catch (e) { return String(t); }
+}
+/**
+ * Parte una ruta en grupos de palabras: un grupo por segmento de camino y uno
+ * por valor de la cadena de consulta. Cada grupo se juzga por separado, así que
+ * el `/es/` o el `/sede/` de delante no contaminan al segmento que decide.
+ */
+export function trozosDeRuta(ruta) {
+  const s = String(ruta || "");
+  const i = s.indexOf("?");
+  const camino = i === -1 ? s : s.slice(0, i);
+  const consulta = i === -1 ? "" : s.slice(i + 1);
+  const out = [];
+  camino.split("/").forEach(function (seg) {
+    if (!seg) return;
+    out.push(palabras(decodeSeguro(seg).replace(/\.[a-z0-9]{1,5}$/i, "")));
+  });
+  consulta.split(/[&;]/).forEach(function (par) {
+    if (!par) return;
+    const p = par.split("=");
+    out.push(palabras(decodeSeguro(p.length > 1 ? p.slice(1).join("=") : par)));
+  });
+  return out.filter(function (w) { return w.length; });
+}
+/**
+ * Parte un título en grupos. Los títulos llevan casi siempre el nombre del sitio
+ * detrás de un separador («Contacto | Ayuntamiento de X»), y ese rabo no debe
+ * decidir nada: cada trozo se juzga solo.
+ */
+export function trozosDeTitulo(titulo) {
+  return String(titulo || "")
+    .split(/[|·—–»«>]|::|\s+-\s+|\s*:\s+/)
+    .map(palabras)
+    .filter(function (w) { return w.length; });
+}
+function enLista(lista) {
+  const ix = {};
+  (lista || []).forEach(function (w) { ix[w] = 1; });
+  return ix;
+}
+const VOC_IX = {};
+Object.keys(VOCABULARIO).forEach(function (k) {
+  const v = VOCABULARIO[k];
+  VOC_IX[k] = { clave: enLista(v.clave), apoyo: enLista(v.apoyo), combos: v.combos || [] };
+});
+
+function tieneClave(ws, v) {
+  if (ws.some(function (w) { return v.clave[w]; })) return true;
+  return v.combos.some(function (c) { return c.every(function (w) { return ws.indexOf(w) !== -1; }); });
+}
+/** El grupo de palabras ES de esta categoría: clave presente y nada ajeno. */
+function encaja(ws, v) {
+  if (!tieneClave(ws, v)) return false;
+  return ws.every(function (w) {
+    return CONECTORES[w] || v.clave[w] || v.apoyo[w] || /^\d+$/.test(w);
+  });
+}
 
 /**
  * Clasifica una candidata. `pagina` es lo que produce el rastreo:
- * `{ url, ruta, titulo, estructura, señales }`.
+ * `{ url, ruta, titulo, plantilla, señales }`.
+ *
+ * Devuelve `categorias` (las que se pueden afirmar), `posibles` (las que suenan
+ * pero no encajan: van a un aviso, no a la cobertura) y `contenidos`.
  */
 export function clasificar(pagina) {
   const cats = [];
+  const posibles = [];
   const ruta = String(pagina.ruta || pagina.url || "");
   const titulo = String(pagina.titulo || "");
   const s = pagina["señales"] || pagina.senales || {};
+  const grupos = trozosDeRuta(ruta).concat(trozosDeTitulo(titulo));
+  const mete = function (id) { if (cats.indexOf(id) === -1) cats.push(id); };
 
-  if (ruta === "/" || ruta === "" || s.esInicio) cats.push("inicio");
-  URL_RE.forEach(function (par) {
-    if (par[1].test(ruta) || par[1].test(titulo)) { if (cats.indexOf(par[0]) === -1) cats.push(par[0]); }
+  const soloCamino = ruta.split("?")[0].replace(/\/+$/, "");
+  if (soloCamino === "" || /\/(index|default|inicio|home)(\.[a-z0-9]{1,5})?$/i.test(soloCamino) || s.esInicio) mete("inicio");
+
+  const fuerte = {};
+  Object.keys(VOC_IX).forEach(function (id) {
+    const v = VOC_IX[id];
+    if (grupos.some(function (ws) { return encaja(ws, v); })) { fuerte[id] = 1; return; }
+    if (grupos.some(function (ws) { return tieneClave(ws, v); })) posibles.push(id);
   });
-  // Las señales del DOM mandan sobre la URL: un formulario de acceso es acceso
-  // aunque la ruta no lo diga.
-  if (s.tieneAcceso && cats.indexOf("acceso") === -1) cats.push("acceso");
-  if (s.tieneBusqueda && cats.indexOf("busqueda") === -1 && /resultado|search|buscar/i.test(ruta + " " + titulo)) cats.push("busqueda");
-  if (s.tieneFormulario && cats.indexOf("acceso") === -1 && cats.indexOf("formulario") === -1) cats.push("formulario");
-  if (s.esProceso) cats.push("proceso");
+  // Las temáticas se pueden afirmar con el nombre: una ruta que es exactamente
+  // «aviso-legal» o «preguntas-frecuentes» no es otra cosa.
+  ["accesibilidad", "mapa-web", "contacto", "ayuda", "legal"].forEach(function (id) { if (fuerte[id]) mete(id); });
+
+  /* Acceso y búsqueda son FUNCIÓN, no tema, así que el nombre NUNCA basta: hace
+     falta que el DOM lo confirme. Y tiene que ser el encaje FUERTE, no la simple
+     mención: `/registro-civil-tramites` tiene formulario y la palabra «registro»,
+     y con la mención bastando salía como «Acceso o registro» —el único falso
+     positivo que quedaba de los nueve medidos. */
+  if (s.tieneAcceso) mete("acceso");                                 // un campo de contraseña no deja dudas
+  else if (fuerte.acceso && s.tieneFormulario) mete("acceso");       // la ruta ES de acceso y hay formulario
+  else if (fuerte.acceso) posibles.push("acceso");                   // lo parece, pero no hay dónde identificarse
+  const paramBusqueda = (ruta.split("?")[1] || "").split(/[&;]/).some(function (p) {
+    return p.indexOf("=") !== -1 && PARAM_BUSQUEDA[sinTildes(p.split("=")[0])];
+  });
+  if (s.tieneBusqueda && (fuerte.busqueda || paramBusqueda)) mete("busqueda");
+  else if (fuerte.busqueda) posibles.push("busqueda");
+
+  if (s.tieneFormulario && cats.indexOf("acceso") === -1 && cats.indexOf("formulario") === -1) mete("formulario");
+  if (s.esProceso) mete("proceso");
 
   const contenidos = CONTENIDOS.map(function (c) { return c.id; }).filter(function (id) { return !!s[id]; });
-  return { categorias: cats, contenidos: contenidos, plantilla: pagina.plantilla || null };
+  return {
+    categorias: cats,
+    posibles: posibles.filter(function (id) { return cats.indexOf(id) === -1; }),
+    contenidos: contenidos,
+    plantilla: pagina.plantilla || null
+  };
 }
 
 /* ── Selección ───────────────────────────────────────────────────────────── */
@@ -163,7 +331,16 @@ export function seleccionarMuestra(candidatas, opts) {
   CATEGORIAS.forEach(function (cat) {
     const cands = todas.filter(function (p) { return p.clasif.categorias.indexOf(cat.id) !== -1; });
     if (!cands.length) {
-      if (cat.esencial) avisos.push("No se ha encontrado ninguna página de la categoría «" + cat.etiqueta + "»: compruébalo a mano antes de dar la muestra por buena.");
+      // Lo que suena a esta categoría pero no encajó. Nombrarlo es lo que impide
+      // que una regla más estricta se coma una página de verdad sin que nadie se
+      // entere: la persona auditora mira esas tres URL y decide.
+      const flojas = todas.filter(function (p) { return (p.clasif.posibles || []).indexOf(cat.id) !== -1; });
+      const pistas = flojas.length
+        ? " Hay " + flojas.length + " página(s) que mencionan la categoría en su nombre o título pero no parecen serlo (" +
+          flojas.slice(0, 3).map(function (p) { return p.url; }).join(", ") + (flojas.length > 3 ? ", …" : "") + "): compruébalas."
+        : "";
+      if (cat.esencial) avisos.push("No se ha encontrado ninguna página de la categoría «" + cat.etiqueta + "»: compruébalo a mano antes de dar la muestra por buena." + pistas);
+      else if (flojas.length) avisos.push("Ninguna página encaja con la categoría «" + cat.etiqueta + "»." + pistas);
       return;
     }
     // La más corta: suele ser la canónica («/contacto» antes que «/es/x/contacto-2»).

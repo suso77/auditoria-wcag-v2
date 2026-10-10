@@ -42,6 +42,71 @@ test("las páginas comunes se reconocen por ruta o por título", () => {
   assert.ok(clasificar(pag("/x", { titulo: "Mapa web" })).categorias.includes("mapa-web"));
 });
 
+test("regresión: una palabra DENTRO de otra no clasifica la página", () => {
+  // Siete expresiones de subcadena clasificaban mal ocho de nueve rutas
+  // corrientes, y la cobertura del IRA daba por cubiertas cinco categorías que
+  // no estaban. Las comunes se reconocen por PALABRA, no por subcadena.
+  const casos = [
+    ["/accesorios", "Accesorios para bicicleta", {}],
+    ["/productos/altavoces-bluetooth", "Altavoces Bluetooth", {}],
+    ["/catalogo/alta-montana", "Rutas de alta montaña", {}],
+    ["/blog/comercio-ilegal-de-especies", "El comercio ilegal de especies", {}],
+    ["/servicios/soporte-vital-basico", "Soporte vital básico", {}],
+    ["/es/destinos/contactos-culturales", "Contactos culturales", {}],
+    ["/turismo/mapa-de-playas", "Mapa de playas", {}],
+    ["/noticias/resultados-del-partido", "Resultados del partido", { tieneBusqueda: true }],
+    ["/registro-civil-tramites", "Registro civil: trámites", { tieneFormulario: true }]
+  ];
+  casos.forEach(([ruta, titulo, se]) => {
+    const c = clasificar(pag(ruta, { titulo, "señales": se }));
+    const comunes = c.categorias.filter((x) => x !== "formulario" && x !== "proceso");
+    assert.deepEqual(comunes, [], ruta + " no es ninguna página común: " + JSON.stringify(c.categorias));
+  });
+});
+
+test("ser más estricto no se come las páginas comunes de verdad", () => {
+  const casos = [
+    ["/", "Portada", {}, "inicio"],
+    ["/es/index.html", "Portada", {}, "inicio"],
+    ["/declaracion-de-accesibilidad", "Declaración de accesibilidad", {}, "accesibilidad"],
+    ["/aviso-legal", "Aviso legal", {}, "legal"],
+    ["/politica-de-privacidad", "Política de privacidad", {}, "legal"],
+    ["/contactar-con-nosotros", "Contacta con nosotros | Sede", {}, "contacto"],
+    ["/es/sede/atencion-ciudadana/contacto", "Contacto", {}, "contacto"],
+    ["/preguntas-frecuentes", "Preguntas frecuentes", {}, "ayuda"],
+    ["/mapa-web", "Mapa web", {}, "mapa-web"],
+    ["/indice-de-contenidos", "Índice de contenidos", {}, "mapa-web"],
+    ["/buscar?q=playa", "Resultados", { tieneBusqueda: true }, "busqueda"],
+    ["/resultados?q=x", "Resultados", { tieneBusqueda: true }, "busqueda"],
+    ["/login", "Iniciar sesión", { tieneFormulario: true }, "acceso"],
+    ["/mi-cuenta", "Mi cuenta", { tieneFormulario: true }, "acceso"]
+  ];
+  casos.forEach(([ruta, titulo, se, esperada]) => {
+    const c = clasificar(pag(ruta, { titulo, "señales": se }));
+    assert.ok(c.categorias.includes(esperada), ruta + " debería ser «" + esperada + "»: " + JSON.stringify(c.categorias));
+  });
+});
+
+test("acceso y búsqueda exigen que el DOM lo confirme: el nombre no basta", () => {
+  // Son función, no tema. Una ruta /registro sin formulario no es el registro.
+  assert.ok(!clasificar(pag("/registro", { titulo: "Registro" })).categorias.includes("acceso"));
+  assert.ok(clasificar(pag("/registro", { "señales": { tieneFormulario: true } })).categorias.includes("acceso"));
+  // Y un buscador en la cabecera no convierte cualquier página en resultados.
+  assert.ok(!clasificar(pag("/noticias/x", { titulo: "Noticia", "señales": { tieneBusqueda: true } })).categorias.includes("busqueda"));
+  assert.ok(clasificar(pag("/buscar", { "señales": { tieneBusqueda: true } })).categorias.includes("busqueda"));
+});
+
+test("lo descartado por poco se nombra: descartar de más tampoco puede ser silencioso", () => {
+  const sel = seleccionarMuestra([
+    pag("/"), pag("/es/destinos/contactos-culturales", { titulo: "Contactos culturales" })
+  ]);
+  const aviso = sel.avisos.find((a) => /Contacto/.test(a));
+  assert.ok(aviso, sel.avisos.join(" | "));
+  assert.match(aviso, /contactos-culturales/);
+  assert.match(aviso, /no parecen serlo/);
+  assert.equal(sel.cobertura.categorias.contacto, false, "y no se declara cubierta");
+});
+
 test("las señales del DOM mandan sobre la URL", () => {
   // Un formulario con contraseña es acceso aunque la ruta no lo diga.
   const c = clasificar(pag("/area-privada", { "señales": { tieneAcceso: true, tieneFormulario: true } }));
@@ -183,6 +248,16 @@ test("robots.txt: comodines y fin de cadena", () => {
   assert.equal(r.permite("/datos.json"), false);
   assert.equal(r.permite("/datos.json?a=1"), true, "el $ exige fin exacto");
   assert.equal(r.permite("/tmp123/x"), false);
+});
+
+test("robots.txt: varios User-agent seguidos son UN grupo (RFC 9309 §2.2.1)", () => {
+  // Cada línea sobreescribía a la anterior, así que con «*» delante de otro
+  // agente el Disallow se perdía y el rastreador entraba justo donde el sitio
+  // pedía que no entrara.
+  assert.equal(parseRobots("User-agent: *\nUser-agent: Googlebot\nDisallow: /panel\n", "a11y-motor").permite("/panel"), false);
+  assert.equal(parseRobots("User-agent: Googlebot\nUser-agent: *\nDisallow: /panel\n", "a11y-motor").permite("/panel"), false);
+  // Y un grupo que no nos nombra sigue sin afectarnos.
+  assert.equal(parseRobots("User-agent: Bingbot\nUser-agent: Googlebot\nDisallow: /\n", "a11y-motor").permite("/x"), true);
 });
 
 test("robots.txt vacío o ausente permite todo", () => {

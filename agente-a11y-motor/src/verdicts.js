@@ -104,18 +104,49 @@ export function aplicaCoberturas(findings, coberturas) {
       (limites[n] = limites[n] || []).push({ label: c.label || "cobertura", detail: c.detail || "" });
     });
   });
+  /* «No aplica» es tan afirmación como «cumple», y hasta aquí no la tocaba nadie.
+   *
+   * El trato con `limita` es por criterio y se afina midiendo, porque atar de más
+   * entierra barreras. Pero hay notas que no limitan la medición de unos cuantos
+   * criterios: dicen que una PARTE DEL CONTENIDO de la página no se ha podido
+   * inventariar —un shadow root cerrado es el caso puro—. Y entonces cualquier
+   * «no aplica» de esa página es una afirmación sobre lo que no se vio.
+   *
+   * Medido: una página con un `<video>` dentro de un shadow root cerrado daba
+   * 1.2.5 «no aplica · La página no tiene ningún vídeo ni marco embebido de
+   * ninguna clase: no hay nada que audiodescribir» — mientras el propio informe,
+   * tres líneas más abajo, decía que había un shadow root cerrado sin explorar.
+   * El agente se contradecía a sí mismo en el mismo informe, y la plantilla del
+   * IRA se queda con el «No aplica», que es la casilla que cierra el criterio.
+   *
+   * `ocultaContenido` solo lo pone quien de verdad esconde contenido a TODAS las
+   * pasadas. Los marcos no: cada marco se mide en su propia pasada y el cuaderno
+   * ya los cuenta como reproductores posibles. */
+  const ocultan = (coberturas || []).filter(function (c) { return c && c.ocultaContenido; });
   const atados = [];
   const out = (findings || []).map(function (f) {
     const n = f && f.c && f.c.n;
     const notas = n && limites[n];
-    if (!notas || !esConforme(f.verdict)) return f;
-    atados.push({ n: n, de: f.verdict, por: notas.map(function (x) { return x.label; }).join(" · ") });
-    return Object.assign({}, f, {
-      verdict: "revisar",
-      evid: (f.evid || []).concat(notas.map(function (x) {
-        return "La medición de este criterio está INCOMPLETA (" + x.label + "), así que lo medido no basta para declararlo conforme: " + x.detail;
-      }))
-    });
+    if (notas && esConforme(f.verdict)) {
+      atados.push({ n: n, de: f.verdict, por: notas.map(function (x) { return x.label; }).join(" · ") });
+      return Object.assign({}, f, {
+        verdict: "revisar",
+        evid: (f.evid || []).concat(notas.map(function (x) {
+          return "La medición de este criterio está INCOMPLETA (" + x.label + "), así que lo medido no basta para declararlo conforme: " + x.detail;
+        }))
+      });
+    }
+    if (ocultan.length && f && f.verdict === "no-aplica") {
+      atados.push({ n: n, de: "no-aplica", por: ocultan.map(function (x) { return x.label || "cobertura"; }).join(" · ") });
+      return Object.assign({}, f, {
+        verdict: "revisar",
+        evid: (f.evid || []).concat(ocultan.map(function (x) {
+          return "Pero parte del contenido de la página NO se ha podido inventariar (" + (x.label || "cobertura") +
+            "), así que «no aplica» es una afirmación sobre lo que no se ha visto: " + (x.detail || "");
+        }))
+      });
+    }
+    return f;
   });
   return { findings: out, atados: atados };
 }

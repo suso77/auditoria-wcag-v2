@@ -30,7 +30,7 @@
  * El agente no rellena el cuaderno por su cuenta: lo deja preparado y firmado
  * por quien decide. Esa es la diferencia entre asistir a un auditor y suplantarlo.
  */
-import { WCAG22, enClause, buildPath } from "./engine.js";
+import { WCAG22, enClause, buildPath, accessibleName } from "./engine.js";
 import { VERDICTS } from "./verdicts.js";
 
 const IX = {};
@@ -71,7 +71,22 @@ function ref(el, detalle) {
   return { locator: loc(el), path: buildPath(el), detalle: detalle || "" };
 }
 function texto(el) { return String((el && el.textContent) || "").replace(/\s+/g, " ").trim(); }
+/* El nombre accesible, con el cálculo del motor y no con uno propio.
+ *
+ * El de aquí miraba `aria-label`, el `alt` de una imagen dentro, el texto y el
+ * `title`, y se dejaba fuera `aria-labelledby`. Eso importa en las dos
+ * direcciones: un enlace nombrado por `aria-labelledby` se leía como SIN nombre,
+ * y el filtro de nombres vagos de 2.4.4 —que es quien decide si hay algo que
+ * mirar— trabajaba sobre un nombre que no es el que oye nadie. El motor ya tiene
+ * el cálculo completo; usarlo es además una sola fuente de verdad.
+ */
 function nombreDe(el) {
+  try {
+    const doc = el.ownerDocument || null;
+    const r = accessibleName(el, doc, "");
+    const n = (r && r.name) || "";
+    if (n) return String(n).replace(/\s+/g, " ").trim();
+  } catch (e) { /* si el cálculo del motor no puede con este nodo, se tira del respaldo */ }
   return (el.getAttribute("aria-label") ||
     (el.querySelector && el.querySelector("img[alt]") ? el.querySelector("img[alt]").getAttribute("alt") : "") ||
     texto(el) || el.getAttribute("title") || "").replace(/\s+/g, " ").trim();
@@ -287,6 +302,10 @@ const COMPROMETEDORAS = /\b(comprar|compra|pagar|pago|pedido|contratar|contratac
  * norma acepta, y bloquear el pegado o exigir un test cognitivo (un captcha de
  * los de transcribir) es justo lo que prohíbe. */
 const CAPTCHA = /captcha|recaptcha|hcaptcha|turnstile/i;
+/** Sin tildes y en minúsculas, para comparar nombres de campo («código», «verificación»). */
+function sinTildesC(t) {
+  return String(t == null ? "" : t).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+}
 
 /* ── Las once fichas ──────────────────────────────────────────────────────── */
 
@@ -490,7 +509,31 @@ const FICHAS = {
   "1.4.5": function (doc, ctx) {
     const imgs = visibles(doc, "img,svg,picture").filter(function (el) { return tag(el) !== "img" || el.getAttribute("alt") !== ""; });
     if (!imgs.length) {
-      return noAplica("1.4.5", "La página no tiene imágenes visibles con contenido (las decorativas, con alt vacío, quedan fuera del criterio).", null, doc);
+      /* Pero una imagen no es solo un `<img>`.
+       *
+       * El hero con el titular incrustado —que es EL caso de 1.4.5— casi nunca
+       * es una etiqueta: es un `background-image` en CSS. Sin esta comprobación,
+       * una página cuya única imagen es de fondo firmaba «no aplica · la página
+       * no tiene imágenes visibles con contenido», y «no aplica» cierra el
+       * criterio en el IRA. El agente no puede leer lo que hay dentro de esa
+       * imagen, así que no dictamina: lo deja pendiente diciendo qué vio. */
+      const conFondo = /background(-image)?\s*:[^;}]*url\(/i.test(ctx.estilos || "");
+      if (conFondo) {
+        return ficha("1.4.5", {
+          pregunta: "¿Alguna de las imágenes de fondo lleva texto incrustado?",
+          queMirar: [{ locator: "(CSS)", path: "", detalle: "las hojas de estilo declaran imágenes de fondo (`background-image: url(…)`)" }],
+          loQueYaSabemos: [
+            "La página no tiene ninguna etiqueta `<img>`, `<svg>` ni `<picture>` con contenido, pero sí imágenes de fondo declaradas en CSS.",
+            "El hero con el titular incrustado —que es el caso típico de 1.4.5— casi siempre es una imagen de fondo, y el agente no puede leer lo que hay dentro de ella."
+          ],
+          comoDecidir: [
+            "Mira las imágenes de fondo en el navegador: si alguna lleva texto que no esté también como texto real → falla (salvo logotipo o texto esencialmente gráfico).",
+            "Amplía al 200 %: el texto incrustado se pixela, y es la forma más rápida de verlo."
+          ],
+          datos: { fondosCss: true }
+        });
+      }
+      return noAplica("1.4.5", "La página no tiene imágenes visibles con contenido (las decorativas con alt vacío quedan fuera) ni imágenes de fondo declaradas en el CSS que se ha podido leer.", null, doc);
     }
     // Candidatas: alt con pinta de frase, o nombre de archivo que suena a texto.
     const SOSPECHOSO = /(banner|cartel|titular|slogan|lema|texto|frase|cita|promo|oferta|infograf)/i;
@@ -565,17 +608,54 @@ const FICHAS = {
     if (!enlaces.length) {
       return noAplica("2.4.4", "La página no tiene enlaces visibles.", null, doc);
     }
-    const vagos = enlaces.filter(function (a) { return NOMBRES_VACIOS.test(nombreDe(a)); });
-    if (!vagos.length) {
+    /* SIN NOMBRE no es lo mismo que nombre vago, y era un agujero.
+     *
+     * `NOMBRES_VACIOS` está anclada entre `^` y `$` y no tiene alternativa vacía,
+     * así que un enlace sin nombre accesible —un icono sin `alt`, un `<svg>` sin
+     * título, un `<a href>` sin contenido— NO casaba, se contaba como «tiene
+     * nombre propio» y la ficha firmaba `cumple-parcial` con esta frase:
+     * «Ninguno de los 6 enlaces visibles se llama "Leer más"… todos tienen
+     * nombre propio». Medido sobre una página con cinco de seis enlaces sin
+     * nombre: eso es una afirmación FALSA en la evidencia, con un veredicto casi
+     * conforme y `queMirar` vacío, es decir, diciéndole a quien audita que no hay
+     * nada que mirar en el criterio que más barreras masivas produce.
+     *
+     * Un nombre que no existe no puede describir el destino, así que esos
+     * enlaces van al expediente antes que los vagos. El `falla` lo firma una
+     * persona —el cuaderno no dictamina— y el motor ya los acusa por su cuenta
+     * en 4.1.2 y 1.1.1. */
+    const sinNombre = enlaces.filter(function (a) { return !nombreDe(a); });
+    const vagos = enlaces.filter(function (a) { const n = nombreDe(a); return n && NOMBRES_VACIOS.test(n); });
+    if (!vagos.length && !sinNombre.length) {
       return ficha("2.4.4", {
         veredicto: "cumple-parcial",
         pregunta: "¿El nombre de cada enlace dice a dónde lleva?",
         queMirar: [],
         loQueYaSabemos: [
-          "Ninguno de los " + enlaces.length + " enlaces visibles se llama «Leer más», «Aquí», «Ver» ni nada equivalente: todos tienen nombre propio.",
+          "Los " + enlaces.length + " enlaces visibles tienen nombre accesible, y ninguno se llama «Leer más», «Aquí», «Ver» ni nada equivalente.",
           "Eso es lo comprobable. Que el nombre describa BIEN el destino sigue siendo juicio, pero sin nombres vacíos no hay que ir a buscar el contexto de ninguno."
         ],
         comoDecidir: ["Repasa por encima que los nombres correspondan a sus destinos; si alguno no, decídelo aquí."]
+      });
+    }
+    if (sinNombre.length) {
+      return ficha("2.4.4", {
+        pregunta: sinNombre.length + " de los " + enlaces.length + " enlaces visibles no tienen NINGÚN nombre accesible" +
+          (vagos.length ? ", y otros " + vagos.length + " lo tienen vago" : "") + ". ¿Confirmas la barrera?",
+        queMirar: sinNombre.slice(0, 30).map(function (a) {
+          return ref(a, "(sin nombre) → " + (a.getAttribute("href") || "").slice(0, 60));
+        }).concat(vagos.slice(0, 30).map(function (a) {
+          return ref(a, "«" + nombreDe(a).slice(0, 40) + "» → " + (a.getAttribute("href") || "").slice(0, 60));
+        })),
+        loQueYaSabemos: [
+          "Un nombre que no existe no puede describir el destino: un lector de pantalla anuncia solo «enlace», o la URL.",
+          "El motor acusa estos mismos enlaces por su cuenta en 4.1.2 (nombre y rol) y, cuando el contenido es una imagen, en 1.1.1.",
+          "Aquí se recoge para 2.4.4 porque el criterio es el propósito del enlace, y sin nombre no hay propósito que leer."
+        ],
+        comoDecidir: [
+          "Comprueba en el navegador que el nombre falta de verdad (puede venir por `aria-labelledby` a un id que el marcado estático no resuelva) → si falta, falla.",
+          "Si algún enlace lo nombra una imagen con `alt` puesto por JS, dilo en el motivo: el informe tiene que decir de dónde sale el nombre."
+        ]
       });
     }
     return ficha("2.4.4", {
@@ -727,8 +807,45 @@ const FICHAS = {
     const captcha = visibles(doc, "*").filter(function (el) {
       return CAPTCHA.test((el.getAttribute("class") || "") + " " + (el.getAttribute("id") || "") + " " + (el.getAttribute("src") || ""));
     });
+    /* `input[type=password]` no es el único campo de autenticación.
+     *
+     * Un acceso por código de un solo uso —el que llega por correo o por SMS— no
+     * lleva contraseña ninguna: lleva un `input` de texto, y 3.3.8 le aplica de
+     * lleno, porque el criterio admite el código solo si se puede PEGAR. Igual el
+     * campo enmascarado por JS sobre un `type=text`. Sin esto, esas páginas
+     * firmaban «no aplica · no hay proceso de autenticación que evaluar» sobre un
+     * formulario de acceso, y «no aplica» cierra el criterio en el IRA.
+     *
+     * Las señales son hechos del marcado, no conjeturas: los valores de
+     * `autocomplete` que la especificación reserva para credenciales, y los
+     * nombres e identificadores de campo de código. */
+    const AUTOCOMPLETE_CRED = /(^|\s)(current-password|new-password|one-time-code)(\s|$)/i;
+    const NOMBRE_CODIGO = /(^|[^a-z])(otp|otc|tan|pin|passcode|password|contrasena|contrasenya|clave|codigo|code|verificacion|verification|token|2fa|mfa)([^a-z]|$)/i;
+    const otros = visibles(doc, "input,textarea").filter(function (el) {
+      if (el.getAttribute("type") === "password") return false;
+      if (AUTOCOMPLETE_CRED.test(el.getAttribute("autocomplete") || "")) return true;
+      const señas = sinTildesC((el.getAttribute("name") || "") + " " + (el.getAttribute("id") || "") + " " + (el.getAttribute("placeholder") || "") + " " + (el.getAttribute("aria-label") || ""));
+      return NOMBRE_CODIGO.test(señas);
+    });
+    if (!passwords.length && !captcha.length && !otros.length) {
+      return noAplica("3.3.8", "La página no tiene ningún campo de contraseña, de código de un solo uso ni captcha: no hay proceso de autenticación que evaluar.", null, doc);
+    }
     if (!passwords.length && !captcha.length) {
-      return noAplica("3.3.8", "La página no tiene ningún campo de contraseña ni captcha: no hay proceso de autenticación que evaluar.", null, doc);
+      return ficha("3.3.8", {
+        pregunta: "Esto parece un acceso sin contraseña (código de un solo uso o campo enmascarado). ¿Se puede pegar el código y hay alternativa sin prueba cognitiva?",
+        queMirar: otros.slice(0, 15).map(function (el) {
+          return ref(el, "<" + tag(el) + "> " + ((el.getAttribute("name") || el.getAttribute("id") || el.getAttribute("placeholder") || "")).slice(0, 50));
+        }),
+        loQueYaSabemos: [
+          "No hay ningún `input[type=password]`, pero sí " + otros.length + " campo(s) con pinta de credencial o de código (por su `autocomplete` o por su nombre).",
+          "3.3.8 admite un código de un solo uso SOLO si la persona puede pegarlo: si el campo bloquea el pegado o lo parte en casillas de un carácter, es una prueba cognitiva."
+        ],
+        comoDecidir: [
+          "Prueba a pegar el código con el teclado: si el campo lo rechaza o hay que teclearlo dígito a dígito → falla.",
+          "Si el acceso es solo por un tercero (entrar con Google, con Cl@ve), el criterio se evalúa sobre ese proceso: dilo en el motivo."
+        ],
+        datos: { sinPassword: true, candidatos: otros.length }
+      });
     }
     const bloqueaPegado = visibles(doc, "input,textarea").filter(function (el) {
       return /return\s+false|preventDefault/i.test(el.getAttribute("onpaste") || "");

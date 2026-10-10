@@ -126,18 +126,49 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         (limites[n] = limites[n] || []).push({ label: c.label || "cobertura", detail: c.detail || "" });
       });
     });
+    /* «No aplica» es tan afirmación como «cumple», y hasta aquí no la tocaba nadie.
+     *
+     * El trato con `limita` es por criterio y se afina midiendo, porque atar de más
+     * entierra barreras. Pero hay notas que no limitan la medición de unos cuantos
+     * criterios: dicen que una PARTE DEL CONTENIDO de la página no se ha podido
+     * inventariar —un shadow root cerrado es el caso puro—. Y entonces cualquier
+     * «no aplica» de esa página es una afirmación sobre lo que no se vio.
+     *
+     * Medido: una página con un `<video>` dentro de un shadow root cerrado daba
+     * 1.2.5 «no aplica · La página no tiene ningún vídeo ni marco embebido de
+     * ninguna clase: no hay nada que audiodescribir» — mientras el propio informe,
+     * tres líneas más abajo, decía que había un shadow root cerrado sin explorar.
+     * El agente se contradecía a sí mismo en el mismo informe, y la plantilla del
+     * IRA se queda con el «No aplica», que es la casilla que cierra el criterio.
+     *
+     * `ocultaContenido` solo lo pone quien de verdad esconde contenido a TODAS las
+     * pasadas. Los marcos no: cada marco se mide en su propia pasada y el cuaderno
+     * ya los cuenta como reproductores posibles. */
+    const ocultan = (coberturas || []).filter(function (c) { return c && c.ocultaContenido; });
     const atados = [];
     const out = (findings || []).map(function (f) {
       const n = f && f.c && f.c.n;
       const notas = n && limites[n];
-      if (!notas || !esConforme(f.verdict)) return f;
-      atados.push({ n: n, de: f.verdict, por: notas.map(function (x) { return x.label; }).join(" · ") });
-      return Object.assign({}, f, {
-        verdict: "revisar",
-        evid: (f.evid || []).concat(notas.map(function (x) {
-          return "La medición de este criterio está INCOMPLETA (" + x.label + "), así que lo medido no basta para declararlo conforme: " + x.detail;
-        }))
-      });
+      if (notas && esConforme(f.verdict)) {
+        atados.push({ n: n, de: f.verdict, por: notas.map(function (x) { return x.label; }).join(" · ") });
+        return Object.assign({}, f, {
+          verdict: "revisar",
+          evid: (f.evid || []).concat(notas.map(function (x) {
+            return "La medición de este criterio está INCOMPLETA (" + x.label + "), así que lo medido no basta para declararlo conforme: " + x.detail;
+          }))
+        });
+      }
+      if (ocultan.length && f && f.verdict === "no-aplica") {
+        atados.push({ n: n, de: "no-aplica", por: ocultan.map(function (x) { return x.label || "cobertura"; }).join(" · ") });
+        return Object.assign({}, f, {
+          verdict: "revisar",
+          evid: (f.evid || []).concat(ocultan.map(function (x) {
+            return "Pero parte del contenido de la página NO se ha podido inventariar (" + (x.label || "cobertura") +
+              "), así que «no aplica» es una afirmación sobre lo que no se ha visto: " + (x.detail || "");
+          }))
+        });
+      }
+      return f;
     });
     return { findings: out, atados: atados };
   }
@@ -2734,6 +2765,9 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         // Lo que la propia nota dice que no está comprobado: contraste, tamaño
         // de los objetivos y foco de lo que haya dentro del componente.
         limita: ["1.4.3", "1.4.11", "2.4.7", "2.5.8", "2.4.3", "2.1.1"],
+        // Y esconde contenido, no solo medidas: invalida los «no aplica» de la
+        // página, que son afirmaciones sobre lo que no se ha podido ver.
+        ocultaContenido: true,
         detail: "hay " + cerrados.length + " componente(s) que parecen llevar un shadow root CERRADO (" +
           cerrados.slice(0, 5).map(function (el) { return locatorM(el); }).join(", ") + (cerrados.length > 5 ? ", …" : "") +
           "): su contenido no se puede inspeccionar desde fuera, así que el contraste, el tamaño de los objetivos y el foco de lo que haya dentro NO están comprobados. Compruébalo con el inspector del navegador o pídeselo a quien mantenga el componente." });
@@ -2957,7 +2991,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
 
 /* ── cuaderno.js ── */
 (function (NS) {
-  const { WCAG22, enClause, buildPath, VERDICTS } = NS;
+  const { WCAG22, enClause, buildPath, accessibleName, VERDICTS } = NS;
   /**
    * Cuaderno de juicio: los once criterios que el agente NO dictamina.
    *
@@ -3029,7 +3063,22 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     return { locator: loc(el), path: buildPath(el), detalle: detalle || "" };
   }
   function texto(el) { return String((el && el.textContent) || "").replace(/\s+/g, " ").trim(); }
+  /* El nombre accesible, con el cálculo del motor y no con uno propio.
+   *
+   * El de aquí miraba `aria-label`, el `alt` de una imagen dentro, el texto y el
+   * `title`, y se dejaba fuera `aria-labelledby`. Eso importa en las dos
+   * direcciones: un enlace nombrado por `aria-labelledby` se leía como SIN nombre,
+   * y el filtro de nombres vagos de 2.4.4 —que es quien decide si hay algo que
+   * mirar— trabajaba sobre un nombre que no es el que oye nadie. El motor ya tiene
+   * el cálculo completo; usarlo es además una sola fuente de verdad.
+   */
   function nombreDe(el) {
+    try {
+      const doc = el.ownerDocument || null;
+      const r = accessibleName(el, doc, "");
+      const n = (r && r.name) || "";
+      if (n) return String(n).replace(/\s+/g, " ").trim();
+    } catch (e) { /* si el cálculo del motor no puede con este nodo, se tira del respaldo */ }
     return (el.getAttribute("aria-label") ||
       (el.querySelector && el.querySelector("img[alt]") ? el.querySelector("img[alt]").getAttribute("alt") : "") ||
       texto(el) || el.getAttribute("title") || "").replace(/\s+/g, " ").trim();
@@ -3244,6 +3293,10 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
    * norma acepta, y bloquear el pegado o exigir un test cognitivo (un captcha de
    * los de transcribir) es justo lo que prohíbe. */
   const CAPTCHA = /captcha|recaptcha|hcaptcha|turnstile/i;
+  /** Sin tildes y en minúsculas, para comparar nombres de campo («código», «verificación»). */
+  function sinTildesC(t) {
+    return String(t == null ? "" : t).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  }
 
   /* ── Las once fichas ──────────────────────────────────────────────────────── */
 
@@ -3447,7 +3500,31 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     "1.4.5": function (doc, ctx) {
       const imgs = visibles(doc, "img,svg,picture").filter(function (el) { return tag(el) !== "img" || el.getAttribute("alt") !== ""; });
       if (!imgs.length) {
-        return noAplica("1.4.5", "La página no tiene imágenes visibles con contenido (las decorativas, con alt vacío, quedan fuera del criterio).", null, doc);
+        /* Pero una imagen no es solo un `<img>`.
+         *
+         * El hero con el titular incrustado —que es EL caso de 1.4.5— casi nunca
+         * es una etiqueta: es un `background-image` en CSS. Sin esta comprobación,
+         * una página cuya única imagen es de fondo firmaba «no aplica · la página
+         * no tiene imágenes visibles con contenido», y «no aplica» cierra el
+         * criterio en el IRA. El agente no puede leer lo que hay dentro de esa
+         * imagen, así que no dictamina: lo deja pendiente diciendo qué vio. */
+        const conFondo = /background(-image)?\s*:[^;}]*url\(/i.test(ctx.estilos || "");
+        if (conFondo) {
+          return ficha("1.4.5", {
+            pregunta: "¿Alguna de las imágenes de fondo lleva texto incrustado?",
+            queMirar: [{ locator: "(CSS)", path: "", detalle: "las hojas de estilo declaran imágenes de fondo (`background-image: url(…)`)" }],
+            loQueYaSabemos: [
+              "La página no tiene ninguna etiqueta `<img>`, `<svg>` ni `<picture>` con contenido, pero sí imágenes de fondo declaradas en CSS.",
+              "El hero con el titular incrustado —que es el caso típico de 1.4.5— casi siempre es una imagen de fondo, y el agente no puede leer lo que hay dentro de ella."
+            ],
+            comoDecidir: [
+              "Mira las imágenes de fondo en el navegador: si alguna lleva texto que no esté también como texto real → falla (salvo logotipo o texto esencialmente gráfico).",
+              "Amplía al 200 %: el texto incrustado se pixela, y es la forma más rápida de verlo."
+            ],
+            datos: { fondosCss: true }
+          });
+        }
+        return noAplica("1.4.5", "La página no tiene imágenes visibles con contenido (las decorativas con alt vacío quedan fuera) ni imágenes de fondo declaradas en el CSS que se ha podido leer.", null, doc);
       }
       // Candidatas: alt con pinta de frase, o nombre de archivo que suena a texto.
       const SOSPECHOSO = /(banner|cartel|titular|slogan|lema|texto|frase|cita|promo|oferta|infograf)/i;
@@ -3522,17 +3599,54 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       if (!enlaces.length) {
         return noAplica("2.4.4", "La página no tiene enlaces visibles.", null, doc);
       }
-      const vagos = enlaces.filter(function (a) { return NOMBRES_VACIOS.test(nombreDe(a)); });
-      if (!vagos.length) {
+      /* SIN NOMBRE no es lo mismo que nombre vago, y era un agujero.
+       *
+       * `NOMBRES_VACIOS` está anclada entre `^` y `$` y no tiene alternativa vacía,
+       * así que un enlace sin nombre accesible —un icono sin `alt`, un `<svg>` sin
+       * título, un `<a href>` sin contenido— NO casaba, se contaba como «tiene
+       * nombre propio» y la ficha firmaba `cumple-parcial` con esta frase:
+       * «Ninguno de los 6 enlaces visibles se llama "Leer más"… todos tienen
+       * nombre propio». Medido sobre una página con cinco de seis enlaces sin
+       * nombre: eso es una afirmación FALSA en la evidencia, con un veredicto casi
+       * conforme y `queMirar` vacío, es decir, diciéndole a quien audita que no hay
+       * nada que mirar en el criterio que más barreras masivas produce.
+       *
+       * Un nombre que no existe no puede describir el destino, así que esos
+       * enlaces van al expediente antes que los vagos. El `falla` lo firma una
+       * persona —el cuaderno no dictamina— y el motor ya los acusa por su cuenta
+       * en 4.1.2 y 1.1.1. */
+      const sinNombre = enlaces.filter(function (a) { return !nombreDe(a); });
+      const vagos = enlaces.filter(function (a) { const n = nombreDe(a); return n && NOMBRES_VACIOS.test(n); });
+      if (!vagos.length && !sinNombre.length) {
         return ficha("2.4.4", {
           veredicto: "cumple-parcial",
           pregunta: "¿El nombre de cada enlace dice a dónde lleva?",
           queMirar: [],
           loQueYaSabemos: [
-            "Ninguno de los " + enlaces.length + " enlaces visibles se llama «Leer más», «Aquí», «Ver» ni nada equivalente: todos tienen nombre propio.",
+            "Los " + enlaces.length + " enlaces visibles tienen nombre accesible, y ninguno se llama «Leer más», «Aquí», «Ver» ni nada equivalente.",
             "Eso es lo comprobable. Que el nombre describa BIEN el destino sigue siendo juicio, pero sin nombres vacíos no hay que ir a buscar el contexto de ninguno."
           ],
           comoDecidir: ["Repasa por encima que los nombres correspondan a sus destinos; si alguno no, decídelo aquí."]
+        });
+      }
+      if (sinNombre.length) {
+        return ficha("2.4.4", {
+          pregunta: sinNombre.length + " de los " + enlaces.length + " enlaces visibles no tienen NINGÚN nombre accesible" +
+            (vagos.length ? ", y otros " + vagos.length + " lo tienen vago" : "") + ". ¿Confirmas la barrera?",
+          queMirar: sinNombre.slice(0, 30).map(function (a) {
+            return ref(a, "(sin nombre) → " + (a.getAttribute("href") || "").slice(0, 60));
+          }).concat(vagos.slice(0, 30).map(function (a) {
+            return ref(a, "«" + nombreDe(a).slice(0, 40) + "» → " + (a.getAttribute("href") || "").slice(0, 60));
+          })),
+          loQueYaSabemos: [
+            "Un nombre que no existe no puede describir el destino: un lector de pantalla anuncia solo «enlace», o la URL.",
+            "El motor acusa estos mismos enlaces por su cuenta en 4.1.2 (nombre y rol) y, cuando el contenido es una imagen, en 1.1.1.",
+            "Aquí se recoge para 2.4.4 porque el criterio es el propósito del enlace, y sin nombre no hay propósito que leer."
+          ],
+          comoDecidir: [
+            "Comprueba en el navegador que el nombre falta de verdad (puede venir por `aria-labelledby` a un id que el marcado estático no resuelva) → si falta, falla.",
+            "Si algún enlace lo nombra una imagen con `alt` puesto por JS, dilo en el motivo: el informe tiene que decir de dónde sale el nombre."
+          ]
         });
       }
       return ficha("2.4.4", {
@@ -3684,8 +3798,45 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       const captcha = visibles(doc, "*").filter(function (el) {
         return CAPTCHA.test((el.getAttribute("class") || "") + " " + (el.getAttribute("id") || "") + " " + (el.getAttribute("src") || ""));
       });
+      /* `input[type=password]` no es el único campo de autenticación.
+       *
+       * Un acceso por código de un solo uso —el que llega por correo o por SMS— no
+       * lleva contraseña ninguna: lleva un `input` de texto, y 3.3.8 le aplica de
+       * lleno, porque el criterio admite el código solo si se puede PEGAR. Igual el
+       * campo enmascarado por JS sobre un `type=text`. Sin esto, esas páginas
+       * firmaban «no aplica · no hay proceso de autenticación que evaluar» sobre un
+       * formulario de acceso, y «no aplica» cierra el criterio en el IRA.
+       *
+       * Las señales son hechos del marcado, no conjeturas: los valores de
+       * `autocomplete` que la especificación reserva para credenciales, y los
+       * nombres e identificadores de campo de código. */
+      const AUTOCOMPLETE_CRED = /(^|\s)(current-password|new-password|one-time-code)(\s|$)/i;
+      const NOMBRE_CODIGO = /(^|[^a-z])(otp|otc|tan|pin|passcode|password|contrasena|contrasenya|clave|codigo|code|verificacion|verification|token|2fa|mfa)([^a-z]|$)/i;
+      const otros = visibles(doc, "input,textarea").filter(function (el) {
+        if (el.getAttribute("type") === "password") return false;
+        if (AUTOCOMPLETE_CRED.test(el.getAttribute("autocomplete") || "")) return true;
+        const señas = sinTildesC((el.getAttribute("name") || "") + " " + (el.getAttribute("id") || "") + " " + (el.getAttribute("placeholder") || "") + " " + (el.getAttribute("aria-label") || ""));
+        return NOMBRE_CODIGO.test(señas);
+      });
+      if (!passwords.length && !captcha.length && !otros.length) {
+        return noAplica("3.3.8", "La página no tiene ningún campo de contraseña, de código de un solo uso ni captcha: no hay proceso de autenticación que evaluar.", null, doc);
+      }
       if (!passwords.length && !captcha.length) {
-        return noAplica("3.3.8", "La página no tiene ningún campo de contraseña ni captcha: no hay proceso de autenticación que evaluar.", null, doc);
+        return ficha("3.3.8", {
+          pregunta: "Esto parece un acceso sin contraseña (código de un solo uso o campo enmascarado). ¿Se puede pegar el código y hay alternativa sin prueba cognitiva?",
+          queMirar: otros.slice(0, 15).map(function (el) {
+            return ref(el, "<" + tag(el) + "> " + ((el.getAttribute("name") || el.getAttribute("id") || el.getAttribute("placeholder") || "")).slice(0, 50));
+          }),
+          loQueYaSabemos: [
+            "No hay ningún `input[type=password]`, pero sí " + otros.length + " campo(s) con pinta de credencial o de código (por su `autocomplete` o por su nombre).",
+            "3.3.8 admite un código de un solo uso SOLO si la persona puede pegarlo: si el campo bloquea el pegado o lo parte en casillas de un carácter, es una prueba cognitiva."
+          ],
+          comoDecidir: [
+            "Prueba a pegar el código con el teclado: si el campo lo rechaza o hay que teclearlo dígito a dígito → falla.",
+            "Si el acceso es solo por un tercero (entrar con Google, con Cl@ve), el criterio se evalúa sobre ese proceso: dilo en el motivo."
+          ],
+          datos: { sinPassword: true, candidatos: otros.length }
+        });
       }
       const bloqueaPegado = visibles(doc, "input,textarea").filter(function (el) {
         return /return\s+false|preventDefault/i.test(el.getAttribute("onpaste") || "");
@@ -7856,39 +8007,207 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
 
   /* ── Clasificación por URL y por señales ─────────────────────────────────── */
 
-  const URL_RE = [
-    ["accesibilidad", /(accesibilidad|accessibility|declaraci[oó]n[-\s]de[-\s]accesibilidad)/i],
-    ["mapa-web", /(mapa[-\s]?web|mapa[-\s]del[-\s]sitio|sitemap|[ií]ndice[-\s]del[-\s]sitio)/i],
-    ["contacto", /(contacto|contactar|contact)/i],
-    ["ayuda", /(ayuda|help|faq|preguntas[-\s]frecuentes|soporte|support)/i],
-    ["legal", /(aviso[-\s]?legal|privacidad|privacy|cookies|t[eé]rminos|terminos|legal)/i],
-    ["busqueda", /(buscar|busqueda|search|resultados)/i],
-    ["acceso", /(login|acceso|iniciar[-\s]?sesi[oó]n|iniciar[-\s]?sesion|registro|signin|sign[-\s]?up|alta)/i]
-  ];
+  /**
+   * ANTES ESTO ERAN SIETE EXPRESIONES DE SUBCADENA, y clasificaba mal casi todo.
+   * Medido sobre nueve rutas de aspecto corriente, ocho salían con categoría:
+   *
+   *   /accesorios                     → «Acceso o registro»   («acceso» dentro de accesorios)
+   *   /productos/altavoces-bluetooth  → «Acceso o registro»   («alta» dentro de altavoces)
+   *   /registro-civil-tramites        → «Acceso o registro»
+   *   /noticias/resultados-del-partido→ «Resultados de búsqueda»
+   *   /blog/comercio-ilegal-de-especies → «Aviso legal»       («legal» dentro de ilegal)
+   *   /servicios/soporte-vital-basico → «Ayuda»
+   *   /es/destinos/contactos-culturales → «Contacto»
+   *
+   * Y el daño no se queda en la lista: la cobertura que va al IRA decía que la
+   * muestra incluía contacto, ayuda, aviso legal, resultados de búsqueda y acceso
+   * —cinco categorías, ninguna presente— y los avisos de «no se ha encontrado
+   * ninguna página de esta categoría», que son los que mandan a la persona
+   * auditora a comprobarlo a mano, desaparecían por estar «cubiertas».
+   *
+   * La regla nueva no mira subcadenas: parte la ruta en segmentos y los segmentos
+   * en palabras, y exige dos cosas a la vez:
+   *
+   *  1. que alguna palabra sea CLAVE de la categoría (palabra entera: «acceso» ya
+   *     no lo encuentra dentro de «accesorios»), y
+   *  2. que TODAS las demás palabras del segmento sean de la categoría, de apoyo o
+   *     conectores. Así `/aviso-legal` y `/contactar-con-nosotros` pasan, y
+   *     `/comercio-ilegal-de-especies` o `/contactos-culturales` no.
+   *
+   * Lo que trae una palabra clave pero no encaja del todo no se tira en silencio:
+   * se devuelve en `posibles` y la selección lo nombra en un aviso. Descartar de
+   * más deja el mismo agujero que clasificar de más, solo que al revés.
+   */
+
+  /** Palabras que no dicen de qué va la página: solo unen a las que sí. */
+  const CONECTORES = {
+    de: 1, del: 1, la: 1, las: 1, el: 1, los: 1, un: 1, una: 1, unos: 1, unas: 1,
+    y: 1, e: 1, o: 1, u: 1, con: 1, a: 1, al: 1, en: 1, para: 1, por: 1, sobre: 1,
+    the: 1, of: 1, and: 1, to: 1, for: 1, our: 1, my: 1, us: 1,
+    pagina: 1, paginas: 1, page: 1, pages: 1, web: 1, site: 1, portal: 1,
+    html: 1, htm: 1, php: 1, asp: 1, aspx: 1, jsp: 1, shtml: 1, xhtml: 1,
+    index: 1, default: 1, home: 1, inicio: 1, content: 1, contenido: 1
+  };
+
+  /**
+   * Vocabulario por categoría. `clave`: al menos una tiene que estar. `apoyo`: se
+   * toleran, pero no bastan. `combos`: pares que juntos valen como clave («mapa» a
+   * secas es un mapa interactivo; «mapa» + «web» es el mapa del sitio).
+   */
+  const VOCABULARIO = {
+    accesibilidad: {
+      clave: ["accesibilidad", "accessibility", "accesibilidade", "acessibilidade", "erabilerraztasuna"],
+      apoyo: ["declaracion", "declaracio", "declaration", "statement", "aviso", "informe", "politica", "policy", "conformidad", "nivel", "compromiso"]
+    },
+    "mapa-web": {
+      clave: ["sitemap", "mapaweb"],
+      combos: [["mapa", "web"], ["mapa", "sitio"], ["mapa", "contenidos"], ["mapa", "navegacion"], ["indice", "sitio"], ["indice", "contenidos"], ["arbol", "contenidos"]],
+      apoyo: ["mapa", "indice", "sitio", "contenidos", "navegacion", "arbol", "estructura"]
+    },
+    contacto: {
+      clave: ["contacto", "contactos", "contactar", "contacta", "contactanos", "contact", "kontaktua"],
+      apoyo: ["nosotros", "nos", "directorio", "atencion", "ciudadano", "ciudadana", "cliente", "clientes", "formulario", "donde", "estamos", "localizacion", "telefono", "telefonos", "email", "correo", "informacion", "escribenos", "buzon"]
+    },
+    ayuda: {
+      clave: ["ayuda", "help", "faq", "faqs", "soporte", "support", "laguntza"],
+      combos: [["preguntas", "frecuentes"], ["preguntas", "habituales"], ["dudas", "frecuentes"]],
+      apoyo: ["preguntas", "frecuentes", "habituales", "dudas", "tecnico", "tecnica", "usuario", "usuarios", "centro", "asistencia", "online"]
+    },
+    legal: {
+      clave: ["legal", "legales", "privacidad", "privacy", "cookies", "terminos", "condiciones", "terms", "conditions", "lopd", "rgpd", "gdpr"],
+      apoyo: ["aviso", "avisos", "politica", "politicas", "policy", "uso", "datos", "personales", "proteccion", "nota", "texto", "informacion", "legalidad", "notice"]
+    },
+    busqueda: {
+      clave: ["buscar", "busqueda", "buscador", "search", "bilaketa", "procura"],
+      apoyo: ["resultados", "resultado", "results", "avanzada", "avanzado", "general", "contenidos", "q"]
+    },
+    acceso: {
+      clave: ["login", "signin", "signup", "acceso", "acceder", "registro", "registrarse", "registrate", "identificacion", "identificate", "autenticacion", "sarbidea"],
+      combos: [["iniciar", "sesion"], ["mi", "cuenta"], ["area", "privada"], ["zona", "privada"], ["darse", "alta"], ["sign", "in"], ["sign", "up"], ["log", "in"]],
+      apoyo: ["sesion", "usuario", "usuarios", "clientes", "privado", "privada", "area", "zona", "intranet", "cuenta", "mi", "iniciar", "nuevo", "nueva", "alta", "sign", "log", "in", "up", "darse"]
+    }
+  };
+  /** Parámetros de consulta que delatan una página de resultados de búsqueda. */
+  const PARAM_BUSQUEDA = { q: 1, s: 1, query: 1, busqueda: 1, buscar: 1, search: 1, keyword: 1, keywords: 1, palabra: 1, texto: 1, term: 1, termino: 1 };
+
+  function sinTildes(t) {
+    return String(t == null ? "" : t).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  }
+  function palabras(txt) {
+    return sinTildes(txt).split(/[^a-z0-9]+/).filter(Boolean);
+  }
+  function decodeSeguro(t) {
+    try { return decodeURIComponent(String(t).replace(/\+/g, " ")); } catch (e) { return String(t); }
+  }
+  /**
+   * Parte una ruta en grupos de palabras: un grupo por segmento de camino y uno
+   * por valor de la cadena de consulta. Cada grupo se juzga por separado, así que
+   * el `/es/` o el `/sede/` de delante no contaminan al segmento que decide.
+   */
+  function trozosDeRuta(ruta) {
+    const s = String(ruta || "");
+    const i = s.indexOf("?");
+    const camino = i === -1 ? s : s.slice(0, i);
+    const consulta = i === -1 ? "" : s.slice(i + 1);
+    const out = [];
+    camino.split("/").forEach(function (seg) {
+      if (!seg) return;
+      out.push(palabras(decodeSeguro(seg).replace(/\.[a-z0-9]{1,5}$/i, "")));
+    });
+    consulta.split(/[&;]/).forEach(function (par) {
+      if (!par) return;
+      const p = par.split("=");
+      out.push(palabras(decodeSeguro(p.length > 1 ? p.slice(1).join("=") : par)));
+    });
+    return out.filter(function (w) { return w.length; });
+  }
+  /**
+   * Parte un título en grupos. Los títulos llevan casi siempre el nombre del sitio
+   * detrás de un separador («Contacto | Ayuntamiento de X»), y ese rabo no debe
+   * decidir nada: cada trozo se juzga solo.
+   */
+  function trozosDeTitulo(titulo) {
+    return String(titulo || "")
+      .split(/[|·—–»«>]|::|\s+-\s+|\s*:\s+/)
+      .map(palabras)
+      .filter(function (w) { return w.length; });
+  }
+  function enLista(lista) {
+    const ix = {};
+    (lista || []).forEach(function (w) { ix[w] = 1; });
+    return ix;
+  }
+  const VOC_IX = {};
+  Object.keys(VOCABULARIO).forEach(function (k) {
+    const v = VOCABULARIO[k];
+    VOC_IX[k] = { clave: enLista(v.clave), apoyo: enLista(v.apoyo), combos: v.combos || [] };
+  });
+
+  function tieneClave(ws, v) {
+    if (ws.some(function (w) { return v.clave[w]; })) return true;
+    return v.combos.some(function (c) { return c.every(function (w) { return ws.indexOf(w) !== -1; }); });
+  }
+  /** El grupo de palabras ES de esta categoría: clave presente y nada ajeno. */
+  function encaja(ws, v) {
+    if (!tieneClave(ws, v)) return false;
+    return ws.every(function (w) {
+      return CONECTORES[w] || v.clave[w] || v.apoyo[w] || /^\d+$/.test(w);
+    });
+  }
 
   /**
    * Clasifica una candidata. `pagina` es lo que produce el rastreo:
-   * `{ url, ruta, titulo, estructura, señales }`.
+   * `{ url, ruta, titulo, plantilla, señales }`.
+   *
+   * Devuelve `categorias` (las que se pueden afirmar), `posibles` (las que suenan
+   * pero no encajan: van a un aviso, no a la cobertura) y `contenidos`.
    */
   function clasificar(pagina) {
     const cats = [];
+    const posibles = [];
     const ruta = String(pagina.ruta || pagina.url || "");
     const titulo = String(pagina.titulo || "");
     const s = pagina["señales"] || pagina.senales || {};
+    const grupos = trozosDeRuta(ruta).concat(trozosDeTitulo(titulo));
+    const mete = function (id) { if (cats.indexOf(id) === -1) cats.push(id); };
 
-    if (ruta === "/" || ruta === "" || s.esInicio) cats.push("inicio");
-    URL_RE.forEach(function (par) {
-      if (par[1].test(ruta) || par[1].test(titulo)) { if (cats.indexOf(par[0]) === -1) cats.push(par[0]); }
+    const soloCamino = ruta.split("?")[0].replace(/\/+$/, "");
+    if (soloCamino === "" || /\/(index|default|inicio|home)(\.[a-z0-9]{1,5})?$/i.test(soloCamino) || s.esInicio) mete("inicio");
+
+    const fuerte = {};
+    Object.keys(VOC_IX).forEach(function (id) {
+      const v = VOC_IX[id];
+      if (grupos.some(function (ws) { return encaja(ws, v); })) { fuerte[id] = 1; return; }
+      if (grupos.some(function (ws) { return tieneClave(ws, v); })) posibles.push(id);
     });
-    // Las señales del DOM mandan sobre la URL: un formulario de acceso es acceso
-    // aunque la ruta no lo diga.
-    if (s.tieneAcceso && cats.indexOf("acceso") === -1) cats.push("acceso");
-    if (s.tieneBusqueda && cats.indexOf("busqueda") === -1 && /resultado|search|buscar/i.test(ruta + " " + titulo)) cats.push("busqueda");
-    if (s.tieneFormulario && cats.indexOf("acceso") === -1 && cats.indexOf("formulario") === -1) cats.push("formulario");
-    if (s.esProceso) cats.push("proceso");
+    // Las temáticas se pueden afirmar con el nombre: una ruta que es exactamente
+    // «aviso-legal» o «preguntas-frecuentes» no es otra cosa.
+    ["accesibilidad", "mapa-web", "contacto", "ayuda", "legal"].forEach(function (id) { if (fuerte[id]) mete(id); });
+
+    /* Acceso y búsqueda son FUNCIÓN, no tema, así que el nombre NUNCA basta: hace
+       falta que el DOM lo confirme. Y tiene que ser el encaje FUERTE, no la simple
+       mención: `/registro-civil-tramites` tiene formulario y la palabra «registro»,
+       y con la mención bastando salía como «Acceso o registro» —el único falso
+       positivo que quedaba de los nueve medidos. */
+    if (s.tieneAcceso) mete("acceso");                                 // un campo de contraseña no deja dudas
+    else if (fuerte.acceso && s.tieneFormulario) mete("acceso");       // la ruta ES de acceso y hay formulario
+    else if (fuerte.acceso) posibles.push("acceso");                   // lo parece, pero no hay dónde identificarse
+    const paramBusqueda = (ruta.split("?")[1] || "").split(/[&;]/).some(function (p) {
+      return p.indexOf("=") !== -1 && PARAM_BUSQUEDA[sinTildes(p.split("=")[0])];
+    });
+    if (s.tieneBusqueda && (fuerte.busqueda || paramBusqueda)) mete("busqueda");
+    else if (fuerte.busqueda) posibles.push("busqueda");
+
+    if (s.tieneFormulario && cats.indexOf("acceso") === -1 && cats.indexOf("formulario") === -1) mete("formulario");
+    if (s.esProceso) mete("proceso");
 
     const contenidos = CONTENIDOS.map(function (c) { return c.id; }).filter(function (id) { return !!s[id]; });
-    return { categorias: cats, contenidos: contenidos, plantilla: pagina.plantilla || null };
+    return {
+      categorias: cats,
+      posibles: posibles.filter(function (id) { return cats.indexOf(id) === -1; }),
+      contenidos: contenidos,
+      plantilla: pagina.plantilla || null
+    };
   }
 
   /* ── Selección ───────────────────────────────────────────────────────────── */
@@ -7933,7 +8252,16 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     CATEGORIAS.forEach(function (cat) {
       const cands = todas.filter(function (p) { return p.clasif.categorias.indexOf(cat.id) !== -1; });
       if (!cands.length) {
-        if (cat.esencial) avisos.push("No se ha encontrado ninguna página de la categoría «" + cat.etiqueta + "»: compruébalo a mano antes de dar la muestra por buena.");
+        // Lo que suena a esta categoría pero no encajó. Nombrarlo es lo que impide
+        // que una regla más estricta se coma una página de verdad sin que nadie se
+        // entere: la persona auditora mira esas tres URL y decide.
+        const flojas = todas.filter(function (p) { return (p.clasif.posibles || []).indexOf(cat.id) !== -1; });
+        const pistas = flojas.length
+          ? " Hay " + flojas.length + " página(s) que mencionan la categoría en su nombre o título pero no parecen serlo (" +
+            flojas.slice(0, 3).map(function (p) { return p.url; }).join(", ") + (flojas.length > 3 ? ", …" : "") + "): compruébalas."
+          : "";
+        if (cat.esencial) avisos.push("No se ha encontrado ninguna página de la categoría «" + cat.etiqueta + "»: compruébalo a mano antes de dar la muestra por buena." + pistas);
+        else if (flojas.length) avisos.push("Ninguna página encaja con la categoría «" + cat.etiqueta + "»." + pistas);
         return;
       }
       // La más corta: suele ser la canónica («/contacto» antes que «/es/x/contacto-2»).
@@ -8060,6 +8388,8 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   NS.barajar = barajar;
   NS.CATEGORIAS = CATEGORIAS;
   NS.CONTENIDOS = CONTENIDOS;
+  NS.trozosDeRuta = trozosDeRuta;
+  NS.trozosDeTitulo = trozosDeTitulo;
   NS.clasificar = clasificar;
   NS.seleccionarMuestra = seleccionarMuestra;
   NS.justificarMuestra = justificarMuestra;
@@ -8155,14 +8485,27 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     const alfa = coberturaGlifos(c.sondaA, c.sondaB);
     const F = c.fondo.data;
     const cuentas = new Map();
-    let nucleo = 0, conAlgo = 0;
+    let nucleo = 0, conAlgo = 0, fondoTranslucido = 0;
     for (let i = 0; i < alfa.length; i++) {
       if (alfa[i] > 0.05) conAlgo++;
       if (alfa[i] < minCob) continue;
       nucleo++;
       const p = i * 4;
+      /* El fondo se leía sin mirar su ALFA.
+       *
+       * Con el driver de hoy no pasa —Playwright compone la captura sobre el fondo
+       * de la página y el alfa sale 255 en todos los píxeles, medido—, pero el
+       * número que sale de aquí es un ratio de contraste que acaba en un informe
+       * con efectos legales: si algún día la captura llegara con transparencia, el
+       * color leído NO sería el que se ve, y el ratio saldría calculado contra un
+       * fondo que nadie tiene delante. Eso no puede pasar en silencio. */
+      if (F[p + 3] != null && F[p + 3] < 250) fondoTranslucido++;
       const clave = (F[p] << 16) | (F[p + 1] << 8) | F[p + 2];
       cuentas.set(clave, (cuentas.get(clave) || 0) + 1);
+    }
+    if (fondoTranslucido) {
+      return { determinado: false, motivo: "la captura del fondo llega con transparencia en " + fondoTranslucido +
+        " de los " + nucleo + " píxeles de texto (alfa < 250), así que el color leído no es el que se ve en pantalla y el ratio saldría calculado contra un fondo inexistente" };
     }
 
     if (!conAlgo) {

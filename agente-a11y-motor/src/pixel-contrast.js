@@ -89,14 +89,27 @@ export function analizarPixeles(capturas, fg, opts) {
   const alfa = coberturaGlifos(c.sondaA, c.sondaB);
   const F = c.fondo.data;
   const cuentas = new Map();
-  let nucleo = 0, conAlgo = 0;
+  let nucleo = 0, conAlgo = 0, fondoTranslucido = 0;
   for (let i = 0; i < alfa.length; i++) {
     if (alfa[i] > 0.05) conAlgo++;
     if (alfa[i] < minCob) continue;
     nucleo++;
     const p = i * 4;
+    /* El fondo se leía sin mirar su ALFA.
+     *
+     * Con el driver de hoy no pasa —Playwright compone la captura sobre el fondo
+     * de la página y el alfa sale 255 en todos los píxeles, medido—, pero el
+     * número que sale de aquí es un ratio de contraste que acaba en un informe
+     * con efectos legales: si algún día la captura llegara con transparencia, el
+     * color leído NO sería el que se ve, y el ratio saldría calculado contra un
+     * fondo que nadie tiene delante. Eso no puede pasar en silencio. */
+    if (F[p + 3] != null && F[p + 3] < 250) fondoTranslucido++;
     const clave = (F[p] << 16) | (F[p + 1] << 8) | F[p + 2];
     cuentas.set(clave, (cuentas.get(clave) || 0) + 1);
+  }
+  if (fondoTranslucido) {
+    return { determinado: false, motivo: "la captura del fondo llega con transparencia en " + fondoTranslucido +
+      " de los " + nucleo + " píxeles de texto (alfa < 250), así que el color leído no es el que se ve en pantalla y el ratio saldría calculado contra un fondo inexistente" };
   }
 
   if (!conAlgo) {
@@ -240,7 +253,9 @@ return Array.prototype.slice.call(document.querySelectorAll('body *'))
   .slice(0, __arg || 12)
   .map(function(el){
     var cs=getComputedStyle(el), r=el.getBoundingClientRect();
+    var sb=(cs.textShadow||'').trim();
     return { uid:__uid(el), locator:__loc(el), color:cs.color,
+             sombra:(sb && sb!=='none') ? sb : '',
              size:parseFloat(cs.fontSize)||16, weight:parseInt(cs.fontWeight,10)||400,
              ancho:Math.round(r.width), alto:Math.round(r.height),
              texto:__propio(el).slice(0,40) };
@@ -263,25 +278,48 @@ export async function resolverContrastePorPixeles(page, opts) {
 
   // Repintar SOLO el color del texto, sin tocar el layout: si cambiara el tamaño
   // del elemento, las tres capturas no se podrían comparar.
-  const pintar = function (uid, color) {
+  //
+  // `color` SE HEREDA, y eso metía en la máscara las letras de los hijos. Medido
+  // sobre un párrafo blanco en un hero oscuro con un enlace azul marino dentro:
+  // el control sin hijos daba 622 px de texto y el mismo párrafo con el enlace,
+  // 1072 — los 457 px del enlace entraban en la medición del padre y se juzgaban
+  // con el color del PADRE. Ahí salió «pasa · todo el texto llega al mínimo» con
+  // el enlace fallando a 1.19:1 dentro de esa misma caja; con el hijo sobre un
+  // fondo claro, el error es al revés y el padre falla por letras que no son
+  // suyas. Así que antes de sondar se CLAVA a cada descendiente su propio color
+  // calculado con `!important`: deja de cambiar entre sonda y sonda, su α sale 0
+  // y queda fuera de la máscara. Clavar el color calculado no altera el píxel
+  // que se ve, y de paso fija también sus pseudoelementos, que heredan de él.
+  const pintar = function (uid, color, sombra) {
     return page.evaluate(function (arg) {
       const el = document.querySelector(arg.uid);
       if (!el) return false;
-      if (!el.hasAttribute("data-a11y-prev")) {
-        el.setAttribute("data-a11y-prev", JSON.stringify({
-          color: el.style.getPropertyValue("color"),
-          prioridad: el.style.getPropertyPriority("color"),
-          relleno: el.style.getPropertyValue("-webkit-text-fill-color"),
-          sombra: el.style.getPropertyValue("text-shadow")
+      const guardar = function (n) {
+        if (n.hasAttribute("data-a11y-prev")) return;
+        n.setAttribute("data-a11y-prev", JSON.stringify({
+          color: n.style.getPropertyValue("color"),
+          prioridad: n.style.getPropertyPriority("color"),
+          relleno: n.style.getPropertyValue("-webkit-text-fill-color"),
+          prioridadRelleno: n.style.getPropertyPriority("-webkit-text-fill-color"),
+          sombra: n.style.getPropertyValue("text-shadow"),
+          prioridadSombra: n.style.getPropertyPriority("text-shadow")
         }));
-      }
+      };
+      guardar(el);
+      Array.prototype.forEach.call(el.querySelectorAll("*"), function (h) {
+        if (h.hasAttribute("data-a11y-prev")) return;
+        const propio = getComputedStyle(h).color;
+        guardar(h);
+        h.style.setProperty("color", propio, "important");
+        h.style.setProperty("-webkit-text-fill-color", propio, "important");
+      });
       el.style.setProperty("color", arg.color, "important");
       // -webkit-text-fill-color pisa a color en Chromium: hay que ponerlo también
       // o el repintado no tiene efecto donde el sitio lo use.
       el.style.setProperty("-webkit-text-fill-color", arg.color, "important");
-      el.style.setProperty("text-shadow", "none", "important");
+      el.style.setProperty("text-shadow", arg.sombra || "none", "important");
       return true;
-    }, { uid: uid, color: color });
+    }, { uid: uid, color: color, sombra: sombra || "none" });
   };
   // OJO: re-resolver el selector al restaurar es frágil — si el DOM cambió entre
   // el pintado y la restauración (carrusel, lazy-load, re-render de SPA), esa
@@ -290,41 +328,39 @@ export async function resolverContrastePorPixeles(page, opts) {
   // la misma página, eso contamina todas las mediciones posteriores. Por eso,
   // además de restaurar por el selector, se barre al final todo lo que quedara
   // marcado con `data-a11y-prev`.
-  const restaurar = function (uid) {
+  // Una sola función para las dos cosas: con `uid`, devuelve ese elemento y su
+  // subárbol (los descendientes se clavaron para sacarlos de la máscara, y
+  // dejarlos clavados con !important ensucia la página que siguen usando las
+  // demás capas); sin `uid`, barre la página entera.
+  const devolverEn = function (uid) {
     return page.evaluate(function (arg) {
-      const el = document.querySelector(arg.uid);
-      if (!el) return;
-      let p = {};
-      try { p = JSON.parse(el.getAttribute("data-a11y-prev") || "{}"); } catch (e) {}
-      el.style.removeProperty("color");
-      el.style.removeProperty("-webkit-text-fill-color");
-      el.style.removeProperty("text-shadow");
-      if (p.color) el.style.setProperty("color", p.color, p.prioridad || "");
-      if (p.relleno) el.style.setProperty("-webkit-text-fill-color", p.relleno);
-      if (p.sombra) el.style.setProperty("text-shadow", p.sombra);
-      el.removeAttribute("data-a11y-prev");
-    }, { uid: uid }).catch(function () {});
-  };
-  /** Barrido final: nada puede quedar pintado en la página del cliente. */
-  const barrer = function () {
-    return page.evaluate(function () {
-      let n = 0;
-      document.querySelectorAll("[data-a11y-prev]").forEach(function (el) {
-        n++;
+      const devolver = function (el) {
         let p = {};
         try { p = JSON.parse(el.getAttribute("data-a11y-prev") || "{}"); } catch (e) {}
         el.style.removeProperty("color");
         el.style.removeProperty("-webkit-text-fill-color");
         el.style.removeProperty("text-shadow");
         if (p.color) el.style.setProperty("color", p.color, p.prioridad || "");
-        if (p.relleno) el.style.setProperty("-webkit-text-fill-color", p.relleno);
-        if (p.sombra) el.style.setProperty("text-shadow", p.sombra);
+        if (p.relleno) el.style.setProperty("-webkit-text-fill-color", p.relleno, p.prioridadRelleno || "");
+        if (p.sombra) el.style.setProperty("text-shadow", p.sombra, p.prioridadSombra || "");
         el.removeAttribute("data-a11y-prev");
         if (!el.getAttribute("style")) el.removeAttribute("style");
-      });
+      };
+      let n = 0;
+      if (arg.uid) {
+        const raiz = document.querySelector(arg.uid);
+        if (!raiz) return 0;
+        Array.prototype.forEach.call(raiz.querySelectorAll("[data-a11y-prev]"), function (el) { n++; devolver(el); });
+        if (raiz.hasAttribute("data-a11y-prev")) { n++; devolver(raiz); }
+      } else {
+        document.querySelectorAll("[data-a11y-prev]").forEach(function (el) { n++; devolver(el); });
+      }
       return n;
-    }).catch(function () { return 0; });
+    }, { uid: uid || null }).catch(function () { return 0; });
   };
+  const restaurar = function (uid) { return devolverEn(uid); };
+  /** Barrido final: nada puede quedar pintado en la página del cliente. */
+  const barrer = function () { return devolverEn(null); };
 
   const rgb = function (c) { return "rgb(" + c.r + "," + c.g + "," + c.b + ")"; };
 
@@ -334,13 +370,31 @@ export async function resolverContrastePorPixeles(page, opts) {
     const loc = page.locator(c.uid).first();
     const cap = {};
     let motivo = null;
+    let fondoConSombra = null;
     try {
-      await pintar(c.uid, rgb(SONDA_A));
+      /* Las dos sondas van SIN sombra: si la sombra usa `currentColor` —lo
+         normal cuando no se le pone color— cambiaría de magenta a verde con el
+         texto y ensuciaría la máscara. La sombra no afecta a la maquetación, así
+         que los píxeles siguen cayendo en el mismo sitio. */
+      await pintar(c.uid, rgb(SONDA_A), "none");
       cap.sondaA = decodePNG(await loc.screenshot({ timeout: 5000, animations: "disabled" }));
-      await pintar(c.uid, rgb(SONDA_B));
+      await pintar(c.uid, rgb(SONDA_B), "none");
       cap.sondaB = decodePNG(await loc.screenshot({ timeout: 5000, animations: "disabled" }));
-      await pintar(c.uid, "transparent");
+      await pintar(c.uid, "transparent", "none");
       cap.fondo = decodePNG(await loc.screenshot({ timeout: 5000, animations: "disabled" }));
+      /* Y si el texto lleva sombra, una captura más CON ella.
+         Borrarla y medir era un falso positivo medido: texto blanco sobre un
+         degradado claro con `text-shadow: 0 1px 3px rgba(0,0,0,.95)` daba 1.18:1
+         —exactamente lo mismo que el mismo texto sin sombra, 1.19:1—, y el
+         informe no podía distinguir un texto ilegible de uno que la sombra hace
+         legible. Tampoco vale creditar la sombra sin más: WCAG 1.4.3 habla del
+         color del texto contra el del fondo, y una sombra como halo es discutible.
+         Así que se miden las dos lecturas y, cuando no coinciden, el veredicto es
+         `revisar` —que no es conforme— con la contradicción escrita. */
+      if (c.sombra) {
+        await pintar(c.uid, "transparent", c.sombra);
+        fondoConSombra = decodePNG(await loc.screenshot({ timeout: 5000, animations: "disabled" }));
+      }
     } catch (e) {
       motivo = "no se pudo capturar el elemento (" + String((e && e.message) || e).split("\n")[0] + ")";
     } finally {
@@ -349,19 +403,38 @@ export async function resolverContrastePorPixeles(page, opts) {
     }
 
     const grande = c.size >= 24 || (c.size >= 18.66 && c.weight >= 700);
-    const r = motivo
-      ? { determinado: false, motivo: motivo }
-      : analizarPixeles(cap, fg, { grande: grande, size: c.size, weight: c.weight, minCobertura: opts.minCobertura });
+    const dale = function (fondo) {
+      return analizarPixeles(Object.assign({}, cap, { fondo: fondo }), fg,
+        { grande: grande, size: c.size, weight: c.weight, minCobertura: opts.minCobertura });
+    };
+    const r = motivo ? { determinado: false, motivo: motivo } : dale(cap.fondo);
+    const rSombra = (!motivo && fondoConSombra) ? dale(fondoConSombra) : null;
     const fgStr = "rgb(" + Math.round(fg.r) + " " + Math.round(fg.g) + " " + Math.round(fg.b) + ")";
+
+    let verdict = r.determinado ? r.verdict : "revisar";
+    let detail = detallePixeles(r, fgStr);
+    if (rSombra && rSombra.determinado && r.determinado && rSombra.verdict !== r.verdict) {
+      verdict = "revisar";
+      detail += " · Y lleva <code>text-shadow</code>: medido CON la sombra detrás de cada letra sale " +
+        rSombra.peor.toFixed(2) + ":1 (" + (rSombra.verdict === "pasa" ? "pasaría" : "seguiría fallando") +
+        "), y sin ella " + r.peor.toFixed(2) + ":1. El criterio compara el color del texto con el del fondo, " +
+        "y una sombra usada de halo no es un fondo: decide a ojo si el texto se lee.";
+    } else if (rSombra && rSombra.determinado) {
+      detail += " · con <code>text-shadow</code> detrás (" + rSombra.peor.toFixed(2) + ":1) el veredicto no cambia";
+    } else if (c.sombra && !rSombra) {
+      detail += " · lleva <code>text-shadow</code>, que no se ha podido medir aparte";
+    }
+
     out.push({
       crit: "1.4.3", label: "Contraste del texto",
       node: c.locator + (c.texto ? " «" + c.texto + "»" : ""),
       locator: c.locator,
       uid: c.uid,
-      verdict: r.determinado ? r.verdict : "revisar",
-      detail: detallePixeles(r, fgStr),
+      verdict: verdict,
+      detail: detail,
       origen: "píxeles",
-      pixeles: r
+      pixeles: r,
+      pixelesConSombra: rSombra
     });
   }
   // Antes de devolver nada: la página del cliente no se queda pintada. Si el
