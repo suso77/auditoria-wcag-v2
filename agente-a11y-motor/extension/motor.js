@@ -314,6 +314,70 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     return st.indexOf("display:none") !== -1 || st.indexOf("visibility:hidden") !== -1;
   }
 
+  /* 2.1.1: la función que solo se puede hacer con el ratón (fallo F54).
+   *
+   * De 2.1.1 la medición dice `pasa` cuando el control RECIBE EL FOCO, y eso no
+   * es operar con el teclado. Para los controles no nativos ya hay una sospecha
+   * —Enter y Espacio no los activan solos—, pero medido sobre el marcado apareció
+   * el hueco en los NATIVOS: `<button onmousedown="x()">` salía 2.1.1 `cumple`,
+   * es decir exportable como conforme, cuando Enter y Espacio disparan `click` y
+   * NO `mousedown`: con el teclado ese botón no hace nada. Lo mismo con
+   * `ondblclick` —que no tiene equivalente de teclado— y con `onmouseover`.
+   *
+   * El veredicto es `revisar`, nunca `falla`, por la misma razón que el resto de
+   * lo que se deduce de los manejadores en línea: desde el marcado no se ve si lo
+   * que hace el manejador es una FUNCIÓN o un efecto visual
+   * (`onmousedown="this.classList.add('pulsado')"` no es una función). Lo que no
+   * se puede es firmar conformidad con un manejador de puntero como único camino.
+   *
+   * Alcance: solo elementos interactivos o enfocables, que es donde 2.1.1 muerde.
+   * Un `<div onmousedown>` que no es control ni recibe foco queda fuera: ahí no
+   * se puede distinguir una función de un adorno sin ejecutar la página, y de eso
+   * se encarga la capa dinámica.
+   */
+  const PUNTERO_PULSA = ["onmousedown", "onmouseup", "ondblclick", "onpointerdown", "onpointerup", "ontouchstart", "ontouchend"];
+  const PUNTERO_PASA = ["onmouseover", "onmouseout", "onmousemove", "onmouseenter", "onmouseleave", "onpointerover", "onpointerout", "onpointermove"];
+  const DA_IGUAL_EL_RATON = ["onclick", "onkeydown", "onkeyup", "onkeypress", "onchange", "oninput", "onsubmit"];
+  /* ¿Tiene el elemento una acción NATIVA que el teclado ya dispara?
+   *
+   * Esto es lo que evita el falso positivo más probable de todos: el
+   * `<a href="/x" onmousedown="telemetria()">`. Ese enlace se opera con el
+   * teclado perfectamente —Enter navega—, y el manejador de ratón es un añadido;
+   * acusarlo sacaría un aviso en cada enlace con analítica de medio internet. Lo
+   * que no tiene salida nativa es el `<button type="button" onmousedown="x()">`:
+   * ahí el `mousedown` es la única función, y Enter dispara `click`, no
+   * `mousedown`. Y un `<button>` sin tipo solo envía si está DENTRO de un
+   * formulario; fuera no hace nada por sí mismo.
+   */
+  function accionNativaDeTeclado(el, tag) {
+    const t = String(tag || "").toLowerCase();
+    if (t === "a" || t === "area") return el.hasAttribute("href");
+    if (t === "summary" || t === "select" || t === "textarea") return true;
+    if (t === "label") return el.hasAttribute("for");
+    const tipo = String(el.getAttribute("type") || "").toLowerCase();
+    if (t === "input") return ["submit", "reset", "image", "checkbox", "radio", "file", "text", "search", "email", "tel", "url", "password", "number", "date", "time", "range", "color", ""].indexOf(tipo) !== -1;
+    if (t === "button") {
+      if (tipo === "button") return false;
+      return !!(el.closest && el.closest("form"));   // submit/reset solo valen dentro de un formulario
+    }
+    return false;
+  }
+  function funcionSoloConRaton(el, interactivo, enfocable, tag) {
+    if (!el || !el.hasAttribute) return null;
+    if (!interactivo && !enfocable) return null;
+    if (accionNativaDeTeclado(el, tag)) return null;
+    const tiene = function (lista) {
+      const hay = [];
+      for (let i = 0; i < lista.length; i++) if (el.hasAttribute(lista[i])) hay.push(lista[i]);
+      return hay;
+    };
+    // Con `click` o una tecla por medio, el teclado llega: no hay nada que decir.
+    if (tiene(DA_IGUAL_EL_RATON).length) return null;
+    const pulsa = tiene(PUNTERO_PULSA), pasa = tiene(PUNTERO_PASA);
+    if (!pulsa.length && !pasa.length) return null;
+    return { pulsa: pulsa, pasa: pasa };
+  }
+
   /* 3.2.1 y 3.2.2: el cambio de contexto que viene ESCRITO en el marcado.
    *
    * De estos dos criterios se encarga la capa dinámica, que enfoca cada control y
@@ -1359,6 +1423,21 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     if (tabAttr && parseInt(tabAttr, 10) > 0) focusObs.push({ html: '<code>tabindex="' + esc(tabAttr) + '"</code> positivo: altera el orden natural de tabulación (antipatrón).', crit: "2.4.3", sev: "moderada", type: "tabindex-positive" });
     // 3.2.1 / 3.2.2 cuando el cambio de contexto viene escrito en el atributo.
     cambioDeContextoEnLinea(el, tag, role).forEach(function (o) { focusObs.push(o); });
+    // 2.1.1 cuando el único camino escrito en el marcado es el ratón.
+    const soloRaton = funcionSoloConRaton(el, interactive, focusable, tag);
+    if (soloRaton) {
+      const cuales = soloRaton.pulsa.concat(soloRaton.pasa).map(function (h) { return "<code>" + h + "</code>"; }).join(", ");
+      focusObs.push({
+        html: (soloRaton.pulsa.length
+          ? "La única forma de accionarlo que aparece en el marcado es del ratón (" + cuales +
+            "), sin <code>onclick</code> ni manejador de teclado: Enter y Espacio disparan <code>click</code>, no " +
+            "<code>" + soloRaton.pulsa[0] + "</code>, así que con el teclado esto no responde (fallo F54)"
+          : "Lo único que tiene escrito es un manejador de paso del ratón (" + cuales +
+            "): si de ahí depende alguna función, con el teclado no hay forma de llegar (fallo F54)") +
+          ". Desde el marcado no se ve si eso hace algo o solo pinta: compruébalo con el teclado.",
+        crit: "2.1.1", sev: "crítica", type: "solo-raton", nivel: "revisar"
+      });
+    }
 
     const model = {
       id: ++NODE_SEQ, depth: depth, tag: tag, role: role, level: level, locator: buildLocator(el, tag), path: buildPath(el),
@@ -1606,6 +1685,8 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   NS.capaQueMide = capaQueMide;
   NS.buildPath = buildPath;
   NS.cambioDeContextoEnLinea = cambioDeContextoEnLinea;
+  NS.funcionSoloConRaton = funcionSoloConRaton;
+  NS.accionNativaDeTeclado = accionNativaDeTeclado;
   NS.accionDeContexto = accionDeContexto;
   NS.etiquetaEnNombre = etiquetaEnNombre;
   NS.textoDeEtiqueta = textoDeEtiqueta;
@@ -2033,6 +2114,111 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     if (fuera) out.push({ crit: "__meta", label: "Cobertura del orden visual", node: fuera + " contenedores", verdict: "revisar",
       limita: ["1.3.2"],
       detail: "se revisaron " + vistos + " contenedores flex/grid y quedaron " + fuera + " sin mirar por el tope: de esos no se sabe si reordenan" });
+    return out;
+  }
+  /* 1.4.3 también sobre el texto que pinta el CSS: `::before` y `::after`.
+   *
+   * `textTargets` recoge los elementos con NODOS de texto propios, y el texto
+   * generado no es un nodo de texto: lo pinta el motor de estilos desde
+   * `content`. Así que no se medía. Medido sobre una página con
+   * `a.externo::after { content: " (abre en ventana nueva)"; color: #fafafa }`
+   * sobre blanco —1.07:1, invisible— el resultado fue 1.4.3 `pasa` seis veces, es
+   * decir, el criterio exportable como conforme con un texto que no se ve.
+   *
+   * Y no es un caso de laboratorio: el «(abre en ventana nueva)» de los enlaces
+   * externos, el asterisco de campo obligatorio, las etiquetas «Nuevo» de un
+   * escaparate y los separadores de una miga de pan se pintan así todos los días.
+   *
+   * Lo que NO entra, para no inventar barreras: el glifo de una fuente de iconos
+   * —`content: "\e900"`, que se ve como un dibujo y no como letras—, las viñetas,
+   * las flechas, las comillas y cualquier `content` sin una sola letra ni cifra.
+   * Mismo corte que en 2.5.3: si no hay palabra, no hay texto que leer. Tampoco
+   * `attr()` ni `counter()`, cuyo valor no está en la hoja de estilos.
+   *
+   * Y UN LÍMITE QUE HAY QUE DECIR: con ese corte se queda fuera el asterisco de
+   * campo obligatorio («content: " *"»), que sí es información y que invisible es
+   * una barrera de verdad —de 1.4.3 y de 3.3.2—. Desde el carácter no se puede
+   * distinguir un asterisco que marca algo de una viñeta decorativa, y entre
+   * callar uno y acusar a todas las viñetas y flechas de la web se calla ese.
+   */
+  function literalesDeContent(valor) {
+    const v = String(valor == null ? "" : valor);
+    if (!v || v === "none" || v === "normal") return "";
+    // Solo los trozos entre comillas: lo demás (attr, counter, url, open-quote)
+    // no es un literal que se pueda leer desde aquí.
+    /* Fuera las FUNCIONES antes de buscar literales: `url("icono.png")` lleva una
+     * cadena entre comillas que no es texto que nadie lea, y sin quitarla se medía
+     * el contraste del nombre del fichero y salía una barrera inventada. Lo
+     * encontró un test de los de «y esto tampoco», antes de que lo viera nadie. */
+    const limpio = v.replace(/[\w-]+\([^()]*\)/g, " ");
+    const trozos = limpio.match(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g);
+    if (!trozos) return "";
+    return trozos.map(function (t) {
+      const dentro = t.slice(1, -1);
+      // Las secuencias \e900 de las fuentes de iconos se resuelven para poder
+      // descartarlas por lo que son: caracteres de uso privado, no letras.
+      return dentro.replace(/\\([0-9a-fA-F]{1,6})\s?/g, function (m, hex) {
+        try { return String.fromCodePoint(parseInt(hex, 16)); } catch (e) { return " "; }
+      });
+    }).join("");
+  }
+  function tienePalabra(t) { return /[\p{L}\p{N}]/u.test(String(t || "")); }
+
+  function contrasteGenerado(doc, win, limite) {
+    const out = [];
+    const tope = limite || 600;
+    let vistos = 0, fuera = 0, medidos = 0;
+    const todos = doc.querySelectorAll("*");
+    for (let i = 0; i < todos.length; i++) {
+      const el = todos[i];
+      if (vistos >= tope) { fuera++; continue; }
+      if (!renderedM(el, win)) continue;
+      vistos++;
+      const lados = ["::before", "::after"];
+      for (let k = 0; k < lados.length; k++) {
+        let cs;
+        try { cs = win.getComputedStyle(el, lados[k]); } catch (e) { continue; }
+        if (!cs) continue;
+        const txt = literalesDeContent(cs.content);
+        if (!txt || !tienePalabra(txt)) continue;
+        if (cs.visibility === "hidden" || cs.display === "none" || parseFloat(cs.opacity || "1") === 0) continue;
+        const doc2 = el.ownerDocument;
+        let fg = resolverColor(cs.color, doc2);
+        const bgEl = bgBehind(el, win);
+        const loc = locatorM(el) + lados[k];
+        if (bgEl.image) {
+          out.push({ crit: "1.4.3", label: "Contraste del texto", node: loc, path: rutaM(el), verdict: "revisar",
+            detail: "texto generado por CSS («" + txt.trim().slice(0, 40) + "») sobre un fondo con imagen o degradado: no es medible desde los estilos. Compruébalo a mano" });
+          medidos++;
+          continue;
+        }
+        // El pseudoelemento puede pintar SU PROPIO fondo encima del del elemento.
+        let bg = bgEl;
+        const propio = resolverColor(cs.backgroundColor, doc2);
+        if (propio && propio.a > 0) bg = propio.a < 1 ? over(propio, bgEl) : propio;
+        if (!fg) continue;
+        if (fg.a != null && fg.a < 1) fg = over(fg, bg);
+        const size = parseFloat(cs.fontSize) || 16, weight = parseInt(cs.fontWeight, 10) || 400;
+        const large = size >= 24 || (size >= 18.66 && weight >= 700);
+        const ratio = contrastRatio(fg, bg), min = large ? 3 : 4.5, ok = ratio >= min;
+        const lc = Math.round(Math.abs(apcaContrast(fg, bg))), lcMin = apcaMin(size, weight);
+        medidos++;
+        out.push({
+          crit: "1.4.3", label: "Contraste del texto", node: loc, path: rutaM(el),
+          verdict: ok ? "pasa" : (ratio >= min - 1 ? "revisar" : "falla"),
+          detail: "texto generado por CSS («" + txt.trim().slice(0, 40) + "»): ratio " + ratioTxt(ratio) + ":1" +
+            (large ? " (texto grande, mín 3:1)" : " (mín 4.5:1)") +
+            " · APCA Lc " + lc + (lc >= lcMin ? " (≥ " + lcMin + ", ok en el borrador de WCAG 3)" : " (< " + lcMin + ", orientativo)") +
+            " — " + rgbStr(fg) + " sobre " + rgbStr(bg)
+        });
+        if (out.length >= 30) { fuera += Math.max(0, todos.length - i - 1); break; }
+      }
+      if (out.length >= 30) break;
+    }
+    if (fuera) out.push({ crit: "__meta", label: "Cobertura del texto generado", node: fuera + " elementos", verdict: "revisar",
+      limita: ["1.4.3"],
+      detail: "se revisó el texto generado por CSS (`::before`/`::after`) de " + vistos + " elemento(s) y quedaron " + fuera +
+        " sin mirar por el tope: de esos no se sabe si pintan texto ni con qué contraste" });
     return out;
   }
   const NATIVOS = ["a", "button", "input", "select", "textarea", "summary"];
@@ -3312,6 +3498,8 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     }
     /* 1.3.2 sobre el render: el orden que se lee frente al que se ve. */
     ordenReordenado(doc, win, 300).forEach(function (o) { res.push(o); });
+    /* 1.4.3 sobre el texto que pinta el CSS, que no es un nodo de texto. */
+    contrasteGenerado(doc, win, 600).forEach(function (o) { res.push(o); });
     if (truncado) {
       res.push({ crit: "__meta", label: "Cobertura de los controles", node: all.length + "/" + candidatos.length, verdict: "revisar",
         // Todo lo que se dictamina control por control.
@@ -3329,7 +3517,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   }
 
   const FNS = [parseColor, over, lum, contrastRatio, rgbStr, apcaContrast, apcaMin,
-    animacionesPersistentes, distintivoDeEnlace, enTextoCorrido, elementosFlotantes, fraccionTapada, ratioTxt, refrescar, todosM, enfocadoM, shadowCerrados, resolverColor, ownText, opacidadAcumulada, coloresDe, mismoColor, aparienciaFoco, indicadorDeFoco, fondoRealCoincide, bgBehind, contrastOf, boundaryContrastOf, ordenReordenado, isInteractiveM, locatorM, rutaM, renderedM, disabledM, managedM, textTargets,
+    animacionesPersistentes, distintivoDeEnlace, enTextoCorrido, elementosFlotantes, fraccionTapada, ratioTxt, refrescar, todosM, enfocadoM, shadowCerrados, resolverColor, ownText, opacidadAcumulada, coloresDe, mismoColor, aparienciaFoco, indicadorDeFoco, fondoRealCoincide, bgBehind, contrastOf, boundaryContrastOf, ordenReordenado, literalesDeContent, tienePalabra, contrasteGenerado, isInteractiveM, locatorM, rutaM, renderedM, disabledM, managedM, textTargets,
     pinta, sinPseudoFoco, coincideSinFoco, reglasDeFoco, runChecksReal];
   const FN_SRC = "var MANAGED_PARENT = " + JSON.stringify(MANAGED_PARENT) + ";\nvar NATIVOS = " + JSON.stringify(NATIVOS) + ";\n" +
     "var PROP_INDICADOR = " + JSON.stringify(PROP_INDICADOR) + ";\nvar NULOS = " + JSON.stringify(NULOS) + ";\n" +
@@ -3386,6 +3574,8 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   NS.contrastOf = contrastOf;
   NS.boundaryContrastOf = boundaryContrastOf;
   NS.ordenReordenado = ordenReordenado;
+  NS.literalesDeContent = literalesDeContent;
+  NS.contrasteGenerado = contrasteGenerado;
   NS.runChecksReal = runChecksReal;
   NS.renderedM = renderedM;
   NS.disabledM = disabledM;

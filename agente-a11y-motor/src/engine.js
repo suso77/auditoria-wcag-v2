@@ -128,6 +128,70 @@ function isHiddenEl(node) {
   return st.indexOf("display:none") !== -1 || st.indexOf("visibility:hidden") !== -1;
 }
 
+/* 2.1.1: la función que solo se puede hacer con el ratón (fallo F54).
+ *
+ * De 2.1.1 la medición dice `pasa` cuando el control RECIBE EL FOCO, y eso no
+ * es operar con el teclado. Para los controles no nativos ya hay una sospecha
+ * —Enter y Espacio no los activan solos—, pero medido sobre el marcado apareció
+ * el hueco en los NATIVOS: `<button onmousedown="x()">` salía 2.1.1 `cumple`,
+ * es decir exportable como conforme, cuando Enter y Espacio disparan `click` y
+ * NO `mousedown`: con el teclado ese botón no hace nada. Lo mismo con
+ * `ondblclick` —que no tiene equivalente de teclado— y con `onmouseover`.
+ *
+ * El veredicto es `revisar`, nunca `falla`, por la misma razón que el resto de
+ * lo que se deduce de los manejadores en línea: desde el marcado no se ve si lo
+ * que hace el manejador es una FUNCIÓN o un efecto visual
+ * (`onmousedown="this.classList.add('pulsado')"` no es una función). Lo que no
+ * se puede es firmar conformidad con un manejador de puntero como único camino.
+ *
+ * Alcance: solo elementos interactivos o enfocables, que es donde 2.1.1 muerde.
+ * Un `<div onmousedown>` que no es control ni recibe foco queda fuera: ahí no
+ * se puede distinguir una función de un adorno sin ejecutar la página, y de eso
+ * se encarga la capa dinámica.
+ */
+const PUNTERO_PULSA = ["onmousedown", "onmouseup", "ondblclick", "onpointerdown", "onpointerup", "ontouchstart", "ontouchend"];
+const PUNTERO_PASA = ["onmouseover", "onmouseout", "onmousemove", "onmouseenter", "onmouseleave", "onpointerover", "onpointerout", "onpointermove"];
+const DA_IGUAL_EL_RATON = ["onclick", "onkeydown", "onkeyup", "onkeypress", "onchange", "oninput", "onsubmit"];
+/* ¿Tiene el elemento una acción NATIVA que el teclado ya dispara?
+ *
+ * Esto es lo que evita el falso positivo más probable de todos: el
+ * `<a href="/x" onmousedown="telemetria()">`. Ese enlace se opera con el
+ * teclado perfectamente —Enter navega—, y el manejador de ratón es un añadido;
+ * acusarlo sacaría un aviso en cada enlace con analítica de medio internet. Lo
+ * que no tiene salida nativa es el `<button type="button" onmousedown="x()">`:
+ * ahí el `mousedown` es la única función, y Enter dispara `click`, no
+ * `mousedown`. Y un `<button>` sin tipo solo envía si está DENTRO de un
+ * formulario; fuera no hace nada por sí mismo.
+ */
+function accionNativaDeTeclado(el, tag) {
+  const t = String(tag || "").toLowerCase();
+  if (t === "a" || t === "area") return el.hasAttribute("href");
+  if (t === "summary" || t === "select" || t === "textarea") return true;
+  if (t === "label") return el.hasAttribute("for");
+  const tipo = String(el.getAttribute("type") || "").toLowerCase();
+  if (t === "input") return ["submit", "reset", "image", "checkbox", "radio", "file", "text", "search", "email", "tel", "url", "password", "number", "date", "time", "range", "color", ""].indexOf(tipo) !== -1;
+  if (t === "button") {
+    if (tipo === "button") return false;
+    return !!(el.closest && el.closest("form"));   // submit/reset solo valen dentro de un formulario
+  }
+  return false;
+}
+function funcionSoloConRaton(el, interactivo, enfocable, tag) {
+  if (!el || !el.hasAttribute) return null;
+  if (!interactivo && !enfocable) return null;
+  if (accionNativaDeTeclado(el, tag)) return null;
+  const tiene = function (lista) {
+    const hay = [];
+    for (let i = 0; i < lista.length; i++) if (el.hasAttribute(lista[i])) hay.push(lista[i]);
+    return hay;
+  };
+  // Con `click` o una tecla por medio, el teclado llega: no hay nada que decir.
+  if (tiene(DA_IGUAL_EL_RATON).length) return null;
+  const pulsa = tiene(PUNTERO_PULSA), pasa = tiene(PUNTERO_PASA);
+  if (!pulsa.length && !pasa.length) return null;
+  return { pulsa: pulsa, pasa: pasa };
+}
+
 /* 3.2.1 y 3.2.2: el cambio de contexto que viene ESCRITO en el marcado.
  *
  * De estos dos criterios se encarga la capa dinámica, que enfoca cada control y
@@ -1173,6 +1237,21 @@ function makeNode(el, doc, depth, presentacionHeredada) {
   if (tabAttr && parseInt(tabAttr, 10) > 0) focusObs.push({ html: '<code>tabindex="' + esc(tabAttr) + '"</code> positivo: altera el orden natural de tabulación (antipatrón).', crit: "2.4.3", sev: "moderada", type: "tabindex-positive" });
   // 3.2.1 / 3.2.2 cuando el cambio de contexto viene escrito en el atributo.
   cambioDeContextoEnLinea(el, tag, role).forEach(function (o) { focusObs.push(o); });
+  // 2.1.1 cuando el único camino escrito en el marcado es el ratón.
+  const soloRaton = funcionSoloConRaton(el, interactive, focusable, tag);
+  if (soloRaton) {
+    const cuales = soloRaton.pulsa.concat(soloRaton.pasa).map(function (h) { return "<code>" + h + "</code>"; }).join(", ");
+    focusObs.push({
+      html: (soloRaton.pulsa.length
+        ? "La única forma de accionarlo que aparece en el marcado es del ratón (" + cuales +
+          "), sin <code>onclick</code> ni manejador de teclado: Enter y Espacio disparan <code>click</code>, no " +
+          "<code>" + soloRaton.pulsa[0] + "</code>, así que con el teclado esto no responde (fallo F54)"
+        : "Lo único que tiene escrito es un manejador de paso del ratón (" + cuales +
+          "): si de ahí depende alguna función, con el teclado no hay forma de llegar (fallo F54)") +
+        ". Desde el marcado no se ve si eso hace algo o solo pinta: compruébalo con el teclado.",
+      crit: "2.1.1", sev: "crítica", type: "solo-raton", nivel: "revisar"
+    });
+  }
 
   const model = {
     id: ++NODE_SEQ, depth: depth, tag: tag, role: role, level: level, locator: buildLocator(el, tag), path: buildPath(el),
@@ -1420,6 +1499,8 @@ export {
   capaQueMide,
   buildPath,
   cambioDeContextoEnLinea,
+  funcionSoloConRaton,
+  accionNativaDeTeclado,
   accionDeContexto,
   etiquetaEnNombre,
   textoDeEtiqueta,

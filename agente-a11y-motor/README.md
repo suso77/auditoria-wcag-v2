@@ -64,8 +64,8 @@ const informe = analyze(understand(html));
 ## Tests
 
 ```bash
-npm test                    # suite pura (node --test), sin navegador — 694 tests
-npm run test:integracion    # integración con Chromium (Playwright) — 155 tests
+npm test                    # suite pura (node --test), sin navegador — 699 tests
+npm run test:integracion    # integración con Chromium (Playwright) — 159 tests
 npm run bench               # banco de precisión accname contra corpus WPT
 npm run smoke               # humo del artifact generado, en Chromium real
 node scripts/quien-declara-conforme.mjs   # quién puede declarar conforme qué, y con qué base
@@ -981,6 +981,20 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 **En el cruce con axe, dos afirmaciones que no se podían sostener.** `crossCheck` fabricaba `{findings: []}` cuando el motor no llegaba a construir el modelo —texto suelto, un comentario, una cadena vacía—, y ese resultado entraba en la reconciliación como una comprobación limpia: «soloMotor: 0» era indistinguible de «el motor comprobó y no encontró nada». Y el «acuerdo» se construía solo porque coincidía el número de criterio: el motor acusando a `img.logo` y axe a otro `img` de la página salían como «acuerdo: 1». Casar los elementos exige la página abierta —lo hace la orquestación, no la reconciliación pura—, así que ahora se publica cuántos elementos trae cada fuente, que la coincidencia a nivel de elemento NO está comprobada, y que el motor no miró cuando no miró.
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
+
+### v0.50.0 — los dos huecos que quedaban de la lista de «quién declara conforme»
+
+Repasando con el barrido de v0.49.0 los quince criterios que alguna capa puede firmar como conformes, quedaban dos por mirar. Los dos tenían hueco, y los dos se midieron antes de tocar nada.
+
+**1.4.3 no medía el texto que pinta el CSS.** `textTargets` recoge los elementos con *nodos* de texto propios, y el texto generado no es un nodo de texto: lo pinta el motor de estilos desde `content`. Medido sobre una página con `a.externo::after { content:" (abre en ventana nueva)"; color:#fafafa }` sobre blanco —**1.04:1, invisible**—: 1.4.3 salía `pasa` seis veces. El criterio, exportable como conforme, con un texto que no se ve. Y no es un caso de laboratorio: el aviso de enlace externo, el asterisco de obligatorio, las etiquetas «Nuevo» de un escaparate y los separadores de una miga de pan se pintan así todos los días.
+
+Ahora se mide, con el mismo umbral y la misma evidencia que el resto de 1.4.3, nombrando el texto y el pseudoelemento (`a.externo::after`). Lo que queda fuera, a propósito: el glifo de una fuente de iconos (`content:"\e900"`, que se ve como un dibujo y no como letras), las viñetas, las flechas, las comillas, `attr()` y `counter()` —cuyo valor no está en la hoja de estilos— y `content: url(...)`, que es una imagen. Ese último lo encontró un test antes que nadie: sin quitar las funciones, la cadena de dentro de `url("icono.png")` se tomaba por texto y se medía el contraste del **nombre del fichero**. Y un límite que hay que decir en voz alta: con el corte de «si no hay letras no es texto» se queda fuera el asterisco de campo obligatorio, que sí es información; desde el carácter no se puede distinguir de una viñeta, y entre callar uno y acusar a todas las viñetas de la web se calla ese.
+
+**2.1.1 decía `cumple` de un botón que solo responde al ratón.** La medición dice `pasa` cuando el control *recibe el foco*, y eso no es operar con el teclado. Para los controles no nativos ya había sospecha, pero el hueco estaba en los nativos: `<button onmousedown="x()">` salía **`cumple`** cuando Enter y Espacio disparan `click` y **no** `mousedown` — con el teclado ese botón no hace nada. Es el fallo **F54**, y lo mismo pasaba con `ondblclick` (que no tiene equivalente de teclado) y con `onmouseover`.
+
+Ahora sale `revisar` —nunca `falla`, porque desde el marcado no se ve si el manejador hace una función o un efecto visual— con la frase que lo explica. Y con el falso positivo descartado, que era el más probable de todos: **el `<a href="/x" onmousedown="telemetria()">`**. Ese enlace se opera con Enter perfectamente y el manejador de ratón es un añadido; acusarlo sacaría un aviso en cada enlace con analítica de medio internet. Así que no entra nada que tenga una acción nativa que el teclado ya dispare: un enlace con `href`, un `select`, un `summary`, un `input`, o un `submit` **dentro de un formulario** — que fuera de uno no envía nada por sí mismo, y ahí sí se avisa.
+
+**699 tests unitarios** (de 694) y **159 de integración** (de 155), en verde, cuatro de ellos contra un Chromium real porque el texto generado no existe en el documento y un DOM de mentira no puede verlo. El entregable no se mueve: 7 familias, 21 hallazgos, 55 de 55 con veredicto.
 
 ### v0.49.0 — 2.4.3 comparaba 25 controles y firmaba la página entera
 

@@ -401,6 +401,111 @@ function ordenReordenado(doc, win, limite) {
     detail: "se revisaron " + vistos + " contenedores flex/grid y quedaron " + fuera + " sin mirar por el tope: de esos no se sabe si reordenan" });
   return out;
 }
+/* 1.4.3 también sobre el texto que pinta el CSS: `::before` y `::after`.
+ *
+ * `textTargets` recoge los elementos con NODOS de texto propios, y el texto
+ * generado no es un nodo de texto: lo pinta el motor de estilos desde
+ * `content`. Así que no se medía. Medido sobre una página con
+ * `a.externo::after { content: " (abre en ventana nueva)"; color: #fafafa }`
+ * sobre blanco —1.07:1, invisible— el resultado fue 1.4.3 `pasa` seis veces, es
+ * decir, el criterio exportable como conforme con un texto que no se ve.
+ *
+ * Y no es un caso de laboratorio: el «(abre en ventana nueva)» de los enlaces
+ * externos, el asterisco de campo obligatorio, las etiquetas «Nuevo» de un
+ * escaparate y los separadores de una miga de pan se pintan así todos los días.
+ *
+ * Lo que NO entra, para no inventar barreras: el glifo de una fuente de iconos
+ * —`content: "\e900"`, que se ve como un dibujo y no como letras—, las viñetas,
+ * las flechas, las comillas y cualquier `content` sin una sola letra ni cifra.
+ * Mismo corte que en 2.5.3: si no hay palabra, no hay texto que leer. Tampoco
+ * `attr()` ni `counter()`, cuyo valor no está en la hoja de estilos.
+ *
+ * Y UN LÍMITE QUE HAY QUE DECIR: con ese corte se queda fuera el asterisco de
+ * campo obligatorio («content: " *"»), que sí es información y que invisible es
+ * una barrera de verdad —de 1.4.3 y de 3.3.2—. Desde el carácter no se puede
+ * distinguir un asterisco que marca algo de una viñeta decorativa, y entre
+ * callar uno y acusar a todas las viñetas y flechas de la web se calla ese.
+ */
+function literalesDeContent(valor) {
+  const v = String(valor == null ? "" : valor);
+  if (!v || v === "none" || v === "normal") return "";
+  // Solo los trozos entre comillas: lo demás (attr, counter, url, open-quote)
+  // no es un literal que se pueda leer desde aquí.
+  /* Fuera las FUNCIONES antes de buscar literales: `url("icono.png")` lleva una
+   * cadena entre comillas que no es texto que nadie lea, y sin quitarla se medía
+   * el contraste del nombre del fichero y salía una barrera inventada. Lo
+   * encontró un test de los de «y esto tampoco», antes de que lo viera nadie. */
+  const limpio = v.replace(/[\w-]+\([^()]*\)/g, " ");
+  const trozos = limpio.match(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g);
+  if (!trozos) return "";
+  return trozos.map(function (t) {
+    const dentro = t.slice(1, -1);
+    // Las secuencias \e900 de las fuentes de iconos se resuelven para poder
+    // descartarlas por lo que son: caracteres de uso privado, no letras.
+    return dentro.replace(/\\([0-9a-fA-F]{1,6})\s?/g, function (m, hex) {
+      try { return String.fromCodePoint(parseInt(hex, 16)); } catch (e) { return " "; }
+    });
+  }).join("");
+}
+function tienePalabra(t) { return /[\p{L}\p{N}]/u.test(String(t || "")); }
+
+function contrasteGenerado(doc, win, limite) {
+  const out = [];
+  const tope = limite || 600;
+  let vistos = 0, fuera = 0, medidos = 0;
+  const todos = doc.querySelectorAll("*");
+  for (let i = 0; i < todos.length; i++) {
+    const el = todos[i];
+    if (vistos >= tope) { fuera++; continue; }
+    if (!renderedM(el, win)) continue;
+    vistos++;
+    const lados = ["::before", "::after"];
+    for (let k = 0; k < lados.length; k++) {
+      let cs;
+      try { cs = win.getComputedStyle(el, lados[k]); } catch (e) { continue; }
+      if (!cs) continue;
+      const txt = literalesDeContent(cs.content);
+      if (!txt || !tienePalabra(txt)) continue;
+      if (cs.visibility === "hidden" || cs.display === "none" || parseFloat(cs.opacity || "1") === 0) continue;
+      const doc2 = el.ownerDocument;
+      let fg = resolverColor(cs.color, doc2);
+      const bgEl = bgBehind(el, win);
+      const loc = locatorM(el) + lados[k];
+      if (bgEl.image) {
+        out.push({ crit: "1.4.3", label: "Contraste del texto", node: loc, path: rutaM(el), verdict: "revisar",
+          detail: "texto generado por CSS («" + txt.trim().slice(0, 40) + "») sobre un fondo con imagen o degradado: no es medible desde los estilos. Compruébalo a mano" });
+        medidos++;
+        continue;
+      }
+      // El pseudoelemento puede pintar SU PROPIO fondo encima del del elemento.
+      let bg = bgEl;
+      const propio = resolverColor(cs.backgroundColor, doc2);
+      if (propio && propio.a > 0) bg = propio.a < 1 ? over(propio, bgEl) : propio;
+      if (!fg) continue;
+      if (fg.a != null && fg.a < 1) fg = over(fg, bg);
+      const size = parseFloat(cs.fontSize) || 16, weight = parseInt(cs.fontWeight, 10) || 400;
+      const large = size >= 24 || (size >= 18.66 && weight >= 700);
+      const ratio = contrastRatio(fg, bg), min = large ? 3 : 4.5, ok = ratio >= min;
+      const lc = Math.round(Math.abs(apcaContrast(fg, bg))), lcMin = apcaMin(size, weight);
+      medidos++;
+      out.push({
+        crit: "1.4.3", label: "Contraste del texto", node: loc, path: rutaM(el),
+        verdict: ok ? "pasa" : (ratio >= min - 1 ? "revisar" : "falla"),
+        detail: "texto generado por CSS («" + txt.trim().slice(0, 40) + "»): ratio " + ratioTxt(ratio) + ":1" +
+          (large ? " (texto grande, mín 3:1)" : " (mín 4.5:1)") +
+          " · APCA Lc " + lc + (lc >= lcMin ? " (≥ " + lcMin + ", ok en el borrador de WCAG 3)" : " (< " + lcMin + ", orientativo)") +
+          " — " + rgbStr(fg) + " sobre " + rgbStr(bg)
+      });
+      if (out.length >= 30) { fuera += Math.max(0, todos.length - i - 1); break; }
+    }
+    if (out.length >= 30) break;
+  }
+  if (fuera) out.push({ crit: "__meta", label: "Cobertura del texto generado", node: fuera + " elementos", verdict: "revisar",
+    limita: ["1.4.3"],
+    detail: "se revisó el texto generado por CSS (`::before`/`::after`) de " + vistos + " elemento(s) y quedaron " + fuera +
+      " sin mirar por el tope: de esos no se sabe si pintan texto ni con qué contraste" });
+  return out;
+}
 const NATIVOS = ["a", "button", "input", "select", "textarea", "summary"];
 function isInteractiveM(el) {
   const tag = el.tagName.toLowerCase();
@@ -1678,6 +1783,8 @@ function runChecksReal(doc, win, limit) {
   }
   /* 1.3.2 sobre el render: el orden que se lee frente al que se ve. */
   ordenReordenado(doc, win, 300).forEach(function (o) { res.push(o); });
+  /* 1.4.3 sobre el texto que pinta el CSS, que no es un nodo de texto. */
+  contrasteGenerado(doc, win, 600).forEach(function (o) { res.push(o); });
   if (truncado) {
     res.push({ crit: "__meta", label: "Cobertura de los controles", node: all.length + "/" + candidatos.length, verdict: "revisar",
       // Todo lo que se dictamina control por control.
@@ -1695,7 +1802,7 @@ function runChecksReal(doc, win, limit) {
 }
 
 const FNS = [parseColor, over, lum, contrastRatio, rgbStr, apcaContrast, apcaMin,
-  animacionesPersistentes, distintivoDeEnlace, enTextoCorrido, elementosFlotantes, fraccionTapada, ratioTxt, refrescar, todosM, enfocadoM, shadowCerrados, resolverColor, ownText, opacidadAcumulada, coloresDe, mismoColor, aparienciaFoco, indicadorDeFoco, fondoRealCoincide, bgBehind, contrastOf, boundaryContrastOf, ordenReordenado, isInteractiveM, locatorM, rutaM, renderedM, disabledM, managedM, textTargets,
+  animacionesPersistentes, distintivoDeEnlace, enTextoCorrido, elementosFlotantes, fraccionTapada, ratioTxt, refrescar, todosM, enfocadoM, shadowCerrados, resolverColor, ownText, opacidadAcumulada, coloresDe, mismoColor, aparienciaFoco, indicadorDeFoco, fondoRealCoincide, bgBehind, contrastOf, boundaryContrastOf, ordenReordenado, literalesDeContent, tienePalabra, contrasteGenerado, isInteractiveM, locatorM, rutaM, renderedM, disabledM, managedM, textTargets,
   pinta, sinPseudoFoco, coincideSinFoco, reglasDeFoco, runChecksReal];
 const FN_SRC = "var MANAGED_PARENT = " + JSON.stringify(MANAGED_PARENT) + ";\nvar NATIVOS = " + JSON.stringify(NATIVOS) + ";\n" +
   "var PROP_INDICADOR = " + JSON.stringify(PROP_INDICADOR) + ";\nvar NULOS = " + JSON.stringify(NULOS) + ";\n" +
@@ -1729,5 +1836,5 @@ export const MEASURE_SRC = "(function(){\n" + FN_SRC +
   "\nwindow.__a11yMeasure = function(limit){ return runChecksReal(document, window, limit||400); };\n})();";
 
 // También exportamos las funciones DOM para pruebas con un DOM simulado si se desea.
-export { animacionesPersistentes, distintivoDeEnlace, enTextoCorrido, elementosFlotantes, fraccionTapada, ratioTxt, resolverColor, opacidadAcumulada, ownText, bgBehind, contrastOf, boundaryContrastOf, ordenReordenado, runChecksReal, renderedM, disabledM, managedM, textTargets, rutaM,
+export { animacionesPersistentes, distintivoDeEnlace, enTextoCorrido, elementosFlotantes, fraccionTapada, ratioTxt, resolverColor, opacidadAcumulada, ownText, bgBehind, contrastOf, boundaryContrastOf, ordenReordenado, literalesDeContent, contrasteGenerado, runChecksReal, renderedM, disabledM, managedM, textTargets, rutaM,
   sinPseudoFoco, coincideSinFoco, reglasDeFoco, pinta };

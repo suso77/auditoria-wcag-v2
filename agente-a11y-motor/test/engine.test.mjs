@@ -1,7 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { understand, analyze, announcement } from "./helpers.mjs";
-import { etiquetaEnNombre, textoDeEtiqueta, normalizaEtiqueta, accionDeContexto } from "../src/engine.js";
+import { etiquetaEnNombre, textoDeEtiqueta, normalizaEtiqueta, accionDeContexto,
+  funcionSoloConRaton, accionNativaDeTeclado } from "../src/engine.js";
+import { literalesDeContent } from "../src/measure.browser.js";
 import { DOMParser } from "linkedom";
 
 /** El primer elemento de un fragmento, para probar las funciones puras. */
@@ -288,4 +290,79 @@ test("3.2.x: la lectura del manejador, por partes", () => {
   assert.equal(accionDeContexto(null), null);
   // Un `submit` que es el NOMBRE de algo, no la llamada, no cuenta.
   assert.equal(accionDeContexto("marca('submit')"), null);
+});
+
+/* ── 2.1.1: la función que solo se puede hacer con el ratón (F54) ────────────
+ *
+ * De 2.1.1 la medición dice `pasa` cuando el control RECIBE EL FOCO, y eso no
+ * es operar con el teclado. Los controles no nativos ya tenían su sospecha,
+ * pero medido sobre el marcado apareció el hueco en los NATIVOS:
+ * `<button onmousedown="x()">` salía `cumple` —exportable como conforme—
+ * cuando Enter y Espacio disparan `click` y no `mousedown`.
+ */
+
+test("2.1.1: un control cuya única vía escrita es el ratón sale a revisar", () => {
+  const v = (h) => veredictos(h)["2.1.1"];
+  assert.equal(v('<button onmousedown="x()">Enviar</button>'), "revisar");
+  assert.equal(v('<button onmouseup="x()">Enviar</button>'), "revisar");
+  assert.equal(v('<button ondblclick="x()">Enviar</button>'), "revisar");
+  assert.equal(v('<button type="button" onmousedown="x()">Abrir</button>'), "revisar");
+  assert.equal(v('<button onmouseover="x()">Ver</button>'), "revisar");
+  // Y la ficha dice por qué, con el nombre del fallo.
+  const m = understand('<button onmousedown="x()">Enviar</button>');
+  const f = analyze(m).findings.find((x) => x.c.n === "2.1.1");
+  assert.match(f.evid.join(" "), /F54/);
+  assert.match(f.evid.join(" "), /Enter y Espacio disparan/);
+});
+
+test("2.1.1: con `click` o una tecla por medio no se dice nada", () => {
+  const v = (h) => veredictos(h)["2.1.1"];
+  assert.equal(v('<button onclick="x()" onmousedown="y()">Enviar</button>'), "cumple");
+  assert.equal(v('<button onkeydown="k(event)" onmousedown="y()">Enviar</button>'), "cumple");
+  assert.equal(v("<button>Enviar</button>"), "cumple");
+});
+
+test("2.1.1: el falso positivo que acecha —la analítica en `onmousedown`— no se acusa", () => {
+  // Un enlace con href se opera con Enter: el manejador de ratón es un añadido,
+  // y acusarlo sacaría un aviso en cada enlace con analítica de medio internet.
+  const v = (h) => veredictos(h)["2.1.1"];
+  assert.equal(v('<a href="/x" onmousedown="telemetria()">Ir</a>'), "cumple");
+  assert.equal(v('<a href="/x" onmouseover="precarga()">Ir</a>'), "cumple");
+  // Un submit DENTRO de un formulario también tiene salida nativa con Enter.
+  assert.equal(v('<form action="/a"><button onmousedown="t()">Enviar</button></form>'), "cumple");
+  assert.equal(v('<form action="/a"><input type="submit" value="Enviar" onmousedown="t()"></form>'), "cumple");
+  // Pero un <button> suelto fuera de un formulario no envía nada por sí mismo.
+  assert.equal(v('<button onmousedown="t()">Enviar</button>'), "revisar");
+});
+
+test("2.1.1: la lectura, por partes", () => {
+  const el = (h) => unEl(h);
+  assert.equal(accionNativaDeTeclado(el('<a href="/x">i</a>'), "a"), true);
+  assert.equal(accionNativaDeTeclado(el("<a>i</a>"), "a"), false);
+  assert.equal(accionNativaDeTeclado(el('<button type="button">b</button>'), "button"), false);
+  assert.equal(accionNativaDeTeclado(el("<button>b</button>"), "button"), false);  // suelto, sin formulario
+  assert.equal(funcionSoloConRaton(el('<div onmousedown="x()">d</div>'), false, false, "div"), null, "ni interactivo ni enfocable: fuera de alcance");
+  assert.deepEqual(funcionSoloConRaton(el('<div onmousedown="x()">d</div>'), true, true, "div").pulsa, ["onmousedown"]);
+  assert.equal(funcionSoloConRaton(el('<div onclick="x()" onmousedown="y()">d</div>'), true, true, "div"), null);
+});
+
+/* ── 1.4.3 sobre el texto que pinta el CSS ──────────────────────────────── */
+
+test("el `content` de un pseudoelemento se lee solo cuando es texto de verdad", () => {
+  assert.equal(literalesDeContent('" (abre en ventana nueva)"'), " (abre en ventana nueva)");
+  assert.equal(literalesDeContent('"Nuevo "'), "Nuevo ");
+  assert.equal(literalesDeContent("none"), "");
+  assert.equal(literalesDeContent("normal"), "");
+  assert.equal(literalesDeContent('attr(data-x)'), "", "attr() no está en la hoja de estilos");
+  assert.equal(literalesDeContent('counter(n)'), "");
+  // `url("icono.png")` es una imagen: sin quitar las funciones, la cadena de
+  // dentro se tomaba por texto y se medía el contraste del nombre del fichero.
+  assert.equal(literalesDeContent('url("x.png")'), "");
+  assert.equal(literalesDeContent('"a" url("x.png") "b"'), "ab");
+  assert.equal(literalesDeContent('counter(n) ". "'), ". ");
+  // El glifo de una fuente de iconos se resuelve para poder descartarlo: se ve
+  // como un dibujo, no como letras.
+  const icono = literalesDeContent('"\\e900"');
+  assert.equal(icono.length, 1);
+  assert.equal(/[\p{L}\p{N}]/u.test(icono), false, "un carácter de uso privado no es una palabra");
 });
