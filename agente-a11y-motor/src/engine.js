@@ -713,15 +713,30 @@ function analyze(m) {
         : { c: c, verdict: "cumple", sev: null, scope: "componente", evid: ["Determinable desde el marcado y correcto." + porque] };
     }
     const capa = CAPA_QUE_MIDE[n];
+    /* «QUE EN ESTA EJECUCIÓN NO HA CORRIDO» ERA UNA AFIRMACIÓN FALSA.
+     *
+     * El motor analiza el marcado y nada más: no lanza las capas ni sabe cuáles
+     * va a lanzar la orquestación después. Decir que una capa «no ha corrido» es
+     * hablar de algo que no ve. Medido sobre el sitio de prueba con la capa
+     * dinámica ENCENDIDA: 2.1.2 salía con esta frase —«lo mide la capa de
+     * dinámico, que en esta ejecución no ha corrido»— en la misma auditoría en
+     * la que esa capa había corrido y había dictaminado. Una frase falsa en la
+     * evidencia de un informe con efectos legales.
+     *
+     * Ahora dice lo que es cierto desde donde está: este análisis del marcado no
+     * la ejecuta. Y el relleno se marca con `origen: "motor-sin-capa"` para que
+     * la orquestación pueda retirarlo cuando la capa sí haya hablado. */
     if (c.det === "semi") {
-      return { c: c, verdict: "revisar", sev: null, scope: "componente", evid: [
+      return { c: c, verdict: "revisar", sev: null, scope: "componente",
+        origen: capa ? "motor-sin-capa" : undefined, evid: [
         (capa
-          ? "El motor no lo dictamina desde el marcado; lo mide la capa de " + capa + ", que en esta ejecución no ha corrido."
+          ? "El motor no lo dictamina desde el marcado; lo mide la capa de " + capa + ", que este análisis del marcado no ejecuta."
           : "No es determinable solo desde el marcado: hay que comprobarlo sobre el render real o a mano.") + porque] };
     }
-    return { c: c, verdict: "humano", sev: null, scope: "componente", evid: [
+    return { c: c, verdict: "humano", sev: null, scope: "componente",
+      origen: capa ? "motor-sin-capa" : undefined, evid: [
       (capa
-        ? "El motor no lo dictamina desde el marcado; lo mide la capa de " + capa + ", que en esta ejecución no ha corrido."
+        ? "El motor no lo dictamina desde el marcado; lo mide la capa de " + capa + ", que este análisis del marcado no ejecuta."
         : "Requiere evaluación humana; ninguna máquina lo dictamina.") + porque] };
   });
 

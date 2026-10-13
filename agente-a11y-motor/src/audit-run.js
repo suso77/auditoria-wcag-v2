@@ -340,6 +340,31 @@ export async function auditRun(target, opts) {
       (dynamic && dynamic.findings) || []
     );
 
+    /* Y se retira el RELLENO del motor en los criterios de los que la capa sí habló.
+     *
+     * El motor, que solo lee el marcado, deja un `revisar`/`humano` por criterio
+     * diciendo «lo mide la capa de X». Cuando esa capa corre y dictamina, el
+     * relleno no aporta nada —y sí estorba: el rollup se queda con el PEOR
+     * veredicto del criterio, así que un `revisar` de relleno dejaba pendiente
+     * un criterio que la capa había medido. Medido sobre el sitio de prueba con
+     * la capa dinámica encendida: 2.1.2 salía 15 `revisar` de relleno conviviendo
+     * con 15 `cumple-parcial` de la capa, y el criterio se quedaba en `revisar`
+     * en el informe. Esa es buena parte de la columna de criterios que nunca
+     * concluían nada.
+     *
+     * Retirar el relleno NO vuelve conforme lo que estaba medido a medias: las
+     * notas de cobertura siguen atando después (`aplicaCoberturas`), y el
+     * barrido final sigue nombrando lo que se quede sin nadie que hable. */
+    const conCapa = {};
+    findings.forEach(function (f) {
+      if (f && f.c && f.c.n && f.origen !== "motor-sin-capa") conCapa[f.c.n] = 1;
+    });
+    const rellenosRetirados = [];
+    findings = findings.filter(function (f) {
+      if (f && f.origen === "motor-sin-capa" && f.c && conCapa[f.c.n]) { rellenosRetirados.push(f.c.n); return false; }
+      return true;
+    });
+
     /* Las notas de cobertura ATAN los criterios que limitan.
      *
      * Hasta aquí estas notas solo iban a `avisos` —prosa al final del informe—

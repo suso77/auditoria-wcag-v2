@@ -136,7 +136,11 @@ test("REGRESIÓN: cada módulo conserva su ámbito (nada se pisa al aplanar)", {
   assert.ok(ambitos.pagina.every((s) => s === "página"), JSON.stringify(ambitos.pagina));
   assert.deepEqual(ambitos.viewport, ["adaptación"]);
   assert.deepEqual(ambitos.sitio, ["sitio"]);
-  assert.deepEqual(ambitos.dinamico, ["dinámico"]);
+  // Lo que defiende este test es que NINGÚN hallazgo del módulo salga con el
+  // ámbito de otro, no cuántos hallazgos emite: desde que 2.1.2 habla también
+  // cuando el recorrido termina sin trampa, `analyzeTabTrace` devuelve dos.
+  assert.ok(ambitos.dinamico.length, "la traza de teclado tiene que emitir algo");
+  assert.ok(ambitos.dinamico.every((s) => s === "dinámico"), JSON.stringify(ambitos.dinamico));
 });
 
 test("REGRESIÓN: la coherencia entre páginas coincide con la librería", { skip }, async () => {

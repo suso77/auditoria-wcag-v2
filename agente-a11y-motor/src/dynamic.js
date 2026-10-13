@@ -43,6 +43,26 @@ export function analyzeTabTrace(trace) {
   const sueltos = inter.sueltos || [];
   const enCompuesto = inter.enCompuesto || [];
 
+  /* 2.1.2 hablaba SOLO cuando encontraba la trampa.
+   *
+   * Si el recorrido con Tab daba la vuelta a la página entera sin quedarse
+   * atrapado, esta función no emitía nada y el criterio desaparecía del informe
+   * —hasta que el barrido de `audit-run` lo rescataba como «la capa se ejecutó y
+   * no dijo nada de este criterio»—. Medido sobre el sitio de prueba con la capa
+   * dinámica encendida: 2.1.2 salía `revisar` en las 19 páginas, incluidas las
+   * que se recorren enteras sin un solo problema. El agente había hecho el
+   * trabajo —tabular toda la página y comprobar que de todas partes se sale— y
+   * no lo contaba.
+   *
+   * Lo que sí se puede afirmar y lo que no:
+   *  · atrapado        → `falla`, con los controles del ciclo;
+   *  · sin atrapar pero con el presupuesto de tabulaciones agotado → `revisar`,
+   *    porque el recorrido se cortó antes de terminar y «no vi una trampa» no es
+   *    «no hay trampa»;
+   *  · recorrido completo sin atrapar → `cumple-parcial`, no `cumple`: esta
+   *    prueba pulsa Tab, y dentro de un widget compuesto (tablist, listbox,
+   *    menú) se navega con flechas, que es justo donde viven las trampas que
+   *    Tab no ve. Se dice cuántos controles se recorrieron. */
   if (trace.trapped) {
     out.push(F("2.1.2", "falla", "crítica", [
       "El foco queda atrapado con Tab: no se puede salir del componente solo con teclado." +
@@ -51,6 +71,22 @@ export function analyzeTabTrace(trace) {
           "— y no vuelve a salir, con " + unreached.length + " control(es) del resto de la página sin alcanzar."
         : "")
     ], (trace.atrapadoEn || []).slice(0, 8).map(function (l) { return { locator: l, name: "" }; })));
+  } else if (!focusables.length) {
+    out.push(F("2.1.2", "no-aplica", null, [
+      "La página no tiene ningún control enfocable, así que no hay foco que pueda quedar atrapado."
+    ]));
+  } else if (trace.exhausted) {
+    out.push(F("2.1.2", "revisar", null, [
+      "El recorrido con Tab se cortó antes de terminar: el presupuesto de " + (trace.tabs || 0) +
+      " tabulación(es) no llegaba para los " + focusables.length + " control(es) enfocables de la página. " +
+      "No se ha visto ninguna trampa, pero no verla sin haber recorrido el camino entero no es haber comprobado que no la hay."
+    ]));
+  } else {
+    out.push(F("2.1.2", "cumple-parcial", null, [
+      "Se ha recorrido la página con Tab —" + (trace.reached || []).length + " de " + focusables.length +
+      " control(es) alcanzados en " + (trace.tabs || 0) + " tabulación(es)— y el foco sale de todos ellos: no hay trampa en el recorrido de tabulación.",
+      "Queda lo que esta prueba no toca: dentro de un widget compuesto (pestañas, listbox, menú) se navega con las FLECHAS, y una trampa ahí no la ve el Tab. Si la página tiene alguno, compruébalo a mano."
+    ]));
   }
 
   /* 2.1.1 sobre los controles INTERACTIVOS que no son enfocables.

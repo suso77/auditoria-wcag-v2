@@ -981,6 +981,20 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.43.0 — medir el agente contra sí mismo: qué criterios no decide nunca
+
+Hasta aquí las revisiones iban módulo a módulo. Esta empezó por una medición del conjunto: sobre el sitio de prueba, con todas las capas encendidas, **cuántos de los 55 criterios reciben alguna vez un veredicto determinante** —`falla`, `cumple`, `pasa` o `no-aplica`— y cuántos se quedan siempre en una pregunta. Salieron 22 con veredicto, 11 que miden la presencia y dejan la calidad a una persona, y 22 que solo preguntan. Esa última columna es la que había que mirar de cerca, porque algunos de ellos el agente los estaba midiendo y no lo contaba.
+
+**El motor afirmaba que una capa «no ha corrido» en auditorías donde sí había corrido.** El motor lee el marcado y nada más: no lanza las capas ni sabe cuáles lanzará la orquestación después. Y sin embargo dejaba, por criterio, un `revisar` con esta frase: «lo mide la capa de dinámico, que **en esta ejecución no ha corrido**». Medido con la capa dinámica encendida: esa frase salía en la misma auditoría en la que esa capa había corrido y había dictaminado. Una afirmación falsa en la evidencia de un informe con efectos legales. Ahora dice lo que es cierto desde donde está: «que este análisis del marcado no ejecuta».
+
+**Y ese relleno dejaba pendientes criterios que la capa había medido.** El rollup se queda con el peor veredicto de cada criterio, así que un `revisar` de relleno conviviendo con el `cumple-parcial` de la capa dejaba el criterio en `revisar`. Medido en 2.1.2: quince hallazgos de relleno contra quince de la capa, y el criterio pendiente en el informe. Ahora el relleno va marcado (`origen: "motor-sin-capa"`) y la orquestación lo retira en los criterios de los que una capa sí habló — y solo en esos: donde la capa no encontró nada que medir, el relleno se queda, porque entonces es la respuesta honrada. Retirarlo no vuelve conforme lo medido a medias: las notas de cobertura siguen atando después, y el barrido final sigue nombrando lo que quede sin nadie que hable.
+
+**2.1.2 solo hablaba cuando encontraba la trampa.** Si el recorrido con Tab daba la vuelta a la página entera sin quedarse atrapado, no emitía nada: el agente había hecho el trabajo —tabular toda la página y comprobar que de todas partes se sale— y no lo contaba. Ahora hay cuatro escalones: atrapado es `falla`; sin atrapar pero con el presupuesto de tabulaciones agotado es `revisar`, porque no ver una trampa sin haber recorrido el camino entero no es haber comprobado que no la hay; el recorrido completo es `cumple-parcial`, no `cumple`, porque esta prueba pulsa Tab y dentro de un widget compuesto se navega con flechas, que es justo donde Tab no ve la trampa; y una página sin controles enfocables es `no-aplica`. Con eso 2.1.2 pasa a la columna de los que sí deciden.
+
+Y un guardia para el barrido: un test comprueba que toda la prosa de `CAPA_QUE_MIDE` se traduce a una capa conocida. Si alguien añade un criterio con una prosa nueva que no mapee, el barrido diría «ninguna capa lo mide aparte del motor» sobre un criterio que sí mide una capa, y lo diría con toda la seguridad del mundo.
+
+**654 tests unitarios** (de 650) y 133 de integración, en verde. La auditoría del sitio de prueba sigue cerrando 55 de 55 subcriterios y las mismas 7 familias de barreras: nada de esto inventa un hallazgo, solo deja de callar lo que ya se sabía.
+
 ### v0.42.0 — tres «no aplica» del cuaderno, y la primera sesión con un lector real
 
 El cuaderno de juicio decide once criterios, y «no aplica» cierra uno igual de bien que «cumple». Revisadas las seis fichas que quedaban, tres cerraban criterios que sí venían al caso.

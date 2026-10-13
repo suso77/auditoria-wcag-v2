@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { seleccionarMuestra } from "../src/sampling.js";
 import { axeFindingsNuevos, criteriosEnSilencio, capasEfectivas } from "../src/audit-run.js";
-import { WCAG22 } from "../src/engine.js";
+import { WCAG22, understand, analyze, capaQueMide } from "../src/engine.js";
+import "./helpers.mjs"; // inyecta el DOMParser
 import { esConforme } from "../src/verdicts.js";
 
 const viol = (id, sc, impact, targets) => ({
@@ -192,4 +193,50 @@ test("capasEfectivas pone los valores por defecto, y la dinámica no se enciende
   assert.equal(d.dynamic, false, "la capa dinámica pulsa y envía: sigue siendo opt-in");
   assert.equal(capasEfectivas({ dynamic: true }).dynamic, true);
   assert.equal(capasEfectivas({ render: false }).render, false);
+});
+
+/* ── El relleno del motor, retirado cuando la capa sí habló ──
+ *
+ * El motor, que solo lee el marcado, deja un `revisar`/`humano` por criterio
+ * diciendo «lo mide la capa de X». Cuando esa capa corre y dictamina, ese
+ * relleno no aporta nada y sí estorba: el rollup se queda con el PEOR veredicto
+ * del criterio, así que un `revisar` de relleno dejaba pendiente un criterio que
+ * la capa había medido. Medido sobre el sitio de prueba con la capa dinámica
+ * encendida: 2.1.2 salía 15 `revisar` de relleno conviviendo con 15
+ * `cumple-parcial` de la capa, y el criterio se quedaba en `revisar`.
+ */
+
+test("el motor no afirma que una capa «no ha corrido»: no puede saberlo", () => {
+  // La frase vieja —«lo mide la capa de dinámico, que en esta ejecución no ha
+  // corrido»— salía en auditorías donde esa capa SÍ había corrido. El motor
+  // analiza el marcado; no lanza las capas ni sabe cuáles lanzará la orquestación.
+  const a = analyze(understand('<div role="button" tabindex="0">x</div>'));
+  const textos = a.findings.flatMap((f) => f.evid || []).join(" ");
+  assert.ok(!/en esta ejecución no ha corrido/.test(textos), "esa afirmación no se puede sostener");
+  assert.match(textos, /este análisis del marcado no ejecuta/);
+});
+
+test("el relleno del motor va marcado para poder retirarlo", () => {
+  const a = analyze(understand('<div role="button" tabindex="0">x</div>'));
+  const rellenos = a.findings.filter((f) => f.origen === "motor-sin-capa");
+  assert.ok(rellenos.length, "tiene que haber relleno en los criterios que mide otra capa");
+  rellenos.forEach((f) => {
+    assert.ok(["revisar", "humano"].includes(f.verdict), f.c.n + " no puede ser relleno con veredicto " + f.verdict);
+    assert.match(f.evid.join(" "), /lo mide la capa de/);
+  });
+  // Y lo que el motor sí dictamina no lleva esa marca.
+  const propios = a.findings.filter((f) => ["cumple", "falla"].includes(f.verdict));
+  propios.forEach((f) => assert.notEqual(f.origen, "motor-sin-capa"));
+});
+
+test("toda la prosa de CAPA_QUE_MIDE mapea a una capa conocida", () => {
+  // El barrido traduce la prosa de esa tabla a las banderas de `capas`. Si
+  // alguien añade un criterio con una prosa nueva que no mapee, el barrido diría
+  // «ninguna capa lo mide aparte del motor» sobre un criterio que sí mide una
+  // capa — y lo diría con toda la seguridad del mundo. Este test es el guardia.
+  const PALABRAS = ["píxeles", "adaptación", "dinámico", "coherencia", "medición", "página"];
+  const huerfanos = WCAG22
+    .map((c) => ({ n: c.n, prosa: capaQueMide(c.n) }))
+    .filter((x) => x.prosa && !PALABRAS.some((p) => x.prosa.indexOf(p) !== -1));
+  assert.deepEqual(huerfanos, [], "prosa que el barrido no sabe traducir");
 });
