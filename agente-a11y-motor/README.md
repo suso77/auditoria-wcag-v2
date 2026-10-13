@@ -64,8 +64,8 @@ const informe = analyze(understand(html));
 ## Tests
 
 ```bash
-npm test                    # suite pura (node --test), sin navegador — 669 tests
-npm run test:integracion    # integración con Chromium (Playwright) — 145 tests
+npm test                    # suite pura (node --test), sin navegador — 674 tests
+npm run test:integracion    # integración con Chromium (Playwright) — 148 tests
 npm run bench               # banco de precisión accname contra corpus WPT
 npm run smoke               # humo del artifact generado, en Chromium real
 ```
@@ -980,6 +980,18 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 **En el cruce con axe, dos afirmaciones que no se podían sostener.** `crossCheck` fabricaba `{findings: []}` cuando el motor no llegaba a construir el modelo —texto suelto, un comentario, una cadena vacía—, y ese resultado entraba en la reconciliación como una comprobación limpia: «soloMotor: 0» era indistinguible de «el motor comprobó y no encontró nada». Y el «acuerdo» se construía solo porque coincidía el número de criterio: el motor acusando a `img.logo` y axe a otro `img` de la página salían como «acuerdo: 1». Casar los elementos exige la página abierta —lo hace la orquestación, no la reconciliación pura—, así que ahora se publica cuántos elementos trae cada fuente, que la coincidencia a nivel de elemento NO está comprobada, y que el motor no miró cuando no miró.
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
+
+### v0.46.0 — 2.5.3 no podía denunciar una barrera en ninguna capa
+
+Siguiendo el método de la versión anterior —probar si el agente *detecta* cuando hay algo que detectar— pero esta vez mirando el código en vez de las páginas: de los 55 criterios, **solo ocho tienen en el motor una regla capaz de emitir `falla`** (4.1.2, 1.3.1, 3.3.2, 2.1.1, 2.4.4, 2.4.3, 1.3.5 y 1.1.1). De los demás hablan las capas o el juicio humano, que está bien. Pero uno de los que se quedaban fuera no tenía excusa: **2.5.3 Etiqueta en el nombre**, que es mecánico.
+
+El criterio existe por quien maneja el ordenador hablando: dice «pulsa Enviar» porque es lo que lee en el botón, y si el nombre accesible es «Submit form» el reconocimiento de voz no encuentra nada. Es el fallo **F96**, de los más comunes en sitios en español con ARIA copiado en inglés. Medido antes de tocar nada: el motor daba `cumple-parcial` **siempre**, también en `<button aria-label="Submit form">Enviar</button>`.
+
+**El texto visible no es el texto del subárbol,** y ahí está la gracia. `subtreeText` mete los `aria-label` de los hijos y el `alt` de las imágenes —que no se ven— y sobre todo mete el texto de los iconos de fuente: `<i class="material-icons">search</i>` se ve como una lupa, no como la palabra «search». Esa es la vía clásica del falso positivo en este criterio, así que el texto visible se calcula aparte, dejando fuera iconos, imágenes y lo oculto, y para los botones `<input>` se toma su `value`. La regla solo entra cuando el nombre viene de `aria-label`/`aria-labelledby` —si sale del contenido no puede haber desajuste— y en los controles que se operan por voz. Un carácter suelto no es una etiqueta: la «x» del botón de cerrar es un icono escrito con el teclado. Y lo que solo difiere en tildes sale como **`revisar`**, no como barrera: puede que el reconocedor lo case y puede que no, y eso se prueba.
+
+**Y una decisión que se tomó midiendo, no opinando.** axe tiene una regla para esto, `label-content-name-mismatch`, con la etiqueta `wcag21a` y dentro del filtro del agente — pero no corre, porque axe desactiva las experimentales. Antes de habilitarla se midió lo que acusa sobre una página con los ocho casos, contra Chromium real: de los cuatro nodos que marca, **uno es un falso positivo** (el icono de fuente) y **se le escapa** `<input type="submit" value="Guardar" aria-label="Save changes">`, que sí es una barrera. Como las barreras que solo ve axe entran al informe, habilitarla metería ese falso positivo en un entregable legal. Así que de 2.5.3 habla el motor, que acierta en los ocho casos, y la regla de axe se queda fuera — con los nodos medidos guardados en un test de integración, para que si una versión futura de axe lo arregla, el test se ponga en rojo y la decisión se vuelva a tomar con datos.
+
+**674 tests unitarios** (de 669) y **148 de integración** (de 145), en verde. Las barreras del entregable no se mueven: el sitio de prueba sigue en 7 familias, 21 hallazgos y 55 de 55 con veredicto — no hay en él un solo caso de F96, que es la mejor prueba de que esto no inventa hallazgos.
 
 ### v0.45.0 — 1.4.11 medía el relleno del control y llamaba a eso «el límite»
 

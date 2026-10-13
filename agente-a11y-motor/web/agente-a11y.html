@@ -939,6 +939,91 @@
     return st.indexOf("display:none") !== -1 || st.indexOf("visibility:hidden") !== -1;
   }
 
+  /* 2.5.3 Etiqueta en el nombre: el texto que se VE, no el que se calcula.
+   *
+   * El criterio existe por quien maneja el ordenador hablando: dice «pulsa
+   * Enviar» porque es lo que lee en el botón, y si el nombre accesible es
+   * «Submit form» el reconocimiento de voz no encuentra nada. Es el fallo F96, de
+   * los más comunes en sitios en español con ARIA copiado en inglés.
+   *
+   * Medido antes de escribir esto: el motor daba 2.5.3 `cumple-parcial` SIEMPRE,
+   * también en el caso de libro (`<button aria-label="Submit form">Enviar</button>`),
+   * y axe con la configuración del agente no decía nada tampoco, porque su regla
+   * `label-content-name-mismatch` es experimental y las reglas experimentales
+   * vienen desactivadas cuando se pide por etiquetas. Es decir: este criterio NO
+   * podía denunciar una barrera en ninguna capa.
+   *
+   * El texto visible NO es `subtreeText`: ese mete los `aria-label` de los hijos y
+   * el `alt` de las imágenes, que no se ven, y sobre todo mete el texto de los
+   * iconos de fuente —`<i class="material-icons">search</i>` se ve como una lupa,
+   * no como la palabra «search»—, que es la vía clásica del falso positivo aquí.
+   * Por eso esto se calcula aparte, dejando fuera lo que no se lee con los ojos. */
+  const CLASE_ICONO = /icon|glyph|material-icons|fa-|\bfas\b|\bfar\b|\bfab\b|\bbi-|symbol|sprite|emoji/i;
+  function pareceIcono(el) {
+    const tag = (el.tagName || "").toLowerCase();
+    if (tag === "svg" || tag === "img" || tag === "picture" || tag === "canvas" || tag === "use") return true;
+    const cls = String(el.getAttribute ? el.getAttribute("class") || "" : "");
+    if (CLASE_ICONO.test(cls)) return true;
+    // <i class="…"> sin más es el patrón de icono por excelencia; <i> con texto y
+    // sin clase es cursiva de verdad y sí se lee.
+    return tag === "i" && !!cls;
+  }
+  function textoVisibleHijos(el) {
+    let out = "";
+    (el.childNodes || []).forEach(function (n) {
+      if (n.nodeType === 3) { out += n.nodeValue; return; }
+      if (n.nodeType !== 1) return;
+      if (n.getAttribute && n.getAttribute("aria-hidden") === "true") return;
+      if (isHiddenEl(n)) return;
+      if (pareceIcono(n)) return;
+      out += textoVisibleHijos(n);
+    });
+    return out;
+  }
+  function textoDeEtiqueta(el, tag) {
+    if (tag === "input") {
+      const t = String(el.getAttribute("type") || "").toLowerCase();
+      // En estos el texto del botón es el `value`; en el resto, lo que se ve es su
+      // etiqueta externa, que no es «la etiqueta del componente» a estos efectos.
+      return (t === "submit" || t === "reset" || t === "button") ? accCollapse(el.getAttribute("value") || "") : "";
+    }
+    return accCollapse(textoVisibleHijos(el));
+  }
+  /* Normalizar para comparar: fuera mayúsculas y TODO lo que no sea letra o
+   * número —signos, símbolos, emoji y los glifos de uso privado de las fuentes de
+   * iconos—, que es ruido para quien dicta. Las tildes se conservan aquí; de ellas
+   * se encarga la segunda vuelta, con un veredicto más suave. */
+  function normalizaEtiqueta(s) {
+    return String(s == null ? "" : s).toLowerCase().replace(/[^\p{L}\p{N}\s]+/gu, " ").replace(/\s+/g, " ").trim();
+  }
+  function sinTildesEtiqueta(s) { return String(s == null ? "" : s).normalize("NFD").replace(/[̀-ͯ]/g, ""); }
+
+  /**
+   * ¿El nombre accesible contiene el texto visible de la etiqueta?
+   *
+   * Devuelve null cuando el criterio no se puede juzgar desde aquí (sin texto
+   * visible, nombre que viene del propio contenido, rol que no se opera por voz).
+   * Callar en esos casos no es callar el criterio: la ficha sigue saliendo como
+   * `cumple-parcial` con lo que falta por juzgar.
+   */
+  function etiquetaEnNombre(visible, nombre) {
+    const v = normalizaEtiqueta(visible), n = normalizaEtiqueta(nombre);
+    if (!v || !n) return null;
+    /* Un solo carácter NO es una etiqueta de texto: es un icono escrito con el
+     * teclado. La «x» del botón de cerrar es el caso de todos los días —
+     * `<button aria-label="Cerrar">x</button>`—, y denunciarla sería inventar una
+     * barrera en media web. Comprobado contra axe 4.13 con su propia regla
+     * `label-content-name-mismatch`: acusa «OK» frente a «Aceptar» (dos
+     * caracteres, palabra de verdad) y deja pasar «x» y «×». El corte es el
+     * mismo. */
+    if (v.length < 2) return null;
+    if (v.split(" ").length > 12) return null;   // un párrafo no es una etiqueta
+    if (n.indexOf(v) !== -1) return { ok: true, visible: v, nombre: n };
+    const v2 = sinTildesEtiqueta(v), n2 = sinTildesEtiqueta(n);
+    if (n2.indexOf(v2) !== -1) return { ok: false, soloAcentos: true, visible: v, nombre: n };
+    return { ok: false, soloAcentos: false, visible: v, nombre: n };
+  }
+
   // --- Texto accesible de un subárbol (versión simplificada) ---
   // includeHidden=true solo en la ruta aria-labelledby, donde el spec sí incluye
   // objetivos ocultos; en name-from-content los subárboles no renderizados se excluyen.
@@ -1604,6 +1689,24 @@
     if (model.tag === "img" && !model.name.name && model.role !== "(presentación)") {
       obs.push({ html: "La imagen no tiene alternativa textual (ni <code>alt</code>, ni <code>aria-label/labelledby</code>): el lector puede leer la URL del archivo en su lugar.", crit: "1.1.1", sev: "grave", type: "img-no-alt" });
     }
+    /* 2.5.3: el nombre tiene que CONTENER el texto visible.
+     *
+     * Solo cuando el nombre viene de `aria-label`/`aria-labelledby`: si sale del
+     * propio contenido, no puede haber desajuste y preguntarlo es ruido. Y solo
+     * en los controles que se operan por voz —botones, enlaces, pestañas, casillas—,
+     * que es para quien existe el criterio. */
+    if (isPrimary && model.etiquetaVisible && /aria-label/.test(model.name.source || "")) {
+      const cmp = etiquetaEnNombre(model.etiquetaVisible, model.name.name);
+      if (cmp && !cmp.ok) {
+        obs.push(cmp.soloAcentos
+          ? { html: "El nombre accesible («" + esc(model.name.name) + "») contiene el texto visible («" + esc(model.etiquetaVisible) +
+                "») salvo por tildes o signos. Quien dicta por voz dice lo que ve: comprueba si su reconocedor lo casa.",
+              crit: "2.5.3", sev: "moderada", type: "etiqueta-en-nombre-acentos", nivel: "revisar" }
+          : { html: "El texto visible es «" + esc(model.etiquetaVisible) + "» y el nombre accesible es «" + esc(model.name.name) +
+                "», que <strong>no lo contiene</strong>: quien maneja el equipo hablando dice lo que ve y el reconocimiento de voz no encuentra el control (fallo F96).",
+              crit: "2.5.3", sev: "grave", type: "etiqueta-en-nombre" });
+      }
+    }
     if (model.role === "link" && /^(aqu[íi]|leer m[áa]s|pincha aqu[íi]|m[áa]s|ver m[áa]s|click here|here|read more)$/i.test((model.name.name || "").trim())) {
       obs.push({ html: "El texto del enlace («" + esc(model.name.name) + "») no describe su destino fuera de contexto.", crit: "2.4.4", sev: "moderada", type: "vague-link" });
     }
@@ -1825,6 +1928,9 @@
       hasTitle: el.hasAttribute("title"),
       haspopup: el.getAttribute("aria-haspopup"), expanded: el.getAttribute("aria-expanded"),
       visibleText: subtree ? (subtree.length > 40 ? subtree.slice(0, 40) + "…" : subtree) : "",
+      // Para 2.5.3: el texto que se LEE con los ojos, sin iconos ni `alt`, y sin
+      // recortar — `visibleText` va truncado a 40 y no sirve para comparar.
+      etiquetaVisible: textoDeEtiqueta(el, tag),
       children: []
     };
     model.say = announcement(model);

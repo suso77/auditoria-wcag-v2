@@ -146,6 +146,26 @@ export async function runAxeWithPlaywright(html, opts) {
       return await axe.run(document.body, {
         resultTypes: ["violations"],
         runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"] }
+        /* LA REGLA DE 2.5.3 DE AXE SE QUEDA FUERA A PROPÓSITO, Y ESTO ES POR QUÉ.
+         *
+         * `label-content-name-mismatch` lleva la etiqueta `wcag21a`, está dentro
+         * de este filtro y aun así no corre: axe la marca como experimental y
+         * las experimentales vienen desactivadas. Se probó a habilitarla
+         * (`rules: { "label-content-name-mismatch": { enabled: true } }`) y se
+         * midió contra Chromium real con axe 4.13 sobre una página con los ocho
+         * casos. Resultado: de los cuatro nodos que acusa, uno es un FALSO
+         * POSITIVO —`<button aria-label="Buscar"><i class="material-icons">search</i></button>`,
+         * donde se ve una lupa y no la palabra «search»—, y además se le escapa
+         * `<input type="submit" value="Guardar" aria-label="Save changes">`, que
+         * sí es una barrera. Como las barreras que ve solo axe ENTRAN al informe,
+         * habilitarla metería ese falso positivo en un entregable legal.
+         *
+         * La regla del motor (`etiquetaEnNombre`) acierta en los ocho casos:
+         * deja fuera los iconos de fuente, mira el `value` de los `input`, y lo
+         * que solo difiere en tildes lo baja a `revisar` en vez de acusarlo. Así
+         * que de 2.5.3 habla el motor, no axe. Está en
+         * `test/integration/axe-real.test.mjs`, con los nodos medidos, para que
+         * esta decisión no haya que volver a adivinarla. */
       });
     });
     return result.violations || [];

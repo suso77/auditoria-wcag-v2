@@ -340,6 +340,11 @@ export async function analyzeRendered(target, opts) {
          * página abierta: se pasa el selector de axe por `querySelector` y se
          * calcula la ruta canónica del elemento que devuelve. */
         const r = await page.evaluate(async function () {
+          // De 2.5.3 habla el motor, no axe: su regla
+          // `label-content-name-mismatch` es experimental, viene desactivada, y
+          // medida sobre los ocho casos acusa un icono de fuente que no es
+          // barrera y se le escapa un `input type=submit` que sí lo es. El por
+          // qué completo está en `src/axe-cross.js`.
           const res = await axe.run(document, { resultTypes: ["violations"] });
           function rutaCanonica(el) {
             const partes = [];

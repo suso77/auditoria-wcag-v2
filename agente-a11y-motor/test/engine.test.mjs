@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { understand, analyze, announcement } from "./helpers.mjs";
+import { etiquetaEnNombre, textoDeEtiqueta, normalizaEtiqueta } from "../src/engine.js";
+import { DOMParser } from "linkedom";
+
+/** El primer elemento de un fragmento, para probar las funciones puras. */
+const unEl = (html) => new DOMParser().parseFromString("<html><body>" + html + "</body></html>", "text/html").body.firstElementChild;
 
 test("fragmento sin elemento analizable → null (lo gestiona la capa de UI)", () => {
   assert.equal(understand("<span>hola</span>"), null);
@@ -154,4 +159,68 @@ test("un rol declarado sin su estado requerido falla 4.1.2 — y solo los que AR
   assert.equal(veredictos('<div role="tree" aria-label="T"><div role="treeitem">Uno</div></div>')["4.1.2"], "revisar");
   // Un <h2 role="heading"> no necesita aria-level: lo da la etiqueta.
   assert.notEqual(veredictos('<h2 role="heading">Título</h2>')["4.1.2"], "falla");
+});
+
+/* ── 2.5.3 Etiqueta en el nombre: de «nunca una barrera» a medido ────────────
+ *
+ * Medido antes de escribir la regla: 2.5.3 salía `cumple-parcial` SIEMPRE,
+ * también en el caso de libro, y axe con la configuración del agente tampoco
+ * decía nada —su regla es experimental y las experimentales vienen
+ * desactivadas—. Es decir: ninguna capa podía denunciar este criterio.
+ */
+
+test("2.5.3: el nombre que no contiene el texto visible es una barrera (F96)", () => {
+  // Quien maneja el equipo hablando dice «pulsa Enviar», que es lo que ve.
+  assert.equal(veredictos('<button aria-label="Submit form">Enviar</button>')["2.5.3"], "falla");
+  assert.equal(veredictos('<a href="/x" aria-label="Read more">Leer más</a>')["2.5.3"], "falla");
+  // El texto del botón de un <input> es su `value`.
+  assert.equal(veredictos('<input type="submit" value="Enviar" aria-label="Submit">')["2.5.3"], "falla");
+  // Dos caracteres ya son una palabra: «OK» frente a «Aceptar» es el fallo.
+  assert.equal(veredictos('<button aria-label="Aceptar">OK</button>')["2.5.3"], "falla");
+});
+
+test("2.5.3: contener basta — ni el orden ni lo que se añade son barrera", () => {
+  const sinBarrera = (h) => assert.notEqual(veredictos(h)["2.5.3"], "falla", h);
+  sinBarrera('<button aria-label="Enviar el formulario de contacto">Enviar</button>');
+  sinBarrera('<button aria-label="formulario Enviar">Enviar</button>');
+  sinBarrera('<button aria-label="enviar">Enviar</button>');        // mayúsculas no cuentan
+  sinBarrera('<button aria-label="Buscar">🔍 Buscar</button>');      // el emoji tampoco
+});
+
+test("2.5.3: los tres falsos positivos que acecharían, descartados", () => {
+  const vale = (h) => assert.equal(veredictos(h)["2.5.3"], "cumple-parcial", h);
+  // 1. El icono de fuente con ligadura: se ve una lupa, no la palabra «search».
+  vale('<button aria-label="Buscar"><i class="material-icons">search</i></button>');
+  // 2. La «x» del botón de cerrar: un carácter suelto es un icono escrito con el
+  //    teclado, no una etiqueta. Mismo corte que la regla de axe, comprobado.
+  vale('<button type="button" aria-label="Cerrar">x</button>');
+  vale('<button type="button" aria-label="Cerrar">×</button>');
+  // 3. Un párrafo entero no es la etiqueta de nada.
+  vale('<a href="/x" aria-label="Ficha del producto">Este es el resumen completo del artículo, ' +
+    'con muchas palabras, que ocupa la tarjeta entera y no es la etiqueta de ningún control</a>');
+  // Y si el nombre sale del propio contenido, no puede haber desajuste.
+  vale("<button>Enviar</button>");
+  // Ni se mira el `alt` de una imagen, que no se lee con los ojos.
+  vale('<a href="/" aria-label="Inicio"><img src="logo.png" alt="Acme"></a>');
+});
+
+test("2.5.3: si solo bailan las tildes, es sospecha y no barrera", () => {
+  // Puede que el reconocedor de voz lo case y puede que no: eso se prueba, no se
+  // dictamina. Lo que no se puede es callarlo.
+  const v = veredictos('<a href="/x" aria-label="Mas informacion sobre el servicio">Más información</a>');
+  assert.equal(v["2.5.3"], "revisar");
+});
+
+test("2.5.3: la comparación, por partes", () => {
+  assert.equal(etiquetaEnNombre("Enviar", "Submit form").ok, false);
+  assert.equal(etiquetaEnNombre("Enviar", "Enviar el formulario").ok, true);
+  assert.equal(etiquetaEnNombre("Más información", "Mas informacion y algo mas").soloAcentos, true);
+  // Sin texto visible, sin nombre o con un solo carácter: no hay nada que juzgar.
+  assert.equal(etiquetaEnNombre("", "Cerrar"), null);
+  assert.equal(etiquetaEnNombre("Enviar", ""), null);
+  assert.equal(etiquetaEnNombre("x", "Cerrar"), null);
+  // El texto visible deja fuera iconos, `alt` y lo oculto.
+  assert.equal(textoDeEtiqueta(unEl('<button aria-label="B"><i class="fa fa-search">search</i>Buscar</button>'), "button"), "Buscar");
+  assert.equal(textoDeEtiqueta(unEl('<button aria-label="B"><span aria-hidden="true">oculto</span>Ver</button>'), "button"), "Ver");
+  assert.equal(normalizaEtiqueta("  ¡Enviar, YA!  "), "enviar ya");
 });
