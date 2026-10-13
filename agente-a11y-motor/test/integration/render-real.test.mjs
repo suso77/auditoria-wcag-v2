@@ -385,3 +385,31 @@ test("2.4.3 distingue una maquetación en columnas de un salto de verdad", { ski
   const c = ruido.measurements.find((m) => m.crit === "2.4.3");
   assert.equal(c.verdict, "pasa", "tres píxeles no son un salto de orden: " + c.detail);
 });
+
+test("regresión: 2.4.3 compara TODA la secuencia, no los 25 primeros controles", { skip }, async () => {
+  /* El `slice(0, 25)` estaba antes de comparar en vez de antes de imprimir.
+   * Medido en Chromium: 30 controles con la fila invertida en los dos últimos
+   * daban `pasa` —que `esConforme()` da por conformidad— con la frase «la
+   * tabulación sigue el orden visual de la página» y sin una sola nota; la
+   * misma inversión en los dos primeros daba `revisar`. En cualquier sitio real
+   * con más de 25 elementos enfocables, 2.4.3 se podía exportar como conforme
+   * con la inversión fuera del recorte. */
+  let botones = "";
+  for (let i = 1; i <= 28; i++) botones += "<p><button type=\"button\">Botón " + i + "</button></p>";
+  const alFinal = await analyzeRendered({
+    html: '<style>.fila{display:flex;flex-direction:row-reverse;gap:1em}</style><main><h1>O</h1>' + botones +
+      '<div class="fila"><button type="button">Primero del código</button><button type="button">Segundo del código</button></div></main>'
+  }, { launchOptions });
+  const m = alFinal.measurements.find((x) => x.crit === "2.4.3");
+  assert.equal(m.verdict, "revisar", "la inversión está en los controles 29 y 30: " + m.detail);
+  assert.match(m.detail, /salto\(s\) hacia atrás dentro de la misma línea visual/);
+  // Y la evidencia sigue siendo legible, diciendo cuántos hay en total.
+  assert.match(m.detail, /30 controles en total/, m.detail);
+
+  // Control: los mismos 30 en orden correcto siguen pasando, sin inventar nada.
+  const bien = await analyzeRendered({
+    html: "<main><h1>O</h1>" + botones + '<p><button type="button">Botón 29</button></p><p><button type="button">Botón 30</button></p></main>'
+  }, { launchOptions });
+  const b = bien.measurements.find((x) => x.crit === "2.4.3");
+  assert.equal(b.verdict, "pasa", b.detail);
+});

@@ -2933,6 +2933,14 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       const rTxt = (cl && ct) ? contrastRatio(cl, ct) : null;
       (d ? conDistintivo : soloColor).push({ loc: locatorM(a), ruta: rutaM(a), texto: ownText(a).slice(0, 40), distintivo: d, rTxt: rTxt });
     });
+    /* El recorte a 25 no puede comerse el RECUENTO.
+     *
+     * Cada enlace solo-color sale como su propia barrera, y con más de 25 los
+     * demás desaparecían sin dejar rastro: en el informe la cifra de barreras de
+     * 1.4.1 era 25 en una página con cuarenta, que es decirle a quien tiene que
+     * arreglarlo que hay menos trabajo del que hay. El criterio ya fallaba igual,
+     * pero el alcance de la reparación se contaba mal. */
+    const sobran1401 = Math.max(0, soloColor.length - 25);
     soloColor.slice(0, 25).forEach(function (x) {
       const niColor = x.rTxt != null && x.rTxt < 1.2;
       res.push({
@@ -2945,6 +2953,14 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
             ": ni subrayado, ni grosor, ni borde, ni fondo, ni icono. Quien no distinga ese color no ve que hay un enlace"
       });
     });
+    if (sobran1401) {
+      res.push({
+        crit: "1.4.1", label: "Uso del color", node: sobran1401 + " enlaces más", verdict: "falla",
+        detail: "hay " + sobran1401 + " enlace(s) más en texto corrido con el MISMO patrón —sin otro distintivo que el color— que no se enumeran uno a uno por el tope de la medición (25). " +
+          "Son parte de la misma barrera y cuentan para el alcance de la reparación: " +
+          soloColor.slice(25, 30).map(function (x) { return x.loc; }).join(", ") + (sobran1401 > 5 ? ", …" : "")
+      });
+    }
     if (!soloColor.length && enlacesEnTexto.length) {
       res.push({
         crit: "1.4.1", label: "Uso del color", node: enlacesEnTexto.length + " enlaces en texto", verdict: "cumple-parcial",
@@ -3181,12 +3197,26 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
 
     if (focusables.length > 1) {
       const positive = focusables.some(function (f) { return f.ti > 0; });
-      // La SECUENCIA concreta, no solo el veredicto: es lo que permite comprobar de
-      // un vistazo si el orden de tabulación sigue el orden visual.
+      /* EL `slice(0, 25)` ESTABA EN EL SITIO EQUIVOCADO, Y ESO FIRMABA CONFORMIDAD.
+       *
+       * Los 25 son para la evidencia: imprimir sesenta controles en una línea no
+       * se lee. Pero el recorte se aplicaba ANTES de comparar, así que la
+       * comparación con el orden visual solo miraba los 25 primeros y luego el
+       * veredicto salía `pasa` —que `esConforme()` da por conformidad— con la
+       * frase «la tabulación sigue el orden visual de la página». Medido: una
+       * página de 30 controles con una fila invertida (`row-reverse`) en los dos
+       * últimos daba `pasa`, sin una nota; la misma inversión en los dos primeros
+       * daba `revisar`. En cualquier sitio real con más de 25 elementos
+       * enfocables —es decir, en casi todos— 2.4.3 se podía exportar como
+       * conforme con la inversión fuera del recorte.
+       *
+       * Ahora se compara la secuencia COMPLETA y se recorta solo lo que se
+       * imprime, diciendo cuántos hay en total. */
       const ordenados = focusables.slice().sort(function (a, b) {
         const at = a.ti > 0 ? a.ti : Infinity, bt = b.ti > 0 ? b.ti : Infinity;
         return at - bt;
-      }).slice(0, 25);
+      });
+      const MUESTRA_SEQ = 25;
       /* 2.4.3 se COMPARA con el orden visual, que es de lo que habla el criterio.
        *
        * El único criterio de decisión era la existencia de un `tabindex` positivo:
@@ -3251,8 +3281,9 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         }
       }
       const nombra = function (f) { return f.loc + (f.texto ? " «" + f.texto + "»" : ""); };
-      const seq = ordenados.map(function (f) { return nombra(f); });
-      const cola = seq.join(" → ") + (focusables.length > 25 ? " → …" : "");
+      const seq = ordenados.slice(0, MUESTRA_SEQ).map(function (f) { return nombra(f); });
+      const cola = seq.join(" → ") +
+        (ordenados.length > MUESTRA_SEQ ? " → … (" + ordenados.length + " controles en total; se muestran los " + MUESTRA_SEQ + " primeros, pero la comparación es de todos)" : "");
       const problemas = [];
       if (positive) problemas.push("hay un `tabindex` positivo, que altera el orden natural");
       if (inversionesFila.length) {
@@ -3276,7 +3307,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         // Este hallazgo no es de UN elemento, así que no lleva `path`: lleva la
         // secuencia de rutas. El nombre legible se repite («a → a → a») y por sí
         // solo no deja comprobar el orden; con las rutas sí.
-        rutas: ordenados.map(function (f) { return f.path; })
+        rutas: ordenados.slice(0, MUESTRA_SEQ).map(function (f) { return f.path; })
       });
     }
     /* 1.3.2 sobre el render: el orden que se lee frente al que se ve. */

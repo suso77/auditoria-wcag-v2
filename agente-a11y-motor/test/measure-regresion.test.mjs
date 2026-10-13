@@ -666,3 +666,52 @@ test("1.3.2: el tope de contenedores se dice y limita el criterio", () => {
   assert.deepEqual(meta.limita, ["1.3.2"]);
   assert.match(meta.detail, /sin mirar por el tope/);
 });
+
+/* ── 2.4.3: el recorte de la evidencia no puede recortar la COMPARACIÓN ──────
+ *
+ * `slice(0, 25)` estaba antes de comparar, no antes de imprimir. Medido en un
+ * Chromium real: una página de 30 controles con una fila invertida
+ * (`row-reverse`) en los dos últimos daba `pasa` —que `esConforme()` da por
+ * conformidad— con la frase «la tabulación sigue el orden visual de la página»,
+ * y sin una nota; la misma inversión en los dos primeros daba `revisar`.
+ */
+const unBoton = (n, top, left) =>
+  '<button data-box=' + caja(top, left, 80, 30) + ">B" + n + "</button>";
+
+test("2.4.3: una inversión más allá del control 25 también se ve", () => {
+  let h = "";
+  for (let i = 1; i <= 28; i++) h += unBoton(i, i * 40, 0);
+  // Los dos últimos, invertidos: el 29 se pinta a la DERECHA del 30.
+  h += unBoton(29, 1200, 300) + unBoton(30, 1200, 0);
+  const r = run(h, 400).filter((x) => x.crit === "2.4.3");
+  assert.equal(r.length, 1);
+  assert.equal(r[0].verdict, "revisar", r[0].detail);
+  assert.match(r[0].detail, /salto\(s\) hacia atrás/, r[0].detail);
+  // Y la evidencia sigue siendo legible: 25 y el total dicho.
+  assert.match(r[0].detail, /30 controles en total/, r[0].detail);
+  assert.ok(r[0].rutas.length <= 25, "la secuencia impresa se recorta: " + r[0].rutas.length);
+});
+
+test("2.4.3: 30 controles en orden correcto siguen pasando", () => {
+  let h = "";
+  for (let i = 1; i <= 30; i++) h += unBoton(i, i * 40, 0);
+  const r = run(h, 400).filter((x) => x.crit === "2.4.3");
+  assert.equal(r[0].verdict, "pasa", r[0].detail);
+  assert.match(r[0].detail, /30 controles en total/);
+});
+
+/* ── 1.4.1: el tope de 25 no puede comerse el RECUENTO de barreras ───────── */
+
+test("1.4.1: con más de 25 enlaces solo-color se dice cuántos quedan fuera", () => {
+  let h = "<p>Texto corrido con ";
+  for (let i = 1; i <= 30; i++) {
+    h += '<a href="/x' + i + '" data-cs=\'{"color":"rgb(0,0,238)","textDecorationLine":"none"}\' data-box=' + caja(i, 0, 60, 20) + ">enlace " + i + "</a>, ";
+  }
+  h += "y fin.</p>";
+  const r = run(h, 400).filter((x) => x.crit === "1.4.1");
+  const extra = r.find((x) => /no se enumeran uno a uno/.test(x.detail));
+  assert.ok(extra, "falta la nota del recuento: " + r.length + " hallazgos de 1.4.1");
+  assert.equal(extra.verdict, "falla");
+  assert.match(extra.detail, /\b5 enlace\(s\) más\b/, extra.detail);
+  assert.match(extra.detail, /alcance de la reparación/);
+});

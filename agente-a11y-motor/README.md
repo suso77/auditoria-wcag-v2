@@ -64,10 +64,11 @@ const informe = analyze(understand(html));
 ## Tests
 
 ```bash
-npm test                    # suite pura (node --test), sin navegador — 691 tests
-npm run test:integracion    # integración con Chromium (Playwright) — 154 tests
+npm test                    # suite pura (node --test), sin navegador — 694 tests
+npm run test:integracion    # integración con Chromium (Playwright) — 155 tests
 npm run bench               # banco de precisión accname contra corpus WPT
 npm run smoke               # humo del artifact generado, en Chromium real
+node scripts/quien-declara-conforme.mjs   # quién puede declarar conforme qué, y con qué base
 ```
 
 `PW_CHROMIUM=/ruta/a/chrome` apunta a un Chromium ya instalado y lo respetan todos los drivers a la vez (`src/playwright-launch.js`).
@@ -980,6 +981,18 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 **En el cruce con axe, dos afirmaciones que no se podían sostener.** `crossCheck` fabricaba `{findings: []}` cuando el motor no llegaba a construir el modelo —texto suelto, un comentario, una cadena vacía—, y ese resultado entraba en la reconciliación como una comprobación limpia: «soloMotor: 0» era indistinguible de «el motor comprobó y no encontró nada». Y el «acuerdo» se construía solo porque coincidía el número de criterio: el motor acusando a `img.logo` y axe a otro `img` de la página salían como «acuerdo: 1». Casar los elementos exige la página abierta —lo hace la orquestación, no la reconciliación pura—, así que ahora se publica cuántos elementos trae cada fuente, que la coincidencia a nivel de elemento NO está comprobada, y que el motor no miró cuando no miró.
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
+
+### v0.49.0 — 2.4.3 comparaba 25 controles y firmaba la página entera
+
+Esta versión sale de darle la vuelta a la pregunta. Hasta ahora el barrido buscaba criterios que **no pueden denunciar** una barrera; este busca lo contrario, que es más difícil de ver porque un informe que absuelve no se queja: **quién puede declarar conforme qué, y con qué base**. De los 55 criterios, quince pueden salir como `pasa` o `cumple` desde alguna capa — y hay que mirarlos uno por uno con una sola pregunta: *¿lo que se ha medido cubre todo lo que pide el criterio, o solo una parte?*
+
+**2.4.3 Orden del foco no lo cubría.** El `slice(0, 25)` estaba antes de **comparar** en vez de antes de **imprimir**: los 25 son para que la evidencia se pueda leer —sesenta controles en una línea no se leen—, pero el recorte se aplicaba a la lista que después se compara con el orden visual. Medido en un Chromium real: una página de 30 controles con una fila invertida (`row-reverse`) en los dos últimos daba **`pasa`**, con la frase «la tabulación sigue el orden visual de la página» y sin una sola nota; la misma inversión en los dos primeros daba `revisar`. En cualquier sitio con más de 25 elementos enfocables —es decir, en casi todos— el criterio se podía exportar como conforme teniendo la inversión fuera del recorte. Ahora se compara la secuencia completa, se imprimen los 25 primeros y se dice cuántos hay en total.
+
+**Y un recuento que engañaba, en 1.4.1.** Cada enlace que solo se distingue por el color sale como su propia barrera, y con más de 25 los demás desaparecían sin dejar rastro: en una página con cuarenta, el informe decía veinticinco. El criterio fallaba igual, pero el alcance de la reparación se contaba mal, y quien lee el informe para presupuestar el arreglo se llevaba una cifra falsa. Ahora, cuando hay más, se dice cuántos y se nombran algunos.
+
+**El barrido queda en el repo,** porque el método vale más que el hallazgo: `node scripts/quien-declara-conforme.mjs` saca cada línea del código que emite un veredicto conforme y a qué criterio, y `node scripts/quien-declara-conforme.mjs 2.4.3` lo hace de uno. Es el tercer sitio donde aparece el mismo patrón —1.4.11 medía el relleno y firmaba el criterio, 3.2.1 sondaba sin foco de documento y firmaba «ninguno provoca nada», 2.4.3 comparaba 25 y firmaba la página— así que conviene tenerlo a mano y volver a pasarlo cada vez que una capa aprenda a decir `pasa`.
+
+**694 tests unitarios** (de 691) y **155 de integración** (de 154), en verde. El entregable no se mueve: 7 familias, 21 hallazgos, 55 de 55 con veredicto. Y en el sitio de prueba 2.4.3 sigue saliendo `pasa` en las siete páginas donde el orden es correcto: esto no inunda de avisos, cierra un agujero.
 
 ### v0.48.0 — «el agente no ve el orden visual» era mentira, y el cuaderno borraba la prueba
 
