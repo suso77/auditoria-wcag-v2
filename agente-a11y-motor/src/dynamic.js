@@ -359,15 +359,47 @@ export function analyzeContextChange(eventos, noSondados, censo) {
     const propios = (eventos || []).filter(function (e) { return e.disparador === disp; });
     if (!propios.length) return;
 
-    const graves = propios.filter(function (e) { return e.navego; });
-    const medios = propios.filter(function (e) { return !e.navego && (e.focoMovido || e.contenidoCambio); });
+    /* TRES CAUSAS DURAS, NO UNA.
+     *
+     * Aquí solo contaba `navego`, y eso dejaba fuera dos fallos con nombre y
+     * apellidos. Medido sobre una página con los cuatro casos escritos en los
+     * atributos: `onfocus="window.open('/cal')"` abría una ventana de verdad
+     * —el evento `popup` de Playwright se dispara— y `onfocus="this.blur()"`
+     * quitaba el foco nada más recibirlo, y la capa dinámica emitía
+     * «se han probado 9 control(es) y ninguno provoca navegación, salto de foco
+     * ni sustitución de contenido», es decir `pasa`, en una página que falla
+     * 3.2.1 dos veces. Una frase falsa en la evidencia y, peor, un criterio
+     * declarado conforme sin serlo: lo que la regla de oro prohíbe.
+     *
+     * Por qué se escapaban: la URL no cambia al abrir una ventana nueva, y el
+     * foco perdido deja `document.activeElement` en `<body>`, que la huella
+     * leía como «sin foco» y el filtro `!== null` descartaba — un guardia
+     * puesto para no acusar a los controles que NO pueden recibir el foco,
+     * donde `el.focus()` no mueve nada. Ahora el driver escucha el evento
+     * `focus` del propio elemento, así que distingue «lo recibió y lo perdió»
+     * de «no pudo recibirlo», y cuenta las ventanas que se abren. */
+    const graves = propios.filter(function (e) { return e.navego || e.abrioVentana || e.focoQuitado; });
+    const medios = propios.filter(function (e) { return !(e.navego || e.abrioVentana || e.focoQuitado) && (e.focoMovido || e.contenidoCambio); });
     const verbo = disp === "foco" ? "al recibir el foco" : "al cambiar su valor";
 
     if (graves.length) {
+      const causa = function (e) {
+        const q = [];
+        if (e.navego) q.push("NAVEGA a otra página");
+        if (e.abrioVentana) q.push("ABRE UNA VENTANA nueva");
+        if (e.focoQuitado) q.push("recibe el foco y lo SUELTA, dejándolo en ningún sitio");
+        return e.locator + " (" + q.join(" y ") + ")";
+      };
+      const tecnicas = [];
+      if (graves.some(function (e) { return e.navego; })) tecnicas.push(disp === "foco" ? "F52" : "F37");
+      if (graves.some(function (e) { return e.abrioVentana; })) tecnicas.push("F52");
+      if (graves.some(function (e) { return e.focoQuitado; })) tecnicas.push("F55");
       out.push(F(crit, "falla", "grave", [
-        graves.length + " control(es) provocan una NAVEGACIÓN " + verbo + ", sin que medie ninguna acción de la persona: " +
-        graves.slice(0, 5).map(function (e) { return e.locator; }).join(", ") +
-        ". Es el caso que " + crit + " prohíbe expresamente." + cola
+        graves.length + " control(es) provocan un cambio de contexto " + verbo + ", sin que medie ninguna acción de la persona: " +
+        graves.slice(0, 5).map(causa).join(" · ") +
+        ". Es el caso que " + crit + " prohíbe expresamente" +
+        (tecnicas.length ? " (fallo" + (tecnicas.length > 1 ? "s " : " ") + tecnicas.filter(function (t, i, a) { return a.indexOf(t) === i; }).join(", ") + ")" : "") +
+        "." + cola
       ], graves.slice(0, 8).map(function (e) { return { locator: e.locator, name: "", path: e.uid }; })));
     }
     if (medios.length) {

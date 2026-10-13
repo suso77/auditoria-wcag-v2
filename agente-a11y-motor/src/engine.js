@@ -128,6 +128,77 @@ function isHiddenEl(node) {
   return st.indexOf("display:none") !== -1 || st.indexOf("visibility:hidden") !== -1;
 }
 
+/* 3.2.1 y 3.2.2: el cambio de contexto que viene ESCRITO en el marcado.
+ *
+ * De estos dos criterios se encarga la capa dinámica, que enfoca cada control y
+ * le cambia el valor para ver si se mueve el suelo. Pero esa capa viene apagada
+ * por defecto, y en la extensión y en el artifact no existe: ahí el motor daba
+ * `humano` —«ninguna máquina lo dictamina»— incluso con el fallo escrito dentro
+ * del atributo. Medido: `<select onchange="location.href=this.value">`, que es
+ * el fallo F37 de libro, salía como «requiere evaluación humana».
+ *
+ * Lo que sigue solo mira manejadores EN LÍNEA, y solo las acciones que son un
+ * cambio de contexto sin discusión: navegar, abrir una ventana, enviar el
+ * formulario o mover el foco a otro sitio. Un `onchange="pinta(this.value)"` no
+ * dice nada: lo que hace está en un script que el marcado no ve, y de eso se
+ * encarga la capa dinámica. Inventar una barrera con un nombre de función es
+ * exactamente lo que este agente no hace.
+ */
+const NAVEGA = /\b(?:window\s*\.\s*open|location\s*\.\s*(?:href|replace|assign)|(?:window|document|top|self|parent)\s*\.\s*location|location\s*=)/;
+const ENVIA = /\.\s*submit\s*\(/;
+function accionDeContexto(codigo) {
+  const c = String(codigo || "");
+  if (NAVEGA.test(c)) return { que: "navega a otra página o abre una ventana", duro: true };
+  if (ENVIA.test(c)) return { que: "envía el formulario", duro: true };
+  // `this.blur()` quita el foco de donde la persona acaba de ponerlo; un
+  // `.focus()` sobre OTRA cosa se lo lleva a un sitio que no eligió. `this.focus()`
+  // y `this.select()` no mueven nada.
+  if (/\.\s*blur\s*\(/.test(c)) return { que: "quita el foco del control al recibirlo", duro: true };
+  if (/\.\s*focus\s*\(/.test(c) && !/\bthis\s*\.\s*focus\s*\(/.test(c)) return { que: "mueve el foco a otro elemento", duro: true };
+  // Un diálogo del navegador también se lleva el foco, pero puede ser un aviso
+  // legítimo disparado por otra cosa: sospecha, no barrera.
+  if (/\b(?:alert|confirm|prompt)\s*\(/.test(c)) return { que: "abre un diálogo del navegador", duro: false };
+  return null;
+}
+/**
+ * Observaciones de 3.2.1 / 3.2.2 leyendo los manejadores en línea del elemento.
+ * Devuelve [] cuando no hay nada que afirmar, que es el caso de casi todo.
+ */
+function cambioDeContextoEnLinea(el, tag, role) {
+  const out = [];
+  const foco = accionDeContexto(el.getAttribute && el.getAttribute("onfocus"));
+  if (foco) {
+    out.push({
+      html: "Al recibir el foco, <code>onfocus</code> " + esc(foco.que) +
+        ": recorrer la página con el tabulador dispara el cambio sin que nadie lo haya pedido" +
+        (foco.duro ? " (fallos F52 y F55)" : ", conviene comprobar cuándo salta") + ".",
+      crit: "3.2.1", sev: foco.duro ? "grave" : "moderada", type: "onfocus-contexto",
+      nivel: foco.duro ? undefined : "revisar"
+    });
+  }
+  // 3.2.2 es «cambiar el AJUSTE de un componente»: el valor de un control, no
+  // escribir en un campo de texto cualquiera. Por eso solo cuentan los que
+  // tienen ajuste —listas, casillas, radios, deslizadores— y el `oninput` de
+  // un campo de texto no entra aquí.
+  const tipo = String((el.getAttribute && el.getAttribute("type")) || "").toLowerCase();
+  const conAjuste = tag === "select" || (tag === "input" && ["checkbox", "radio", "range", "file", "color", "date", "time"].indexOf(tipo) !== -1) ||
+    ["listbox", "combobox", "checkbox", "radio", "switch", "slider", "option", "menuitemcheckbox", "menuitemradio"].indexOf(role) !== -1;
+  if (conAjuste) {
+    const cambio = accionDeContexto(el.getAttribute && el.getAttribute("onchange")) ||
+      accionDeContexto(el.getAttribute && el.getAttribute("oninput"));
+    if (cambio) {
+      out.push({
+        html: "Cambiar el valor de este <code>" + esc(tag) + "</code> " + esc(cambio.que) +
+          " en el propio <code>onchange</code>, sin que la persona pulse nada (fallo F37). Con el teclado es peor: recorrer las opciones cambia el valor una por una. " +
+          "La norma solo lo salva si se avisa del comportamiento ANTES de usar el control; si ese aviso está junto a la etiqueta, compruébalo.",
+        crit: "3.2.2", sev: cambio.duro ? "grave" : "moderada", type: "onchange-contexto",
+        nivel: cambio.duro ? undefined : "revisar"
+      });
+    }
+  }
+  return out;
+}
+
 /* 2.5.3 Etiqueta en el nombre: el texto que se VE, no el que se calcula.
  *
  * El criterio existe por quien maneja el ordenador hablando: dice «pulsa
@@ -1100,6 +1171,8 @@ function makeNode(el, doc, depth, presentacionHeredada) {
   const managed = MANAGED_ROLES.indexOf(role) !== -1;
   const focusObs = [];
   if (tabAttr && parseInt(tabAttr, 10) > 0) focusObs.push({ html: '<code>tabindex="' + esc(tabAttr) + '"</code> positivo: altera el orden natural de tabulación (antipatrón).', crit: "2.4.3", sev: "moderada", type: "tabindex-positive" });
+  // 3.2.1 / 3.2.2 cuando el cambio de contexto viene escrito en el atributo.
+  cambioDeContextoEnLinea(el, tag, role).forEach(function (o) { focusObs.push(o); });
 
   const model = {
     id: ++NODE_SEQ, depth: depth, tag: tag, role: role, level: level, locator: buildLocator(el, tag), path: buildPath(el),
@@ -1346,6 +1419,8 @@ function understand(html) {
 export {
   capaQueMide,
   buildPath,
+  cambioDeContextoEnLinea,
+  accionDeContexto,
   etiquetaEnNombre,
   textoDeEtiqueta,
   normalizaEtiqueta,

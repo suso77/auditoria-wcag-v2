@@ -264,6 +264,10 @@ function __controlesDePausa(){
 }
 `;
 
+const SHIM_VENTANAS = "if(!window.__a11yOpenShim){window.__a11yOpenShim=1;window.__a11yVentanas=[];" +
+  "var o=window.open;window.open=function(){try{window.__a11yVentanas.push(document.activeElement?__uid(document.activeElement):'?');}catch(e){}" +
+  "try{return o.apply(window,arguments);}catch(e){return null;}};}";
+
 async function evalIn(page, body, arg) {
   return page.evaluate(new Function("__arg", PAGE_HELPERS + "\nreturn (async function(){" + body + "})();"), arg === undefined ? null : arg);
 }
@@ -494,6 +498,7 @@ export async function dynamicAnalyze(target, opts) {
       // demás y el criterio salía «probado 1 control» sobre una página con
       // veinte. Se espera y se reintenta una vez.
       let recargas = 0;
+      let reponerShim = null;       // se asigna al instalar el censo de ventanas
       const recargar = async function () {
         if (!target.url || recargas >= 6) return false;
         recargas++;
@@ -501,6 +506,7 @@ export async function dynamicAnalyze(target, opts) {
           propia = true;
           await page.goto(target.url, { waitUntil: opts.waitUntil || "load", timeout: opts.timeout || 30000 });
           propia = false;
+          if (reponerShim) await reponerShim();
           return true;
         } catch (e) { return false; }
       };
@@ -518,12 +524,44 @@ export async function dynamicAnalyze(target, opts) {
               propia = true;
               await page.goto(target.url, { waitUntil: opts.waitUntil || "load", timeout: opts.timeout || 30000 });
               propia = false;
+              if (reponerShim) await evalIn(page, SHIM_VENTANAS + " return true;").catch(function () { return null; });
               return await evalIn(page, expr, arg);
             } catch (e3) { /* nada que hacer */ }
           }
           return undefined;
         }
       };
+      /* LAS VENTANAS QUE SE ABREN NO SE VEN EN LA URL DE ESTA PÁGINA.
+       *
+       * `onfocus="window.open('/cal')"` es el fallo F52 y la huella no lo nota:
+       * la URL no cambia, el foco no se mueve y el contenido es el mismo.
+       *
+       * Y la atribución hay que hacerla DENTRO de la página, no con el evento
+       * `popup` del driver. Se intentó así y se midió el resultado: el `onfocus`
+       * de un control se vuelve a disparar cada vez que el documento recupera el
+       * foco, salieron CINCO ventanas del mismo `input` repartidas en 300 ms, y
+       * la última aterrizó en el turno del control siguiente —que solo hacía
+       * `this.blur()`— y lo acusó de «abre una ventana nueva». Una barrera
+       * colgada a quien no la abrió es exactamente lo que este agente no puede
+       * permitirse.
+       *
+       * Envolviendo `window.open` y apuntando quién tenía el foco en ese
+       * momento, la atribución es exacta y no depende de cuándo llegue el aviso.
+       * El evento `popup` se sigue escuchando, pero solo para cerrar la ventana:
+       * si no, la sesión se llena de pestañas. */
+      const instalarShim = function () { return evalIn(page, SHIM_VENTANAS + " return true;").catch(function () { return false; }); };
+      await instalarShim();
+      reponerShim = instalarShim;   // lo usan `recargar()` y el reintento: una recarga se lleva el shim
+      const alAbrir = function (pop) {
+        Promise.resolve().then(function () { return pop.close(); }).catch(function () { /* ya se cerró */ });
+      };
+      if (page.on) page.on("popup", alAbrir);
+      // Cuántas ventanas ha abierto ESTE elemento, según el propio navegador.
+      const ventanasDe = async function (uid) {
+        const n = await evalConReintento("return (window.__a11yVentanas||[]).filter(function(u){return u===__arg;}).length;", uid);
+        return typeof n === "number" ? n : 0;
+      };
+
       for (const uid of uids) {
         try {
           // ORDEN: primero resolver el elemento (recargando si hace falta), y
@@ -542,7 +580,44 @@ export async function dynamicAnalyze(target, opts) {
           if (!antes) { noSondados.push(uid); continue; }
 
           // (a) 3.2.1 — solo enfocar.
-          await evalConReintento("var el=__el(__arg); if(el && el.focus) el.focus(); return true;", uid);
+          /* DOS COSAS QUE NO SE VEÍAN, Y LA SEGUNDA ES LA GORDA.
+           *
+           * 1) Se escucha el evento `focus` DEL PROPIO ELEMENTO, no solo dónde
+           *    acaba el foco. `el.focus()` lo despacha de forma síncrona
+           *    —comprobado en Chromium—, así que al volver ya se sabe si lo
+           *    recibió. Eso distingue dos cosas que antes se confundían: el
+           *    control que recibe el foco y lo SUELTA (`onfocus="this.blur()"`,
+           *    fallo F55, que deja `activeElement` en `<body>` y la huella leía
+           *    como «sin foco», descartado por el filtro `!== null`) del control
+           *    que no puede recibirlo, donde `el.focus()` no mueve nada y
+           *    acusarlo sería inventarse la barrera.
+           *
+           * 2) Sin foco de DOCUMENTO, Chromium actualiza `activeElement` pero NO
+           *    despacha los eventos de foco: el `onfocus` de la página ni se
+           *    ejecuta. Y el documento pierde el foco en cuanto el cortafuegos
+           *    aborta la primera navegación. Medido sobre una página con los
+           *    cuatro fallos escritos en los atributos: del tercer control en
+           *    adelante `document.hasFocus()` daba false, ningún `onfocus`
+           *    corría, y la capa emitía «se han probado 9 control(es) y ninguno
+           *    provoca navegación, salto de foco ni sustitución de contenido»
+           *    —es decir, `pasa`— en una página que falla 3.2.1 dos veces. Una
+           *    frase falsa en la evidencia y un criterio declarado conforme sin
+           *    serlo. `bringToFront()` devuelve el foco al documento, y lo que
+           *    no se pueda sondar con foco se cuenta como NO sondado, que baja
+           *    el veredicto a `cumple-parcial`. */
+          const sondaFoco =
+            "var el=__el(__arg); if(!el||!el.focus) return null;" +
+            "var r={recibio:false}; var h=function(){r.recibio=true;};" +
+            "try{ el.blur(); }catch(e){}" +
+            "el.addEventListener('focus',h,{once:true}); el.focus(); el.removeEventListener('focus',h);" +
+            "return { recibio:r.recibio, sigue: document.activeElement===el, docFoco: document.hasFocus() };";
+          const ventanasAntes = await ventanasDe(uid);
+          let foco = await evalConReintento(sondaFoco, uid);
+          if (foco && foco.docFoco === false && page.bringToFront) {
+            try { await page.bringToFront(); } catch (e) { /* si no se puede, se dirá que no se sondó */ }
+            const otra = await evalConReintento(sondaFoco, uid);
+            if (otra && otra.docFoco) foco = otra;
+          }
           await page.waitForTimeout(120);
           let trasFoco = await evalConReintento(huella);
           if (!trasFoco) {
@@ -551,9 +626,22 @@ export async function dynamicAnalyze(target, opts) {
             await recargar();
             continue;
           }
+          // Una ventana abierta es consecuencia del foco aunque luego el
+          // documento se quede sin foco —justamente porque se lo lleva la
+          // ventana nueva—, así que eso se mira antes de descartar nada.
+          const ventanaAlEnfocar = (await ventanasDe(uid)) > ventanasAntes;
+          // La cuenta la lleva el propio navegador y va por elemento (ver
+          // SHIM_VENTANAS), así que no depende de cuándo llegue el aviso: una
+          // ventana rezagada no se le cuelga al control siguiente.
+          if (!ventanaAlEnfocar && foco && (!foco.docFoco || !foco.recibio)) {
+            noSondados.push(uid);
+            continue;
+          }
           ctxEventos.push({
             locator: info.locator, uid: uid, disparador: "foco",
             navego: trasFoco.url !== antes.url,
+            abrioVentana: ventanaAlEnfocar,
+            focoQuitado: !!(foco && foco.recibio && !foco.sigue),
             focoMovido: trasFoco.foco !== uid && trasFoco.foco !== null,
             contenidoCambio: trasFoco.contenido !== antes.contenido
           });
@@ -561,6 +649,7 @@ export async function dynamicAnalyze(target, opts) {
           // (b) 3.2.2 — cambiar el valor, solo donde tiene sentido y sin escribir
           //     nada en campos que ya tuvieran datos del usuario.
           if (info.tag === "select" || (info.tag === "input" && ["checkbox", "radio"].indexOf(info.tipo) !== -1)) {
+            const ventanasAntes2 = await ventanasDe(uid);
             const antes2 = await evalConReintento(huella);
             const restaurar = antes2 && await evalConReintento(`
               var el=__el(__arg); if(!el) return null;
@@ -580,6 +669,7 @@ export async function dynamicAnalyze(target, opts) {
               if (trasCambio) ctxEventos.push({
                 locator: info.locator, uid: uid, disparador: "entrada",
                 navego: trasCambio.url !== antes2.url,
+                abrioVentana: (await ventanasDe(uid)) > ventanasAntes2,
                 focoMovido: trasCambio.foco !== uid && trasCambio.foco !== null,
                 contenidoCambio: trasCambio.contenido !== antes2.contenido
               });
@@ -593,6 +683,7 @@ export async function dynamicAnalyze(target, opts) {
           }
         } catch (e) { noSondados.push(uid); /* un control que no se deja sondar no tumba la fase */ }
       }
+      if (page.off) page.off("popup", alAbrir);
       recargasContexto = recargas;
       desarmar();
     });

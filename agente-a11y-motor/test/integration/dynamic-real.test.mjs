@@ -172,3 +172,43 @@ test("dinámico real: el mismo texto dentro de un role=status se cuenta como anu
   assert.equal(f[0].verdict, "cumple-parcial", JSON.stringify(f[0].evid));
   assert.match(f[0].evid[0], /ninguno queda sin anunciar/);
 });
+
+/* ── 3.2.1: los dos cambios de contexto que la sonda no veía ─────────────────
+ *
+ * Medido antes del arreglo, sobre una página con los cuatro casos escritos en
+ * los atributos: la capa decía «se han probado 9 control(es) y ninguno provoca
+ * navegación, salto de foco ni sustitución de contenido» —`pasa`— sobre una
+ * página que falla 3.2.1 dos veces. Dos motivos: abrir una ventana no cambia la
+ * URL de esta página, y el foco perdido deja `activeElement` en `<body>`, que
+ * la huella leía como «sin foco». Y uno más, el gordo: en cuanto el cortafuegos
+ * aborta una navegación el documento pierde el foco, y sin foco de documento
+ * Chromium NO despacha los eventos de foco — el `onfocus` ni se ejecuta.
+ */
+const soloCrit = (out, n) => out.findings.filter((f) => f.c.n === n);
+
+test("dinámico real: onfocus que abre una ventana → falla 3.2.1 (F52), y sin colgárselo a otro", { skip }, async () => {
+  const html = '<input id="fecha" onfocus="window.open(\'/cal\')"><input id="codigo" onfocus="this.blur()"><input id="sano">';
+  const out = await dynamicAnalyze({ html }, { launchOptions, movimientoMs: 0, teclas: false });
+  const falla = soloCrit(out, "3.2.1").find((f) => f.verdict === "falla");
+  assert.ok(falla, "3.2.1 debería fallar: " + JSON.stringify(soloCrit(out, "3.2.1").map((f) => [f.verdict, f.evid[0].slice(0, 80)])));
+  const txt = falla.evid.join(" ");
+  assert.match(txt, /ABRE UNA VENTANA/, txt);
+  assert.match(txt, /SUELTA/, "el que hace this.blur() es el fallo F55: " + txt);
+  // La atribución tiene que ser exacta: el que suelta el foco NO abre ventanas.
+  // El evento `popup` del driver se las colgaba al control siguiente, porque el
+  // `onfocus` se vuelve a disparar cada vez que el documento recupera el foco.
+  const porControl = txt.split("·").find((t) => /codigo/.test(t)) || "";
+  assert.ok(!/ABRE UNA VENTANA/.test(porControl), "input#codigo no abre ninguna ventana: " + porControl);
+  assert.ok(!/sano/.test(txt), "el control sano no puede salir acusado: " + txt);
+});
+
+test("dinámico real: una página sin cambios de contexto no inventa ninguno", { skip }, async () => {
+  const html = '<input id="a"><select id="b"><option>1</option><option>2</option></select><input type="checkbox" id="c"><button id="d">Enviar</button>';
+  const out = await dynamicAnalyze({ html }, { launchOptions, movimientoMs: 0, teclas: false });
+  ["3.2.1", "3.2.2"].forEach((n) => {
+    const fs = soloCrit(out, n);
+    assert.ok(fs.length, n + " tiene que pronunciarse");
+    assert.ok(!fs.some((f) => f.verdict === "falla" || f.verdict === "revisar"),
+      n + " no debería acusar nada: " + JSON.stringify(fs.map((f) => [f.verdict, f.evid[0].slice(0, 100)])));
+  });
+});

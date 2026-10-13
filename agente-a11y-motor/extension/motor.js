@@ -314,6 +314,77 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     return st.indexOf("display:none") !== -1 || st.indexOf("visibility:hidden") !== -1;
   }
 
+  /* 3.2.1 y 3.2.2: el cambio de contexto que viene ESCRITO en el marcado.
+   *
+   * De estos dos criterios se encarga la capa dinámica, que enfoca cada control y
+   * le cambia el valor para ver si se mueve el suelo. Pero esa capa viene apagada
+   * por defecto, y en la extensión y en el artifact no existe: ahí el motor daba
+   * `humano` —«ninguna máquina lo dictamina»— incluso con el fallo escrito dentro
+   * del atributo. Medido: `<select onchange="location.href=this.value">`, que es
+   * el fallo F37 de libro, salía como «requiere evaluación humana».
+   *
+   * Lo que sigue solo mira manejadores EN LÍNEA, y solo las acciones que son un
+   * cambio de contexto sin discusión: navegar, abrir una ventana, enviar el
+   * formulario o mover el foco a otro sitio. Un `onchange="pinta(this.value)"` no
+   * dice nada: lo que hace está en un script que el marcado no ve, y de eso se
+   * encarga la capa dinámica. Inventar una barrera con un nombre de función es
+   * exactamente lo que este agente no hace.
+   */
+  const NAVEGA = /\b(?:window\s*\.\s*open|location\s*\.\s*(?:href|replace|assign)|(?:window|document|top|self|parent)\s*\.\s*location|location\s*=)/;
+  const ENVIA = /\.\s*submit\s*\(/;
+  function accionDeContexto(codigo) {
+    const c = String(codigo || "");
+    if (NAVEGA.test(c)) return { que: "navega a otra página o abre una ventana", duro: true };
+    if (ENVIA.test(c)) return { que: "envía el formulario", duro: true };
+    // `this.blur()` quita el foco de donde la persona acaba de ponerlo; un
+    // `.focus()` sobre OTRA cosa se lo lleva a un sitio que no eligió. `this.focus()`
+    // y `this.select()` no mueven nada.
+    if (/\.\s*blur\s*\(/.test(c)) return { que: "quita el foco del control al recibirlo", duro: true };
+    if (/\.\s*focus\s*\(/.test(c) && !/\bthis\s*\.\s*focus\s*\(/.test(c)) return { que: "mueve el foco a otro elemento", duro: true };
+    // Un diálogo del navegador también se lleva el foco, pero puede ser un aviso
+    // legítimo disparado por otra cosa: sospecha, no barrera.
+    if (/\b(?:alert|confirm|prompt)\s*\(/.test(c)) return { que: "abre un diálogo del navegador", duro: false };
+    return null;
+  }
+  /**
+   * Observaciones de 3.2.1 / 3.2.2 leyendo los manejadores en línea del elemento.
+   * Devuelve [] cuando no hay nada que afirmar, que es el caso de casi todo.
+   */
+  function cambioDeContextoEnLinea(el, tag, role) {
+    const out = [];
+    const foco = accionDeContexto(el.getAttribute && el.getAttribute("onfocus"));
+    if (foco) {
+      out.push({
+        html: "Al recibir el foco, <code>onfocus</code> " + esc(foco.que) +
+          ": recorrer la página con el tabulador dispara el cambio sin que nadie lo haya pedido" +
+          (foco.duro ? " (fallos F52 y F55)" : ", conviene comprobar cuándo salta") + ".",
+        crit: "3.2.1", sev: foco.duro ? "grave" : "moderada", type: "onfocus-contexto",
+        nivel: foco.duro ? undefined : "revisar"
+      });
+    }
+    // 3.2.2 es «cambiar el AJUSTE de un componente»: el valor de un control, no
+    // escribir en un campo de texto cualquiera. Por eso solo cuentan los que
+    // tienen ajuste —listas, casillas, radios, deslizadores— y el `oninput` de
+    // un campo de texto no entra aquí.
+    const tipo = String((el.getAttribute && el.getAttribute("type")) || "").toLowerCase();
+    const conAjuste = tag === "select" || (tag === "input" && ["checkbox", "radio", "range", "file", "color", "date", "time"].indexOf(tipo) !== -1) ||
+      ["listbox", "combobox", "checkbox", "radio", "switch", "slider", "option", "menuitemcheckbox", "menuitemradio"].indexOf(role) !== -1;
+    if (conAjuste) {
+      const cambio = accionDeContexto(el.getAttribute && el.getAttribute("onchange")) ||
+        accionDeContexto(el.getAttribute && el.getAttribute("oninput"));
+      if (cambio) {
+        out.push({
+          html: "Cambiar el valor de este <code>" + esc(tag) + "</code> " + esc(cambio.que) +
+            " en el propio <code>onchange</code>, sin que la persona pulse nada (fallo F37). Con el teclado es peor: recorrer las opciones cambia el valor una por una. " +
+            "La norma solo lo salva si se avisa del comportamiento ANTES de usar el control; si ese aviso está junto a la etiqueta, compruébalo.",
+          crit: "3.2.2", sev: cambio.duro ? "grave" : "moderada", type: "onchange-contexto",
+          nivel: cambio.duro ? undefined : "revisar"
+        });
+      }
+    }
+    return out;
+  }
+
   /* 2.5.3 Etiqueta en el nombre: el texto que se VE, no el que se calcula.
    *
    * El criterio existe por quien maneja el ordenador hablando: dice «pulsa
@@ -1286,6 +1357,8 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     const managed = MANAGED_ROLES.indexOf(role) !== -1;
     const focusObs = [];
     if (tabAttr && parseInt(tabAttr, 10) > 0) focusObs.push({ html: '<code>tabindex="' + esc(tabAttr) + '"</code> positivo: altera el orden natural de tabulación (antipatrón).', crit: "2.4.3", sev: "moderada", type: "tabindex-positive" });
+    // 3.2.1 / 3.2.2 cuando el cambio de contexto viene escrito en el atributo.
+    cambioDeContextoEnLinea(el, tag, role).forEach(function (o) { focusObs.push(o); });
 
     const model = {
       id: ++NODE_SEQ, depth: depth, tag: tag, role: role, level: level, locator: buildLocator(el, tag), path: buildPath(el),
@@ -1532,6 +1605,8 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   NS.setDOMParser = setDOMParser;
   NS.capaQueMide = capaQueMide;
   NS.buildPath = buildPath;
+  NS.cambioDeContextoEnLinea = cambioDeContextoEnLinea;
+  NS.accionDeContexto = accionDeContexto;
   NS.etiquetaEnNombre = etiquetaEnNombre;
   NS.textoDeEtiqueta = textoDeEtiqueta;
   NS.normalizaEtiqueta = normalizaEtiqueta;
@@ -7286,15 +7361,47 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       const propios = (eventos || []).filter(function (e) { return e.disparador === disp; });
       if (!propios.length) return;
 
-      const graves = propios.filter(function (e) { return e.navego; });
-      const medios = propios.filter(function (e) { return !e.navego && (e.focoMovido || e.contenidoCambio); });
+      /* TRES CAUSAS DURAS, NO UNA.
+       *
+       * Aquí solo contaba `navego`, y eso dejaba fuera dos fallos con nombre y
+       * apellidos. Medido sobre una página con los cuatro casos escritos en los
+       * atributos: `onfocus="window.open('/cal')"` abría una ventana de verdad
+       * —el evento `popup` de Playwright se dispara— y `onfocus="this.blur()"`
+       * quitaba el foco nada más recibirlo, y la capa dinámica emitía
+       * «se han probado 9 control(es) y ninguno provoca navegación, salto de foco
+       * ni sustitución de contenido», es decir `pasa`, en una página que falla
+       * 3.2.1 dos veces. Una frase falsa en la evidencia y, peor, un criterio
+       * declarado conforme sin serlo: lo que la regla de oro prohíbe.
+       *
+       * Por qué se escapaban: la URL no cambia al abrir una ventana nueva, y el
+       * foco perdido deja `document.activeElement` en `<body>`, que la huella
+       * leía como «sin foco» y el filtro `!== null` descartaba — un guardia
+       * puesto para no acusar a los controles que NO pueden recibir el foco,
+       * donde `el.focus()` no mueve nada. Ahora el driver escucha el evento
+       * `focus` del propio elemento, así que distingue «lo recibió y lo perdió»
+       * de «no pudo recibirlo», y cuenta las ventanas que se abren. */
+      const graves = propios.filter(function (e) { return e.navego || e.abrioVentana || e.focoQuitado; });
+      const medios = propios.filter(function (e) { return !(e.navego || e.abrioVentana || e.focoQuitado) && (e.focoMovido || e.contenidoCambio); });
       const verbo = disp === "foco" ? "al recibir el foco" : "al cambiar su valor";
 
       if (graves.length) {
+        const causa = function (e) {
+          const q = [];
+          if (e.navego) q.push("NAVEGA a otra página");
+          if (e.abrioVentana) q.push("ABRE UNA VENTANA nueva");
+          if (e.focoQuitado) q.push("recibe el foco y lo SUELTA, dejándolo en ningún sitio");
+          return e.locator + " (" + q.join(" y ") + ")";
+        };
+        const tecnicas = [];
+        if (graves.some(function (e) { return e.navego; })) tecnicas.push(disp === "foco" ? "F52" : "F37");
+        if (graves.some(function (e) { return e.abrioVentana; })) tecnicas.push("F52");
+        if (graves.some(function (e) { return e.focoQuitado; })) tecnicas.push("F55");
         out.push(F(crit, "falla", "grave", [
-          graves.length + " control(es) provocan una NAVEGACIÓN " + verbo + ", sin que medie ninguna acción de la persona: " +
-          graves.slice(0, 5).map(function (e) { return e.locator; }).join(", ") +
-          ". Es el caso que " + crit + " prohíbe expresamente." + cola
+          graves.length + " control(es) provocan un cambio de contexto " + verbo + ", sin que medie ninguna acción de la persona: " +
+          graves.slice(0, 5).map(causa).join(" · ") +
+          ". Es el caso que " + crit + " prohíbe expresamente" +
+          (tecnicas.length ? " (fallo" + (tecnicas.length > 1 ? "s " : " ") + tecnicas.filter(function (t, i, a) { return a.indexOf(t) === i; }).join(", ") + ")" : "") +
+          "." + cola
         ], graves.slice(0, 8).map(function (e) { return { locator: e.locator, name: "", path: e.uid }; })));
       }
       if (medios.length) {

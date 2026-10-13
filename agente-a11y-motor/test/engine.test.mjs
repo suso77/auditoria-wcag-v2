@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { understand, analyze, announcement } from "./helpers.mjs";
-import { etiquetaEnNombre, textoDeEtiqueta, normalizaEtiqueta } from "../src/engine.js";
+import { etiquetaEnNombre, textoDeEtiqueta, normalizaEtiqueta, accionDeContexto } from "../src/engine.js";
 import { DOMParser } from "linkedom";
 
 /** El primer elemento de un fragmento, para probar las funciones puras. */
@@ -223,4 +223,69 @@ test("2.5.3: la comparación, por partes", () => {
   assert.equal(textoDeEtiqueta(unEl('<button aria-label="B"><i class="fa fa-search">search</i>Buscar</button>'), "button"), "Buscar");
   assert.equal(textoDeEtiqueta(unEl('<button aria-label="B"><span aria-hidden="true">oculto</span>Ver</button>'), "button"), "Ver");
   assert.equal(normalizaEtiqueta("  ¡Enviar, YA!  "), "enviar ya");
+});
+
+/* ── 3.2.1 y 3.2.2: el cambio de contexto escrito en el atributo ─────────────
+ *
+ * De estos dos se encarga la capa dinámica, que enfoca y cambia valores sobre
+ * la página viva. Pero viene APAGADA por defecto y en la extensión y el artifact
+ * no existe: medido ahí, `<select onchange="location.href=this.value">` —el
+ * fallo F37 de libro— salía como «requiere evaluación humana». Lo que está
+ * escrito en el marcado no hace falta sondearlo.
+ */
+
+test("3.2.2: cambiar el valor y que eso navegue o envíe es el fallo F37", () => {
+  const sel = (h) => veredictos('<form><label for="s">X</label>' + h + "</form>")["3.2.2"];
+  assert.equal(sel('<select id="s" onchange="location.href=this.value"><option value="/a">A</option></select>'), "falla");
+  assert.equal(sel('<select id="s" onchange="this.form.submit()"><option>es</option></select>'), "falla");
+  assert.equal(sel('<select id="s" onchange="window.open(this.value)"><option>/a</option></select>'), "falla");
+  assert.equal(sel('<input type="radio" id="s" name="x" onchange="this.form.submit()">'), "falla");
+});
+
+test("3.2.1: enfocar no puede llevarse la página ni el foco (F52, F55)", () => {
+  const uno = (h) => veredictos('<form><label for="t">X</label>' + h + "</form>")["3.2.1"];
+  assert.equal(uno('<input id="t" onfocus="window.open(\'/cal\')">'), "falla");
+  assert.equal(uno('<input id="t" onfocus="this.blur()">'), "falla");
+  assert.equal(uno('<input id="t" onfocus="document.getElementById(\'otro\').focus()">'), "falla");
+  assert.equal(uno('<input id="t" onfocus="location=\'/x\'">'), "falla");
+  // Un diálogo del navegador también se lleva el foco, pero puede ser legítimo:
+  // sospecha, no barrera.
+  assert.equal(uno('<input id="t" onfocus="alert(\'ojo\')">'), "revisar");
+});
+
+test("3.2.1 y 3.2.2: lo que el marcado NO sabe, no se dictamina", () => {
+  // Un nombre de función no dice qué hace la función: eso lo prueba la capa
+  // dinámica sobre la página viva. Acusar aquí sería inventarse la barrera.
+  const v = veredictos('<form><label for="s">Color</label><select id="s" onchange="pinta(this.value)"><option>rojo</option></select></form>');
+  assert.equal(v["3.2.2"], "humano");
+  assert.equal(veredictos('<form><label for="t">X</label><input id="t" onfocus="valida(this)"></form>')["3.2.1"], "humano");
+  // `this.focus()` y `this.select()` no mueven el foco a ninguna parte.
+  assert.equal(veredictos('<form><label for="t">X</label><input id="t" onfocus="this.select()"></form>')["3.2.1"], "humano");
+  assert.equal(veredictos('<form><label for="t">X</label><input id="t" onfocus="this.focus()"></form>')["3.2.1"], "humano");
+  // Y un select normal, con su botón, no es nada.
+  assert.equal(veredictos('<form><label for="s">P</label><select id="s"><option>A</option></select><button type="submit">Ir</button></form>')["3.2.2"], "humano");
+});
+
+test("3.2.2 es el AJUSTE de un componente, no escribir en un campo de texto", () => {
+  // 3.2.2 habla de cambiar el ajuste de un componente —una lista, una casilla,
+  // un deslizador—. Un `oninput` en un campo de texto que busca mientras
+  // escribes no es eso, y meterlo aquí sería ruido en cada buscador con
+  // autocompletado.
+  const h = '<form><label for="q">Buscar</label><input id="q" type="search" oninput="this.form.submit()"></form>';
+  assert.equal(veredictos(h)["3.2.2"], "humano");
+  // Pero una casilla sí tiene ajuste.
+  assert.equal(veredictos('<form><label for="c">C</label><input type="checkbox" id="c" oninput="this.form.submit()"></form>')["3.2.2"], "falla");
+});
+
+test("3.2.x: la lectura del manejador, por partes", () => {
+  assert.equal(accionDeContexto("location.href='/x'").duro, true);
+  assert.equal(accionDeContexto("window.open('/x')").duro, true);
+  assert.equal(accionDeContexto("this.form.submit()").duro, true);
+  assert.equal(accionDeContexto("alert('x')").duro, false);
+  assert.equal(accionDeContexto("this.focus()"), null);
+  assert.equal(accionDeContexto("pinta(this.value)"), null);
+  assert.equal(accionDeContexto(""), null);
+  assert.equal(accionDeContexto(null), null);
+  // Un `submit` que es el NOMBRE de algo, no la llamada, no cuenta.
+  assert.equal(accionDeContexto("marca('submit')"), null);
 });

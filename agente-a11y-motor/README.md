@@ -64,8 +64,8 @@ const informe = analyze(understand(html));
 ## Tests
 
 ```bash
-npm test                    # suite pura (node --test), sin navegador — 674 tests
-npm run test:integracion    # integración con Chromium (Playwright) — 148 tests
+npm test                    # suite pura (node --test), sin navegador — 684 tests
+npm run test:integracion    # integración con Chromium (Playwright) — 150 tests
 npm run bench               # banco de precisión accname contra corpus WPT
 npm run smoke               # humo del artifact generado, en Chromium real
 ```
@@ -980,6 +980,24 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 **En el cruce con axe, dos afirmaciones que no se podían sostener.** `crossCheck` fabricaba `{findings: []}` cuando el motor no llegaba a construir el modelo —texto suelto, un comentario, una cadena vacía—, y ese resultado entraba en la reconciliación como una comprobación limpia: «soloMotor: 0» era indistinguible de «el motor comprobó y no encontró nada». Y el «acuerdo» se construía solo porque coincidía el número de criterio: el motor acusando a `img.logo` y axe a otro `img` de la página salían como «acuerdo: 1». Casar los elementos exige la página abierta —lo hace la orquestación, no la reconciliación pura—, así que ahora se publica cuántos elementos trae cada fuente, que la coincidencia a nivel de elemento NO está comprobada, y que el motor no miró cuando no miró.
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
+
+### v0.47.0 — 3.2.1 salía «pasa» en una página que lo incumple dos veces
+
+Tercera pasada del mismo método, y la de más alcance: **3.2.1 y 3.2.2** —enfocar un control o cambiar su valor no puede mover el suelo— tenían dos agujeros, uno en cada lado del agente.
+
+**El marcado no se leía.** De estos dos criterios se encarga la capa dinámica, que enfoca cada control y le cambia el valor sobre la página viva. Pero esa capa viene **apagada por defecto**, y en la extensión y en el artifact no existe: ahí el motor daba `humano` —«ninguna máquina lo dictamina»— incluso con el fallo escrito dentro del atributo. Medido: `<select onchange="location.href=this.value">`, el fallo **F37** de libro, salía como «requiere evaluación humana». Ahora el motor lee los manejadores **en línea** y solo las acciones que son un cambio de contexto sin discusión: navegar, abrir una ventana, enviar el formulario o mover el foco. Un `onchange="pinta(this.value)"` sigue sin decir nada —lo que hace está en un script que el marcado no ve— porque inventarse una barrera con un nombre de función es lo contrario de medir. Y 3.2.2 es el *ajuste* de un componente, así que un `oninput` en un buscador con autocompletado no entra: avisar de eso sería ruido en cada caja de búsqueda del mundo.
+
+**Y la capa dinámica declaraba conforme lo que incumple.** Sobre una página con los cuatro fallos escritos en los atributos, emitía: «se han probado 9 control(es) y ninguno provoca navegación, salto de foco ni sustitución de contenido». Es decir **`pasa`** —que `esConforme()` da por conformidad— en una página que falla 3.2.1 dos veces. Tres causas, las tres medidas:
+
+Abrir una ventana **no cambia la URL** de la página, así que `onfocus="window.open(...)"` (fallo **F52**) era invisible. El foco perdido deja `activeElement` en `<body>`, que la huella leía como «sin foco» y un filtro `!== null` descartaba —ese filtro estaba puesto para no acusar a los controles que *no pueden* recibir el foco, donde `el.focus()` no mueve nada—, así que `onfocus="this.blur()"` (fallo **F55**) tampoco se veía. Y la gorda: **en cuanto el cortafuegos aborta la primera navegación, el documento pierde el foco, y sin foco de documento Chromium no despacha los eventos de foco — el `onfocus` ni se ejecuta**. Del tercer control en adelante la sonda estaba mirando una página donde los manejadores no corrían, y lo apuntaba como «ninguno provoca nada».
+
+Arreglado escuchando el evento `focus` del propio elemento —que `el.focus()` despacha de forma síncrona—, lo que distingue «recibió el foco y lo soltó» de «no pudo recibirlo»; devolviendo el foco al documento con `bringToFront()` cuando se pierde; y contando lo que no se pueda sondar con foco como **no sondado**, que baja el veredicto a `cumple-parcial` en vez de firmar conformidad.
+
+**Un falso positivo que apareció por el camino, y cómo se quitó.** La primera versión atribuía las ventanas con el evento `popup` del driver. Medido: el `onfocus` se vuelve a disparar cada vez que el documento recupera el foco, salieron **cinco** ventanas del mismo `input` repartidas en 300 ms, y la última aterrizó en el turno del control siguiente —que solo hacía `this.blur()`— y lo acusó de «abre una ventana nueva». Una barrera colgada a quien no la abrió. Ahora la cuenta la lleva la propia página, envolviendo `window.open` y apuntando quién tenía el foco: la atribución es exacta y no depende de cuándo llegue el aviso.
+
+**Y una corrección de criterio, no de código.** Un test existente pedía `revisar` para el control que roba el foco, con el motivo de que «3.2.1 lo permite si se avisó antes». Eso es de **3.2.2**: 3.2.1 no tiene esa salida, y el foco está en la lista de lo que la norma considera un cambio de contexto. Es barrera, y F55 la nombra.
+
+**684 tests unitarios** (de 674) y **150 de integración** (de 148), en verde. El sitio de prueba no se mueve: 7 familias, 21 hallazgos, 55 de 55 con veredicto.
 
 ### v0.46.0 — 2.5.3 no podía denunciar una barrera en ninguna capa
 

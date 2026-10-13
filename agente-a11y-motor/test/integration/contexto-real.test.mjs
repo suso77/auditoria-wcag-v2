@@ -46,8 +46,13 @@ const NAVEGA = `<!doctype html><html lang="es"><head><meta charset="utf-8"><titl
   <button type="button" id="ok">Guardar</button>
 </main></body></html>`;
 
-/* Un `focus` que roba el foco. No navega, así que el veredicto correcto es
- * `revisar`: 3.2.1 lo permite si se avisó antes, y eso no se ve desde aquí. */
+/* Un `focus` que roba el foco. No navega, y aun así es BARRERA: es el fallo
+ * F55, y 3.2.1 —al contrario que 3.2.2— no tiene la salida del «salvo que se
+ * haya avisado antes». El texto del criterio es tajante: cuando un componente
+ * recibe el foco, no puede iniciar un cambio de contexto, y el foco está en la
+ * lista de lo que es un cambio de contexto. Este test pedía `revisar` con esa
+ * excepción como motivo, que es de 3.2.2: corregido al medir que la sonda, ya
+ * arreglada, distingue «recibió el foco y lo soltó» de «no pudo recibirlo». */
 const ROBA_FOCO = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Foco</title></head><body>
 <main>
   <h1>Foco que salta</h1>
@@ -87,7 +92,7 @@ test("3.2.2 real: un select que navega al cambiar de opción → falla", { skip 
   const f = out.findings.find((x) => x.c.n === "3.2.2");
   assert.ok(f, "debería dictaminar 3.2.2");
   assert.equal(f.verdict, "falla");
-  assert.match(f.evid.join(" "), /NAVEGACI/);
+  assert.match(f.evid.join(" "), /NAVEGA a otra p/);
   assert.ok(f.nodes.some((n) => /select/.test(n.locator)), "la barrera tiene que señalar al select: " + JSON.stringify(f.nodes));
 
   // La navegación NO salió a la red: el cortafuegos la abortó en el navegador.
@@ -101,12 +106,14 @@ test("3.2.2 real: ni el input ni el botón se cuelan como falso positivo", { ski
   assert.ok(!/button|input#n/.test(locs), "acusa a controles inocentes: " + locs);
 });
 
-test("3.2.1 real: un control que roba el foco al recibirlo → revisar", { skip }, async () => {
+test("3.2.1 real: un control que roba el foco al recibirlo → falla (F55)", { skip }, async () => {
   const out = await dynamicAnalyze({ url: base + "/roba-foco" }, { launchOptions, forms: "safe" });
   const f = out.findings.find((x) => x.c.n === "3.2.1");
   assert.ok(f, "debería dictaminar 3.2.1");
-  assert.equal(f.verdict, "revisar", JSON.stringify(f && f.evid));
-  assert.match(f.evid.join(" "), /el foco salta a otro sitio/);
+  assert.equal(f.verdict, "falla", JSON.stringify(f && f.evid));
+  assert.match(f.evid.join(" "), /SUELTA/);
+  assert.match(f.evid.join(" "), /F55/);
+  assert.ok(f.nodes.some((n) => /input#c/.test(n.locator)), "tiene que señalar al control: " + JSON.stringify(f.nodes));
 });
 
 test("3.2.1/3.2.2 real: página sin sorpresas → pasa, diciendo cuántos controles se probaron", { skip }, async () => {

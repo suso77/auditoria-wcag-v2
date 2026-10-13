@@ -438,3 +438,50 @@ test("una traza sin validez nativa conserva la inferencia por obligatorio vacío
     fields: [{ locator: "i#a", required: true, invalid: false }] });
   assert.ok(r.some((x) => x.c.n === "3.3.1" && x.verdict === "falla"));
 });
+
+/* ── 3.2.1 / 3.2.2: las dos causas duras que no se contaban ──────────────────
+ *
+ * `analyzeContextChange` solo miraba `navego`, y eso dejaba fuera dos fallos
+ * con nombre propio: abrir una ventana (F52) y soltar el foco nada más
+ * recibirlo (F55). Medido sobre una página con los cuatro casos escritos en
+ * los atributos, la capa emitía «se han probado 9 control(es) y ninguno
+ * provoca navegación, salto de foco ni sustitución de contenido» —es decir,
+ * `pasa`— en una página que falla 3.2.1 dos veces.
+ */
+const ctxTodo = (e) => analyzeContextChange(e, 0, { total: e.length, sondados: e.length });
+const unCrit = (fs, n, v) => fs.find((f) => f.c.n === n && f.verdict === v);
+
+test("3.2.1: abrir una ventana al enfocar es barrera, aunque la URL no cambie", () => {
+  const fs = ctxTodo([{ locator: "input#fecha", uid: "u1", disparador: "foco", navego: false, abrioVentana: true, focoQuitado: false, focoMovido: false, contenidoCambio: false }]);
+  const f = unCrit(fs, "3.2.1", "falla");
+  assert.ok(f, JSON.stringify(fs.map((x) => [x.c.n, x.verdict])));
+  assert.match(f.evid[0], /ABRE UNA VENTANA/);
+  assert.match(f.evid[0], /F52/);
+});
+
+test("3.2.1: recibir el foco y soltarlo es barrera (F55)", () => {
+  const f = unCrit(ctxTodo([{ locator: "input#codigo", uid: "u2", disparador: "foco", navego: false, abrioVentana: false, focoQuitado: true, focoMovido: false, contenidoCambio: false }]), "3.2.1", "falla");
+  assert.ok(f);
+  assert.match(f.evid[0], /SUELTA/);
+  assert.match(f.evid[0], /F55/);
+});
+
+test("3.2.2: cambiar el valor y navegar sigue siendo F37", () => {
+  const f = unCrit(ctxTodo([{ locator: "select#prov", uid: "u3", disparador: "entrada", navego: true, abrioVentana: false, focoMovido: false, contenidoCambio: false }]), "3.2.2", "falla");
+  assert.ok(f);
+  assert.match(f.evid[0], /NAVEGA/);
+  assert.match(f.evid[0], /F37/);
+});
+
+test("3.2.x: lo que cambia sin ser ninguna de las tres cosas sigue siendo sospecha", () => {
+  const fs = ctxTodo([{ locator: "input#x", uid: "u4", disparador: "foco", navego: false, abrioVentana: false, focoQuitado: false, focoMovido: false, contenidoCambio: true }]);
+  assert.ok(unCrit(fs, "3.2.1", "revisar"), "un cambio de contenido admite aviso previo: revisar");
+});
+
+test("3.2.x: sin nada que reprochar y con todo sondado, `pasa`; si falta algo, `cumple-parcial`", () => {
+  const limpio = [{ locator: "input#x", uid: "u5", disparador: "foco", navego: false, abrioVentana: false, focoQuitado: false, focoMovido: false, contenidoCambio: false }];
+  assert.ok(unCrit(analyzeContextChange(limpio, 0, { total: 1, sondados: 1 }), "3.2.1", "pasa"));
+  // Un control que no se pudo sondar baja el veredicto: no se declara conforme
+  // lo que no se ha mirado.
+  assert.ok(unCrit(analyzeContextChange(limpio, 1, { total: 2, sondados: 2 }), "3.2.1", "cumple-parcial"));
+});
