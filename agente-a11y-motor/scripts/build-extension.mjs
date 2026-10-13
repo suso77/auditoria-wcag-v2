@@ -46,6 +46,10 @@ const MODULOS = [
   "viewport.js",
   "dynamic.js",
   "axe-map.js",
+  // El analizador de puntero es puro; su censo (que necesita el protocolo de
+  // depuración) va marcado NODE-ONLY y no llega al navegador. Allí el censo sale
+  // `disponible: false` y el analizador calla, que es lo correcto.
+  "pointer.js",
   "oaw-letters.js",
   "report-oaw.js",
   "sampling.js",

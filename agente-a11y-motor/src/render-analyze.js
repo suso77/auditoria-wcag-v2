@@ -16,6 +16,7 @@ import { launchOptions } from "./playwright-launch.js";
 import { MEASURE_BODY } from "./measure.browser.js";
 import { auditPageDoc } from "./page-audit.js";
 import { cuadernoDeJuicio, aplicaCuaderno, CRITERIOS_DE_JUICIO } from "./cuaderno.js";
+import { censoDeOyentes, analizaPuntero } from "./pointer.js";
 
 const WIX = {};
 WCAG22.forEach(function (c) { WIX[c.n] = { t: c.t, lvl: c.lvl }; });
@@ -282,6 +283,16 @@ export async function analyzeRendered(target, opts) {
       censoCDP = null;   // sin CDP: manda la heurística inyectada
     }
 
+    /* El censo de OYENTES, que es de donde salen los cuatro criterios de puntero.
+     *
+     * Va aquí porque necesita el protocolo de depuración, igual que el censo de
+     * shadow roots. Si no está disponible, `analizaPuntero` no dice nada y el
+     * relleno del motor o el barrido se encargan: inventar un veredicto sin el
+     * censo sería lo contrario de medir. */
+    let oyentes = { disponible: false, motivo: "no se intentó" };
+    try { oyentes = await censoDeOyentes(page); } catch (e) { oyentes = { disponible: false, motivo: (e && e.message) || String(e) }; }
+    const hallazgosPuntero = analizaPuntero(oyentes);
+
     // TODAS, no la primera: la medición emite hasta tres notas de cobertura
     // (texto recortado por el límite, controles recortados, y 2.4.7 sin el foco
     // del sistema). Con `.find` la segunda y la tercera se perdían en silencio.
@@ -364,7 +375,7 @@ export async function analyzeRendered(target, opts) {
     }
 
     // Hallazgos unificados (semántico + página + medición real), listos para el muestreo.
-    let findings = (analysis.findings || []).concat(pageAudit).concat(measurementFindings(todasLasMedidas));
+    let findings = (analysis.findings || []).concat(pageAudit).concat(measurementFindings(todasLasMedidas)).concat(hallazgosPuntero);
     // El cuaderno sustituye el «requiere evaluación humana» genérico del motor
     // por lo suyo: «no aplica» donde no viene al caso, y el expediente donde sí.
     // No borra ninguna barrera real: eso lo garantiza `aplicaCuaderno`.
@@ -383,6 +394,7 @@ export async function analyzeRendered(target, opts) {
       medicionMarcos: medicionMarcos,
       coberturas: coberturas,
       cobertura: coberturas[0] || null,
+      oyentes: oyentes,
       // Los fallos de fase VIAJAN, como en `viewportAnalyze`. Sin esto, una capa
       // caída era indistinguible de una capa que no encontró nada.
       errores: errores,

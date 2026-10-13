@@ -981,6 +981,20 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.44.0 — los cuatro criterios de puntero, preguntándoselo al navegador
+
+De la medición de v0.43.0 salía un bloque claro: **2.5.1, 2.5.2, 2.5.4 y 2.5.7 —gestos, cancelación, actuación por movimiento y arrastre— daban los cuatro «requiere evaluación humana» en todas las páginas**, `humano` ×15 cada uno, sin una línea de expediente. Es verdad que ninguno se cierra sin juicio. Pero lo que una persona necesita para juzgarlos es saber *qué* de la página se opera con gestos, arrastrando o al pulsar, y eso sí se puede averiguar.
+
+**De dónde sale el dato, que es lo que decide si esto vale algo.** No de leer los scripts buscando palabras, que es como se cuelan los supuestos: del **registro de oyentes del propio navegador**, vía `getEventListeners` del protocolo de depuración. Devuelve lo que el navegador tiene apuntado, incluidos los oyentes que añadió JavaScript en tiempo de ejecución y los escritos en un atributo `onmousedown` — comprobado contra Chromium real, que las dos formas aparecen. Es un hecho, no una conjetura, y por eso se puede poner en un informe.
+
+Con el censo delante, cada criterio recibe su expediente: 2.5.1 lista lo que escucha un gesto de trayectoria o multipunto (`touchstart`+`touchmove`, `pointerdown`+`pointermove`, los `gesture*` de Safari); 2.5.2, los controles que escuchan la BAJADA del puntero y ningún evento de subida ni `click`; 2.5.4, si la página escucha `devicemotion` o `deviceorientation`; y 2.5.7, lo que se opera arrastrando, por `draggable`, por `dragstart` o por la secuencia `pointerdown→move→up`.
+
+**Y lo que no se puede afirmar, dicho en las cuatro fichas.** Encontrar el gesto no es incumplir: 2.5.1 pide que exista alternativa de un solo puntero, y eso hay que probarlo. No encontrarlo tampoco cierra el criterio: el censo es una foto del documento principal, no ve dentro de los marcos ni de un `<canvas>`, y una biblioteca que ate sus oyentes la primera vez que se interactúa con ella no aparece. Por eso el silencio sale como `cumple-parcial` —presencia medida, resto por juzgar— y **nunca** como `cumple` ni como `no-aplica`. Sin censo, el analizador no dice nada y se encargan el relleno del motor o el barrido: inventar un veredicto sin medir es lo contrario de medir.
+
+Un detalle que se corrigió al medirlo: la primera versión decía «se han revisado los oyentes de N elementos» con N = los que *tienen* oyente, así que en una página limpia salía «**se han revisado los oyentes de 0 elementos**» — que se lee como que no se miró nada, justo lo contrario de lo que había pasado. Ahora cuenta los elementos recorridos.
+
+**663 tests unitarios** (de 654) y 137 de integración, en verde, con una página nueva en el sitio de prueba que lleva los cuatro casos. Las barreras del entregable no se mueven: esto no inventa un hallazgo, convierte cuatro «evaluación humana» en cuatro expedientes.
+
 ### v0.43.0 — medir el agente contra sí mismo: qué criterios no decide nunca
 
 Hasta aquí las revisiones iban módulo a módulo. Esta empezó por una medición del conjunto: sobre el sitio de prueba, con todas las capas encendidas, **cuántos de los 55 criterios reciben alguna vez un veredicto determinante** —`falla`, `cumple`, `pasa` o `no-aplica`— y cuántos se quedan siempre en una pregunta. Salieron 22 con veredicto, 11 que miden la presencia y dejan la calidad a una persona, y 22 que solo preguntan. Esa última columna es la que había que mirar de cerca, porque algunos de ellos el agente los estaba midiendo y no lo contaba.
