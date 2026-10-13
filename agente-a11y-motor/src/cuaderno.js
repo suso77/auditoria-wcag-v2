@@ -502,7 +502,7 @@ const FICHAS = {
       }),
       loQueYaSabemos: [
         "Este es el orden del DOM, que es el que reciben el lector de pantalla y la tabulación.",
-        "El agente no ve el orden visual: CSS puede reordenar con `flex-direction`, `order`, `grid-area` o posicionamiento absoluto, y eso es precisamente lo que rompe este criterio.",
+        "El agente SÍ ve el orden visual cuando el CSS declara una reordenación —`order`, `flex-direction: *-reverse`, `flex-wrap: wrap-reverse` o colocación explícita en la rejilla— y la medición sobre el navegador la confirma: en ese caso lo dice en un hallazgo aparte, con el orden leído y el orden visto. Lo que NO se mide es la reordenación que no se declara: un `float`, un `position: absolute` o dos columnas pueden separar lo que se ve de lo que se lee sin que ninguna propiedad lo anuncie.",
         "Una forma rápida de contrastarlo: desactiva las hojas de estilo y lee."
       ],
       comoDecidir: [
@@ -1429,6 +1429,18 @@ export function cuadernoDeMuestra(cuadernos, opts) {
  *    dinámica encontraron una barrera real en 2.4.4, esa barrera se queda: el
  *    cuaderno añade juicio, no lo perdona.
  */
+/* Las capas que MIDEN. Un `revisar` de una de ellas es una observación con
+ * expediente —qué se vio, dónde y por qué—, no el hueco que el cuaderno viene a
+ * rellenar, así que se conserva.
+ *
+ * Esto se descubrió añadiendo la medición de 1.3.2: la capa de render detectaba
+ * los tres pasos de una receta reordenados con `order` —orden de lectura 1, 2, 3
+ * y orden visual 3, 2, 1, medido sobre el navegador— y el cuaderno BORRABA ese
+ * hallazgo por ser un `revisar` de uno de los once, dejando en el informe la
+ * pregunta genérica y ni una línea del dato. El cuaderno concreta lo que nadie
+ * ha mirado; no tapa lo que ya se ha medido. */
+const CAPAS_QUE_MIDEN = { "medición": 1, "píxeles": 1, "puntero": 1, "adaptación": 1, "dinámico": 1, "axe-core": 1, "coherencia": 1 };
+
 export function aplicaCuaderno(findings, cuaderno) {
   const mios = {};
   CRITERIOS_DE_JUICIO.forEach(function (n) { mios[n] = 1; });
@@ -1436,6 +1448,7 @@ export function aplicaCuaderno(findings, cuaderno) {
     if (!f || !f.c || !mios[f.c.n]) return true;
     if (f.verdict === "falla") return true;          // una barrera real no se borra
     if (f.scope === "juicio") return false;          // cuaderno viejo: se reemplaza
+    if (CAPAS_QUE_MIDEN[f.origen]) return true;      // una observación medida tampoco
     return f.verdict !== "humano" && f.verdict !== "revisar";
   });
   return conservados.concat(findingsDelCuaderno(cuaderno));

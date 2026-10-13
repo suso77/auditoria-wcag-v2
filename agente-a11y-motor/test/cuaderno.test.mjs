@@ -741,3 +741,31 @@ test("regresión: un paso de UN solo campo también cuenta para el 3.3.7 de la m
   assert.match(m.loQueYaSabemos.join(" "), /autocomplete:email/);
   assert.match(m.loQueYaSabemos.join(" "), /ENTRE páginas/);
 });
+
+/* ── El cuaderno concreta lo que nadie ha mirado; no tapa lo ya medido ───────
+ *
+ * Descubierto al añadir la medición de 1.3.2: la capa de render detectaba los
+ * tres pasos de una receta reordenados con `order` —orden de lectura 1, 2, 3 y
+ * orden visual 3, 2, 1, medido sobre el navegador— y `aplicaCuaderno` BORRABA
+ * ese hallazgo por ser un `revisar` de uno de los once, dejando en el informe
+ * la pregunta genérica y ni una línea del dato.
+ */
+test("aplicaCuaderno conserva el `revisar` de una capa que MIDE", () => {
+  const medido = {
+    c: { n: "1.3.2", t: "Secuencia significativa", lvl: "A" }, verdict: "revisar",
+    origen: "medición", scope: "render", evid: ["el contenido se lee en un orden y se ve en otro, por `order`"]
+  };
+  const libro = cuad("<main><h1>T</h1><p>uno</p><p>dos</p></main>");
+  const out = aplicaCuaderno([medido], libro);
+  const mio = out.find((f) => f.c.n === "1.3.2" && f.origen === "medición");
+  assert.ok(mio, "el hallazgo medido no puede desaparecer: " + JSON.stringify(out.map((f) => [f.c.n, f.verdict, f.origen])));
+  // Y la ficha del cuaderno sigue estando, con su expediente.
+  assert.ok(out.some((f) => f.c.n === "1.3.2" && f.scope === "juicio"), "la ficha del cuaderno también se queda");
+});
+
+test("aplicaCuaderno sigue barriendo el `humano` genérico del motor", () => {
+  const placeholder = { c: { n: "1.3.2", t: "Secuencia significativa", lvl: "A" }, verdict: "humano", evid: ["Requiere evaluación humana."] };
+  const out = aplicaCuaderno([placeholder], cuad("<main><h1>T</h1><p>uno</p><p>dos</p></main>"));
+  assert.ok(!out.some((f) => f.c.n === "1.3.2" && f.verdict === "humano" && f.scope !== "juicio"),
+    "el relleno del motor es justo lo que el cuaderno viene a sustituir");
+});

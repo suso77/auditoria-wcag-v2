@@ -64,8 +64,8 @@ const informe = analyze(understand(html));
 ## Tests
 
 ```bash
-npm test                    # suite pura (node --test), sin navegador — 684 tests
-npm run test:integracion    # integración con Chromium (Playwright) — 150 tests
+npm test                    # suite pura (node --test), sin navegador — 691 tests
+npm run test:integracion    # integración con Chromium (Playwright) — 154 tests
 npm run bench               # banco de precisión accname contra corpus WPT
 npm run smoke               # humo del artifact generado, en Chromium real
 ```
@@ -980,6 +980,22 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 **En el cruce con axe, dos afirmaciones que no se podían sostener.** `crossCheck` fabricaba `{findings: []}` cuando el motor no llegaba a construir el modelo —texto suelto, un comentario, una cadena vacía—, y ese resultado entraba en la reconciliación como una comprobación limpia: «soloMotor: 0» era indistinguible de «el motor comprobó y no encontró nada». Y el «acuerdo» se construía solo porque coincidía el número de criterio: el motor acusando a `img.logo` y axe a otro `img` de la página salían como «acuerdo: 1». Casar los elementos exige la página abierta —lo hace la orquestación, no la reconciliación pura—, así que ahora se publica cuántos elementos trae cada fuente, que la coincidencia a nivel de elemento NO está comprobada, y que el motor no miró cuando no miró.
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
+
+### v0.48.0 — «el agente no ve el orden visual» era mentira, y el cuaderno borraba la prueba
+
+El cuaderno de juicio dejaba **1.3.2 Secuencia significativa** en manos de una persona con esta frase: *«el agente no ve el orden visual»*. No era verdad — 2.4.3 ya compara la tabulación con el orden visual sobre el render real desde hace versiones; lo que pasaba es que 1.3.2 no usaba ese dato. Medido sobre tres pasos de una receta reordenados con `order` —en el código 1, 2, 3; en pantalla 3, 2, 1, que es el caso de libro del criterio—: `humano`, con la pregunta de rigor y sin un solo dato.
+
+**Dos condiciones, y las dos tienen que cumplirse.** Primero, que el CSS **declare** una reordenación: `order`, `flex-direction: *-reverse`, `flex-wrap: wrap-reverse` o colocación explícita en la rejilla. Segundo, que medido sobre el render el orden visual **sea** distinto del orden del DOM. Con una sola de las dos no se dice nada, y eso es deliberado: hay mil maneras legítimas de que lo que se ve no siga al código —dos columnas, una barra lateral, un `float`—, y acusarlas todas dejaría el criterio en `revisar` en media web, que es la forma más rápida de que nadie lea los avisos. Una rejilla de tres columnas en su orden no sale; una fila en RTL leída de derecha a izquierda tampoco, porque ahí ese *es* el orden de lectura.
+
+El veredicto es `revisar`, nunca `falla`: 1.3.2 pide que la secuencia **preserve el significado**, y si reordenar tres tarjetas de un escaparate lo cambia o no lo decide una persona. Lo que aporta esto es el dato que esa persona no tenía: qué se reordenó, por qué propiedad, y en qué orden se lee frente a en qué orden se ve.
+
+**Y por el camino apareció algo peor que el silencio.** Con la medición ya funcionando, el hallazgo seguía sin llegar al informe: `aplicaCuaderno` **borraba** cualquier `revisar` de los once criterios de juicio, porque «son exactamente los que el cuaderno viene a concretar». Así que la capa de render medía el desorden sobre el navegador, lo describía con los dos órdenes, y el cuaderno lo tiraba y dejaba la pregunta genérica. El cuaderno concreta lo que nadie ha mirado; no tapa lo que ya se ha medido. Ahora se conserva todo `revisar` que venga de una capa que mide —medición, píxeles, puntero, adaptación, dinámico, axe, coherencia— y la ficha del cuaderno sigue estando al lado, con su expediente. Esto no afecta solo a 1.3.2: el mismo borrado se habría comido cualquier observación medida de los otros diez.
+
+Corregida también la frase del cuaderno, que ahora dice la verdad: se ve la reordenación **declarada**, y no se ve la que no se declara.
+
+Un detalle de forma que importa: la evidencia de 1.3.2 nombra los bloques por su etiqueta y su texto **sin corchetes angulares**, porque esa evidencia viaja a informes HTML y un `<p>` suelto ahí o se interpreta como marcado o lo borra el saneador. Hay un test que lo vigila.
+
+**691 tests unitarios** (de 684) y **154 de integración** (de 150), en verde. El entregable no se mueve: 7 familias, 21 hallazgos, 55 de 55 con veredicto.
 
 ### v0.47.0 — 3.2.1 salía «pasa» en una página que lo incumple dos veces
 

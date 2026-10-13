@@ -307,6 +307,100 @@ function boundaryContrastOf(el, win) {
   for (let i = 1; i < candidatos.length; i++) if (candidatos[i].ratio > mejor.ratio) mejor = candidatos[i];
   return mejor;
 }
+/* 1.3.2 Secuencia significativa: cuando el CSS dice «al revés» y se ve al revés.
+ *
+ * El cuaderno de juicio dejaba este criterio en manos de una persona con una
+ * frase honesta: «el agente no ve el orden visual». Pero sí lo ve — 2.4.3 ya
+ * compara la tabulación con el orden visual sobre el render real; lo que pasaba
+ * es que 1.3.2 no usaba ese dato. Medido sobre una página con tres pasos de una
+ * receta reordenados con `order` (en el código 1, 2, 3; en pantalla 3, 2, 1):
+ * `humano`, con la pregunta de rigor y sin un dato.
+ *
+ * DOS CONDICIONES, Y LAS DOS TIENEN QUE CUMPLIRSE. Primero, que el CSS DECLARE
+ * una reordenación: `order`, `flex-direction: *-reverse`, `flex-wrap:
+ * wrap-reverse` o una colocación explícita en la rejilla. Segundo, que medido
+ * sobre el render el orden visual SEA distinto del orden del DOM. Con una sola
+ * de las dos no se dice nada: hay mil maneras legítimas de que lo que se ve no
+ * siga el DOM —dos columnas, una barra lateral, un `float`— y acusarlas todas
+ * dejaría el criterio en `revisar` en media web, que es la forma más rápida de
+ * que nadie lea los avisos.
+ *
+ * Y el veredicto es `revisar`, nunca `falla`: 1.3.2 pide que la secuencia
+ * PRESERVE EL SIGNIFICADO, y si reordenar tres tarjetas de un escaparate
+ * cambia el significado o no lo decide una persona. Lo que aporta esto es el
+ * dato que esa persona no tenía: qué se reordenó, por qué, y en qué orden se
+ * lee frente a en qué orden se ve.
+ */
+function ordenReordenado(doc, win, limite) {
+  const out = [];
+  const tope = limite || 300;
+  let vistos = 0, fuera = 0;
+  const todos = doc.querySelectorAll("*");
+  for (let i = 0; i < todos.length; i++) {
+    const cont = todos[i];
+    if (vistos >= tope) { fuera++; continue; }
+    const cs = win.getComputedStyle(cont);
+    const d = cs.display || "";
+    if (d.indexOf("flex") === -1 && d.indexOf("grid") === -1) continue;
+    vistos++;
+    const hijos = [];
+    const kids = cont.children || [];
+    for (let k = 0; k < kids.length; k++) {
+      const el = kids[k];
+      if (!renderedM(el, win)) continue;
+      const r = el.getBoundingClientRect();
+      if (!(r.width > 0 && r.height > 0)) continue;
+      hijos.push({ el: el, r: r, orden: k, cs: win.getComputedStyle(el) });
+    }
+    if (hijos.length < 2) continue;
+
+    // 1) ¿El CSS declara una reordenación?
+    const causas = [];
+    if (/-reverse$/.test(cs.flexDirection || "")) causas.push("flex-direction: " + cs.flexDirection);
+    if ((cs.flexWrap || "") === "wrap-reverse") causas.push("flex-wrap: wrap-reverse");
+    const conOrder = hijos.filter(function (h) { return parseInt(h.cs.order, 10) !== 0 && h.cs.order !== "" && h.cs.order != null; });
+    if (conOrder.length) causas.push("la propiedad `order` en " + conOrder.length + " hijo(s)");
+    if (d.indexOf("grid") !== -1) {
+      const colocados = hijos.filter(function (h) {
+        return (h.cs.gridRowStart && h.cs.gridRowStart !== "auto") || (h.cs.gridColumnStart && h.cs.gridColumnStart !== "auto");
+      });
+      if (colocados.length) causas.push("colocación explícita en la rejilla en " + colocados.length + " hijo(s)");
+    }
+    if (!causas.length) continue;
+
+    // 2) ¿El orden visual es de verdad distinto del orden del DOM?
+    const rtl = (cs.direction === "rtl");
+    const visual = hijos.slice().sort(function (a, b) {
+      // Misma línea si se solapan en vertical más de la mitad del más bajo.
+      const solape = Math.min(a.r.bottom, b.r.bottom) - Math.max(a.r.top, b.r.top);
+      if (solape > Math.min(a.r.height, b.r.height) * 0.5) return rtl ? b.r.left - a.r.left : a.r.left - b.r.left;
+      return a.r.top - b.r.top;
+    });
+    let distinto = false;
+    for (let v = 0; v < visual.length; v++) if (visual[v].orden !== hijos[v].orden) { distinto = true; break; }
+    if (!distinto) continue;
+
+    const etiqueta = function (h) {
+      const t = (h.el.textContent || "").replace(/\s+/g, " ").trim();
+      // Sin corchetes angulares: esta evidencia viaja a informes HTML, y un
+      // «<p>» suelto ahí o se interpreta como marcado o lo borra el saneador.
+      return h.el.tagName.toLowerCase() + (t ? " «" + t.slice(0, 40) + (t.length > 40 ? "…" : "") + "»" : " (sin texto)");
+    };
+    out.push({
+      crit: "1.3.2", label: "Secuencia significativa", node: locatorM(cont), path: rutaM(cont), verdict: "revisar",
+      detail: "el contenido de este contenedor se LEE en un orden y se VE en otro, por " + causas.join(" y ") + ". " +
+        "Orden del código (el que recibe el lector de pantalla y la tabulación): " +
+        hijos.slice(0, 5).map(etiqueta).join(" → ") + ". Orden visual: " + visual.slice(0, 5).map(etiqueta).join(" → ") +
+        ". No sale como falla porque 1.3.2 pide que la secuencia preserve el SIGNIFICADO: " +
+        "si el orden de estos bloques da igual, no hay barrera; si es una receta, unas instrucciones o una tabla de precios, sí."
+    });
+    if (out.length >= 8) break;
+  }
+  if (fuera) out.push({ crit: "__meta", label: "Cobertura del orden visual", node: fuera + " contenedores", verdict: "revisar",
+    limita: ["1.3.2"],
+    detail: "se revisaron " + vistos + " contenedores flex/grid y quedaron " + fuera + " sin mirar por el tope: de esos no se sabe si reordenan" });
+  return out;
+}
 const NATIVOS = ["a", "button", "input", "select", "textarea", "summary"];
 function isInteractiveM(el) {
   const tag = el.tagName.toLowerCase();
@@ -1551,6 +1645,8 @@ function runChecksReal(doc, win, limit) {
       rutas: ordenados.map(function (f) { return f.path; })
     });
   }
+  /* 1.3.2 sobre el render: el orden que se lee frente al que se ve. */
+  ordenReordenado(doc, win, 300).forEach(function (o) { res.push(o); });
   if (truncado) {
     res.push({ crit: "__meta", label: "Cobertura de los controles", node: all.length + "/" + candidatos.length, verdict: "revisar",
       // Todo lo que se dictamina control por control.
@@ -1568,7 +1664,7 @@ function runChecksReal(doc, win, limit) {
 }
 
 const FNS = [parseColor, over, lum, contrastRatio, rgbStr, apcaContrast, apcaMin,
-  animacionesPersistentes, distintivoDeEnlace, enTextoCorrido, elementosFlotantes, fraccionTapada, ratioTxt, refrescar, todosM, enfocadoM, shadowCerrados, resolverColor, ownText, opacidadAcumulada, coloresDe, mismoColor, aparienciaFoco, indicadorDeFoco, fondoRealCoincide, bgBehind, contrastOf, boundaryContrastOf, isInteractiveM, locatorM, rutaM, renderedM, disabledM, managedM, textTargets,
+  animacionesPersistentes, distintivoDeEnlace, enTextoCorrido, elementosFlotantes, fraccionTapada, ratioTxt, refrescar, todosM, enfocadoM, shadowCerrados, resolverColor, ownText, opacidadAcumulada, coloresDe, mismoColor, aparienciaFoco, indicadorDeFoco, fondoRealCoincide, bgBehind, contrastOf, boundaryContrastOf, ordenReordenado, isInteractiveM, locatorM, rutaM, renderedM, disabledM, managedM, textTargets,
   pinta, sinPseudoFoco, coincideSinFoco, reglasDeFoco, runChecksReal];
 const FN_SRC = "var MANAGED_PARENT = " + JSON.stringify(MANAGED_PARENT) + ";\nvar NATIVOS = " + JSON.stringify(NATIVOS) + ";\n" +
   "var PROP_INDICADOR = " + JSON.stringify(PROP_INDICADOR) + ";\nvar NULOS = " + JSON.stringify(NULOS) + ";\n" +
@@ -1602,5 +1698,5 @@ export const MEASURE_SRC = "(function(){\n" + FN_SRC +
   "\nwindow.__a11yMeasure = function(limit){ return runChecksReal(document, window, limit||400); };\n})();";
 
 // También exportamos las funciones DOM para pruebas con un DOM simulado si se desea.
-export { animacionesPersistentes, distintivoDeEnlace, enTextoCorrido, elementosFlotantes, fraccionTapada, ratioTxt, resolverColor, opacidadAcumulada, ownText, bgBehind, contrastOf, boundaryContrastOf, runChecksReal, renderedM, disabledM, managedM, textTargets, rutaM,
+export { animacionesPersistentes, distintivoDeEnlace, enTextoCorrido, elementosFlotantes, fraccionTapada, ratioTxt, resolverColor, opacidadAcumulada, ownText, bgBehind, contrastOf, boundaryContrastOf, ordenReordenado, runChecksReal, renderedM, disabledM, managedM, textTargets, rutaM,
   sinPseudoFoco, coincideSinFoco, reglasDeFoco, pinta };

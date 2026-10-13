@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DOMParser } from "linkedom";
-import { ownText, textTargets, renderedM, disabledM, managedM, runChecksReal, contrastOf, boundaryContrastOf, MEASURE_SRC, MEASURE_BODY,
+import { ownText, textTargets, renderedM, disabledM, managedM, runChecksReal, contrastOf, boundaryContrastOf, ordenReordenado, MEASURE_SRC, MEASURE_BODY,
   sinPseudoFoco, coincideSinFoco, reglasDeFoco, pinta, ratioTxt } from "../src/measure.browser.js";
 
 /**
@@ -575,4 +575,94 @@ test("una animación corta no entra en 2.2.2", () => {
 test("una animación pausada tampoco", () => {
   const { doc, win } = dom('<div data-cs=\'{"animationName":"gira","animationIterationCount":"infinite","animationDuration":"2s","animationPlayState":"paused"}\'>x</div>');
   assert.deepEqual(runChecksReal(doc, win, 400).filter((x) => x.crit === "2.2.2"), []);
+});
+
+/* ── 1.3.2 Secuencia significativa: el orden que se lee y el que se ve ───────
+ *
+ * El cuaderno de juicio dejaba este criterio con una frase honesta —«el agente
+ * no ve el orden visual»— cuando sí lo ve: 2.4.3 ya compara la tabulación con
+ * el orden visual sobre el render. Medido sobre tres pasos de una receta
+ * reordenados con `order` (código 1, 2, 3; pantalla 3, 2, 1): `humano`, con la
+ * pregunta de rigor y sin un dato.
+ *
+ * Aquí se prueba la lógica con cajas y estilos puestos a mano; el caso real,
+ * con el motor de estilos resolviendo `order` y `row-reverse`, está en
+ * `test/integration/orden-real.test.mjs`.
+ */
+const caja = (top, left, w, h) => JSON.stringify({ top, left, width: w, height: h, bottom: top + h, right: left + w });
+const cont = (estilos, hijos) =>
+  '<div data-cs=\'' + JSON.stringify(estilos).replace(/"/g, "&quot;") + '\'>' + hijos + "</div>";
+
+test("1.3.2: `order` que invierte el orden de lectura sale a revisar, con los dos órdenes", () => {
+  const html = cont({ display: "flex", flexDirection: "column", direction: "ltr" },
+    '<p data-cs=\'{"order":"3"}\' data-box=' + caja(300, 0, 400, 40) + ">Paso 1</p>" +
+    '<p data-cs=\'{"order":"2"}\' data-box=' + caja(200, 0, 400, 40) + ">Paso 2</p>" +
+    '<p data-cs=\'{"order":"1"}\' data-box=' + caja(100, 0, 400, 40) + ">Paso 3</p>");
+  const { doc, win } = dom(html);
+  const out = ordenReordenado(doc, win, 50).filter((o) => o.crit === "1.3.2");
+  assert.equal(out.length, 1, JSON.stringify(out));
+  assert.equal(out[0].verdict, "revisar");
+  assert.match(out[0].detail, /`order`/);
+  assert.match(out[0].detail, /Paso 1.*Paso 2.*Paso 3/, "el orden del código, en su orden: " + out[0].detail);
+  assert.match(out[0].detail.split("Orden visual")[1], /Paso 3.*Paso 2.*Paso 1/, "y el visual al revés: " + out[0].detail);
+  assert.match(out[0].detail, /no sale como falla/i);
+});
+
+test("1.3.2: `row-reverse` también cuenta, comparando la misma línea visual", () => {
+  const html = cont({ display: "flex", flexDirection: "row-reverse", direction: "ltr" },
+    '<div data-box=' + caja(0, 500, 200, 50) + ">Primero</div>" +
+    '<div data-box=' + caja(0, 250, 200, 50) + ">Segundo</div>" +
+    '<div data-box=' + caja(0, 0, 200, 50) + ">Tercero</div>");
+  const { doc, win } = dom(html);
+  const out = ordenReordenado(doc, win, 50).filter((o) => o.crit === "1.3.2");
+  assert.equal(out.length, 1, JSON.stringify(out.map((o) => o.detail)));
+  assert.match(out[0].detail, /row-reverse/);
+});
+
+test("1.3.2: hacen falta LAS DOS condiciones — el CSS declarándolo y la medida confirmándolo", () => {
+  const { doc: d1, win: w1 } = dom(cont({ display: "grid", direction: "ltr" },
+    '<div data-box=' + caja(0, 0, 100, 50) + ">Uno</div>" +
+    '<div data-box=' + caja(0, 110, 100, 50) + ">Dos</div>" +
+    '<div data-box=' + caja(0, 220, 100, 50) + ">Tres</div>"));
+  assert.deepEqual(ordenReordenado(d1, w1, 50).filter((o) => o.crit === "1.3.2"), [],
+    "una rejilla de tres columnas en su orden no es nada");
+
+  // `order` declarado pero el resultado visual sigue el DOM: tampoco se dice nada.
+  const { doc: d2, win: w2 } = dom(cont({ display: "flex", flexDirection: "column", direction: "ltr" },
+    '<p data-cs=\'{"order":"1"}\' data-box=' + caja(0, 0, 400, 40) + ">A</p>" +
+    '<p data-cs=\'{"order":"2"}\' data-box=' + caja(100, 0, 400, 40) + ">B</p>"));
+  assert.deepEqual(ordenReordenado(d2, w2, 50).filter((o) => o.crit === "1.3.2"), [],
+    "el CSS lo declara pero el orden visual coincide con el del código");
+
+  // Y un contenedor que no es flex ni grid no se mira: ahí el orden visual puede
+  // separarse del DOM por mil motivos legítimos que esto no juzga.
+  const { doc: d3, win: w3 } = dom(cont({ display: "block" },
+    '<p data-box=' + caja(100, 0, 400, 40) + ">A</p>" +
+    '<p data-box=' + caja(0, 0, 400, 40) + ">B</p>"));
+  assert.deepEqual(ordenReordenado(d3, w3, 50).filter((o) => o.crit === "1.3.2"), []);
+});
+
+test("1.3.2: en RTL el orden visual de una fila va de derecha a izquierda", () => {
+  // Con `direction: rtl` lo primero es lo de más a la derecha, así que una fila
+  // normal NO está reordenada: acusarla sería un falso positivo en árabe o hebreo.
+  const html = cont({ display: "flex", flexDirection: "row", direction: "rtl" },
+    '<div data-cs=\'{"order":"0","direction":"rtl"}\' data-box=' + caja(0, 500, 200, 50) + ">Primero</div>" +
+    '<div data-cs=\'{"order":"0","direction":"rtl"}\' data-box=' + caja(0, 250, 200, 50) + ">Segundo</div>");
+  const { doc, win } = dom(html);
+  assert.deepEqual(ordenReordenado(doc, win, 50).filter((o) => o.crit === "1.3.2"), []);
+});
+
+test("1.3.2: el tope de contenedores se dice y limita el criterio", () => {
+  const muchos = [];
+  for (let i = 0; i < 4; i++) {
+    muchos.push('<div data-cs=\'{"display":"flex","flexDirection":"column"}\'>' +
+      '<p data-cs=\'{"order":"2"}\' data-box=' + caja(100, 0, 100, 20) + ">a</p>" +
+      '<p data-cs=\'{"order":"1"}\' data-box=' + caja(0, 0, 100, 20) + ">b</p></div>");
+  }
+  const { doc, win } = dom(muchos.join(""));
+  const out = ordenReordenado(doc, win, 2);
+  const meta = out.find((o) => o.crit === "__meta");
+  assert.ok(meta, "el tope tiene que salir en una nota: " + JSON.stringify(out.map((o) => o.crit)));
+  assert.deepEqual(meta.limita, ["1.3.2"]);
+  assert.match(meta.detail, /sin mirar por el tope/);
 });
