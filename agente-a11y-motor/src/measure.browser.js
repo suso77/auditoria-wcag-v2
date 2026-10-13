@@ -237,15 +237,75 @@ function contrastOf(el, win) {
  * Solo tiene sentido si el control pinta un relleno propio; si lo dibuja el
  * navegador (un <input> con estilo de UA) o el fondo lleva imagen, no es medible.
  */
+/* MEDÍA EL RELLENO Y LLAMABA A ESO «EL LÍMITE DEL CONTROL».
+ *
+ * Solo miraba `background-color`. Un botón de relleno blanco sobre página blanca
+ * con un borde gris claro —el «ghost button», de los patrones más extendidos que
+ * hay— daba relleno idéntico al fondo, salía por el `return null` de «mismo
+ * color que el fondo: no hay límite que medir» y NO EMITÍA NADA. Medido sobre un
+ * fixture con `border: 2px solid #f0f0f0` en página blanca, que contrasta a
+ * 1.14:1 y es el caso de libro de 1.4.11: el criterio se quedaba sin un solo
+ * hallazgo de la capa, y lo único que llegaba al informe era el relleno del
+ * motor diciendo que lo mide otra capa.
+ *
+ * El límite visible de un control es lo que lo separa de su fondo, y en la mitad
+ * de los diseños eso es el BORDE. Se miran los dos y manda el que más lo
+ * distinga: si el relleno ya separa el control, el borde no hace falta, y al
+ * revés. Y cuando no hay ni uno ni otro, eso también se dice, en vez de callar.
+ *
+ * Lo que sigue sin mirarse —y por eso el veredicto nunca es `falla`, ni siquiera
+ * con el límite medido por debajo de 3:1— es el resto de formas de delimitar un
+ * control: una sombra, un icono, un subrayado. Y por lo mismo el techo es
+ * `cumple-parcial` y nunca `pasa`: 1.4.11 cubre además los objetos gráficos y
+ * los ESTADOS del control, que esto no mide. Un límite que contrasta de sobra
+ * no cierra el criterio; solo cierra la parte que se midió.
+ *
+ * Del control SIN relleno ni borde se dice una cosa o la otra según lleve texto:
+ * con texto propio, 1.4.11 no le exige límite —se identifica por el texto, y de
+ * ese texto se ocupa 1.4.3—; sin texto, lo único que lo identifica es una forma
+ * o un icono y hay que mirarlo a mano. Avisar de los primeros sería dar la lata
+ * en cada botón de texto de la página. */
 function boundaryContrastOf(el, win) {
-  const own = resolverColor(win.getComputedStyle(el).backgroundColor, el.ownerDocument);
-  if (!own || own.a === 0) return null;
+  const cs = win.getComputedStyle(el);
   const bg = bgBehind(el.parentElement || el, win);
-  if (bg.image) return null;
-  const front = own.a < 1 ? over(own, bg) : own;
-  const ratio = contrastRatio(front, bg);
-  if (!(ratio > 1.001)) return null; // mismo color que el fondo: no hay límite que medir
-  return { ratio: ratio, fg: rgbStr(front), bg: rgbStr(bg) };
+  if (bg.image) return null;   // fondo no medible: ya lo dice la nota de cobertura
+  const doc = el.ownerDocument;
+  const candidatos = [];
+
+  const own = resolverColor(cs.backgroundColor, doc);
+  if (own && own.a > 0) {
+    const front = own.a < 1 ? over(own, bg) : own;
+    const r = contrastRatio(front, bg);
+    if (r > 1.001) candidatos.push({ via: "relleno", ratio: r, fg: rgbStr(front), bg: rgbStr(bg) });
+  }
+
+  const lados = ["Top", "Right", "Bottom", "Left"];
+  for (let i = 0; i < lados.length; i++) {
+    const L = lados[i];
+    const ancho = parseFloat(cs["border" + L + "Width"]) || 0;
+    const estilo = cs["border" + L + "Style"];
+    if (!(ancho > 0) || estilo === "none" || estilo === "hidden") continue;
+    const c = resolverColor(cs["border" + L + "Color"], doc);
+    if (!c || c.a === 0) continue;
+    const front = c.a < 1 ? over(c, bg) : c;
+    const r = contrastRatio(front, bg);
+    candidatos.push({ via: "borde " + ancho.toFixed(0) + " px", ratio: r, fg: rgbStr(front), bg: rgbStr(bg) });
+  }
+
+  // Sin relleno y sin borde no hay límite que medir, y lo que pasa entonces
+  // depende de si el control lleva texto: 1.4.11 no exige límite a un control
+  // que se identifica por su propio texto (de ese texto se ocupa 1.4.3). Si no
+  // lo lleva, lo único que lo identifica es una forma o un icono, y eso hay que
+  // mirarlo a mano. Es la diferencia entre avisar y dar la lata.
+  if (!candidatos.length) {
+    const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+    return { sinLimite: true, bg: rgbStr(bg), conTexto: !!t };
+  }
+  // Manda el que MÁS lo distingue: basta con que una de las dos cosas separe el
+  // control de su fondo para que el límite sea perceptible.
+  let mejor = candidatos[0];
+  for (let i = 1; i < candidatos.length; i++) if (candidatos[i].ratio > mejor.ratio) mejor = candidatos[i];
+  return mejor;
 }
 const NATIVOS = ["a", "button", "input", "select", "textarea", "summary"];
 function isInteractiveM(el) {
@@ -1090,7 +1150,28 @@ function runChecksReal(doc, win, limit) {
       // pinta el navegador y medirlo sobre el render no dice nada útil.
       if (NATIVOS.indexOf(el.tagName.toLowerCase()) === -1 && !deshabilitado) {
         const nc = boundaryContrastOf(el, win);
-        if (nc) res.push({ crit: "1.4.11", label: "Contraste no textual", node: loc, verdict: nc.ratio >= 3 ? "pasa" : "revisar", detail: "límite del control " + nc.ratio.toFixed(2) + ":1 (mín 3:1) — " + nc.fg + " sobre " + nc.bg });
+        if (nc && nc.sinLimite && nc.conTexto) {
+          // Lleva texto propio: 1.4.11 no le exige límite, y el texto lo mide
+          // 1.4.3. No es `pasa` porque de este control solo se ha mirado el
+          // límite: iconos, estados y objetos gráficos siguen sin medir.
+          res.push({ crit: "1.4.11", label: "Contraste no textual", node: loc, verdict: "cumple-parcial",
+            detail: "el control no pinta relleno propio ni borde visible sobre " + nc.bg + ", pero se identifica por su propio texto, y a un control así 1.4.11 no le exige límite (del texto se ocupa 1.4.3). Sin medir: los iconos, los objetos gráficos y los estados del control" });
+        } else if (nc && nc.sinLimite) {
+          // Y sin texto, lo único que lo identifica es una forma o un icono:
+          // callar aquí era el agujero. No se puede decidir desde los estilos,
+          // así que se dice lo que se vio y lo juzga una persona.
+          res.push({ crit: "1.4.11", label: "Contraste no textual", node: loc, verdict: "revisar",
+            detail: "el control no pinta relleno propio ni borde visible sobre " + nc.bg + " y tampoco lleva texto: no hay límite que medir y lo único que lo identifica es una forma, una sombra o un icono. Hay que comprobar a mano que eso contrasta 3:1 contra lo que tiene detrás" });
+        } else if (nc) {
+          res.push({ crit: "1.4.11", label: "Contraste no textual", node: loc,
+            // Ni con el límite medido se firma `pasa`: 1.4.11 cubre también los
+            // objetos gráficos y los ESTADOS del control, que esto no mira.
+            verdict: nc.ratio >= 3 ? "cumple-parcial" : "revisar",
+            detail: "límite del control por su " + nc.via + ": " + nc.ratio.toFixed(2) + ":1 (mín 3:1) — " + nc.fg + " sobre " + nc.bg +
+              (nc.ratio >= 3
+                ? ". Medido el límite en reposo; sin medir los iconos, los objetos gráficos y los estados del control"
+                : ". No sale como falla porque quedan formas de delimitar un control que esto no mide —una sombra, un icono, un subrayado—, y eso lo juzga una persona con esta medida delante") });
+        }
       }
     }
     for (let k = desde; k < res.length; k++) if (!res[k].path) res[k].path = ruta;

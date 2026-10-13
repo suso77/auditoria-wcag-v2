@@ -64,8 +64,8 @@ const informe = analyze(understand(html));
 ## Tests
 
 ```bash
-npm test                    # suite pura (node --test), sin navegador — 311 tests
-npm run test:integracion    # integración con Chromium (Playwright) — 63 tests
+npm test                    # suite pura (node --test), sin navegador — 669 tests
+npm run test:integracion    # integración con Chromium (Playwright) — 145 tests
 npm run bench               # banco de precisión accname contra corpus WPT
 npm run smoke               # humo del artifact generado, en Chromium real
 ```
@@ -980,6 +980,20 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 **En el cruce con axe, dos afirmaciones que no se podían sostener.** `crossCheck` fabricaba `{findings: []}` cuando el motor no llegaba a construir el modelo —texto suelto, un comentario, una cadena vacía—, y ese resultado entraba en la reconciliación como una comprobación limpia: «soloMotor: 0» era indistinguible de «el motor comprobó y no encontró nada». Y el «acuerdo» se construía solo porque coincidía el número de criterio: el motor acusando a `img.logo` y axe a otro `img` de la página salían como «acuerdo: 1». Casar los elementos exige la página abierta —lo hace la orquestación, no la reconciliación pura—, así que ahora se publica cuántos elementos trae cada fuente, que la coincidencia a nivel de elemento NO está comprobada, y que el motor no miró cuando no miró.
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
+
+### v0.45.0 — 1.4.11 medía el relleno del control y llamaba a eso «el límite»
+
+Probando el agente al revés —no si absuelve de más, sino si **detecta cuando hay algo que detectar**— con cuatro páginas nuevas, una por criterio y con la respuesta sabida: 2.1.2 dio `falla` nombrando el ciclo del foco, 4.1.3 describió exactamente lo que vio, 1.4.1 dio `falla`. Y **1.4.11 no emitió nada**: lo único que llegaba al informe era el relleno del motor diciendo que de eso se encarga otra capa.
+
+**El fallo.** `boundaryContrastOf` solo miraba `background-color`. Un botón de relleno blanco sobre página blanca con un borde gris claro —el patrón «ghost button», de los más extendidos que hay— da relleno idéntico al fondo, salía por el `return null` de «no hay límite que medir» y se callaba. Medido sobre `border: 2px solid #f0f0f0` en página blanca: **1.14:1**, el caso de libro de 1.4.11, y el criterio se quedaba sin un solo hallazgo de la capa. En las 20 páginas del sitio de prueba, la medición **no había dicho nunca nada** de 1.4.11.
+
+**El límite visible de un control es lo que lo separa de su fondo, y en la mitad de los diseños eso es el borde.** Ahora se miran el relleno y los cuatro lados del borde, y manda el que *más* lo distingue: basta con que una de las dos cosas separe el control para que el límite sea perceptible. La ficha dice por dónde se midió —«por su borde 2 px», «por su relleno»—, que es lo que permite ir a comprobarlo.
+
+**Y el techo baja de `pasa` a `cumple-parcial`.** 1.4.11 cubre además los objetos gráficos y los **estados** del control, que esto no mide: un límite que contrasta de sobra no cierra el criterio, solo cierra la parte que se midió. Firmar `pasa` era declarar conforme lo que no se ha visto, que es el error que este agente persigue. Por debajo de 3:1 tampoco es `falla`: quedan formas de delimitar un control —una sombra, un icono, un subrayado— que esto no mira, y eso lo juzga una persona con la medida delante.
+
+**Del control sin relleno ni borde se dice una cosa o la otra según lleve texto.** Con texto propio, 1.4.11 no le exige límite —se identifica por el texto, y de ese texto se ocupa 1.4.3—: `cumple-parcial` diciéndolo. Sin texto, lo único que lo identificaría es una forma o un icono y hay que mirarlo a mano: `revisar`. La diferencia importa porque avisar de los primeros sería dar la lata en cada botón de texto de la página, y un aviso que sale en todo es un aviso que nadie lee. En el sitio de prueba esto encontró dos controles nuevos en `roto.html`, y el segundo es el caso real: un `div role="slider"` vacío con `aria-label`, que no pinta absolutamente nada.
+
+**669 tests unitarios** (de 663) y **145 de integración** (de 137), en verde, con ocho de los nuevos contra un Chromium real — porque el fallo vivía en cómo se *lee* el estilo, y en la suite pura el `getComputedStyle` es de mentira: desglosa `border: 2px solid #f0f0f0` por lados solo si el test se acuerda de desglosarla. Las barreras del entregable no se mueven: 7 familias, 21 hallazgos, 55 de 55 subcriterios con veredicto.
 
 ### v0.44.0 — los cuatro criterios de puntero, preguntándoselo al navegador
 

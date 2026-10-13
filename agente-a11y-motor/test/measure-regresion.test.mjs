@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DOMParser } from "linkedom";
-import { ownText, textTargets, renderedM, disabledM, managedM, runChecksReal, contrastOf, MEASURE_SRC, MEASURE_BODY,
+import { ownText, textTargets, renderedM, disabledM, managedM, runChecksReal, contrastOf, boundaryContrastOf, MEASURE_SRC, MEASURE_BODY,
   sinPseudoFoco, coincideSinFoco, reglasDeFoco, pinta, ratioTxt } from "../src/measure.browser.js";
 
 /**
@@ -190,6 +190,86 @@ test("1.4.11: el límite de un control personalizado se mide; el de uno nativo n
   assert.equal(n.length, 1);
   assert.equal(n[0].verdict, "revisar", n[0].detail);
   assert.equal(run('<button data-cs=\'{"backgroundColor":"rgb(250,250,250)"}\'>X</button>').filter((r) => r.crit === "1.4.11").length, 0);
+});
+
+/* ── 1.4.11: el límite de un control es su relleno O SU BORDE ── */
+
+// Un borde igual por los cuatro lados, como lo escribe cualquiera: `border: Npx
+// solid C`. El `getComputedStyle` de verdad desglosa la abreviatura por lados, y
+// es por lados como hay que leerla.
+const borde = (ancho, color, mas) => {
+  const cs = Object.assign({}, mas);
+  ["Top", "Right", "Bottom", "Left"].forEach((L) => {
+    cs["border" + L + "Width"] = ancho + "px"; cs["border" + L + "Style"] = "solid"; cs["border" + L + "Color"] = color;
+  });
+  return JSON.stringify(cs).replace(/"/g, "&quot;");
+};
+const unico1411 = (body) => {
+  const n = run(body).filter((r) => r.crit === "1.4.11");
+  assert.equal(n.length, 1, "esperaba UN hallazgo de 1.4.11 y hubo " + n.length);
+  return n[0];
+};
+
+test("regresión: el «ghost button» ya no se queda en silencio — se mide el BORDE", () => {
+  /* El fallo: `boundaryContrastOf` solo miraba `background-color`. Un botón de
+   * relleno blanco sobre página blanca con un borde gris claro —el patrón más
+   * extendido que hay— daba relleno idéntico al fondo, salía por el `return
+   * null` de «no hay límite que medir» y NO EMITÍA NADA, en el caso de libro de
+   * 1.4.11. Lo único que llegaba al informe era el relleno del motor diciendo
+   * que de esto se encarga otra capa. */
+  const f = unico1411('<div role="button" tabindex="0" data-cs=\'' +
+    borde(2, "rgb(240,240,240)", { backgroundColor: "rgb(255,255,255)" }) + '\'>Borde casi invisible</div>');
+  assert.equal(f.verdict, "revisar", f.detail);
+  assert.match(f.detail, /borde 2 px/, "tiene que decir POR DÓNDE se midió: " + f.detail);
+  assert.match(f.detail, /1\.1[0-9]:1/, "1.14:1, medido: " + f.detail);
+  assert.match(f.detail, /No sale como falla/, "y por qué no es una barrera");
+});
+
+test("un borde que contrasta de sobra sale como cumple-parcial, NUNCA como pasa", () => {
+  // 1.4.11 cubre además los objetos gráficos y los ESTADOS del control, que
+  // esto no mide: firmar `pasa` sería declarar conforme lo que no se ha visto.
+  const f = unico1411('<div role="button" tabindex="0" data-cs=\'' +
+    borde(2, "rgb(51,51,51)", { backgroundColor: "rgb(255,255,255)" }) + '\'>Borde con contraste</div>');
+  assert.equal(f.verdict, "cumple-parcial", f.detail);
+  assert.match(f.detail, /12\.6[0-9]:1/, f.detail);
+  assert.match(f.detail, /sin medir los iconos/);
+});
+
+test("manda lo que MÁS distingue el control: si el relleno ya separa, el borde flojo no acusa", () => {
+  const f = unico1411('<div role="button" tabindex="0" data-cs=\'' +
+    borde(1, "rgb(250,250,250)", { backgroundColor: "rgb(17,17,17)" }) + '\'>Relleno oscuro</div>');
+  assert.equal(f.verdict, "cumple-parcial", f.detail);
+  assert.match(f.detail, /por su relleno/, "el borde flojo no puede tapar un relleno que sí separa: " + f.detail);
+});
+
+test("un borde declarado `none` no es un límite, por mucho ancho que lleve", () => {
+  const f = unico1411('<div role="button" tabindex="0" data-cs=\'{"backgroundColor":"rgb(255,255,255)",' +
+    '"borderTopWidth":"4px","borderTopStyle":"none","borderTopColor":"rgb(0,0,0)"}\'>Sin borde</div>');
+  assert.match(f.detail, /ni borde visible/, f.detail);
+});
+
+test("sin relleno ni borde, el veredicto depende de si el control lleva texto", () => {
+  // Con texto, 1.4.11 no le exige límite: se identifica por el texto, y de ese
+  // texto se ocupa 1.4.3. Avisar aquí sería dar la lata en cada botón de la
+  // página — y un aviso que se repite en todo es un aviso que nadie lee.
+  const conTexto = unico1411('<div role="button" tabindex="0">Abrir el panel</div>');
+  assert.equal(conTexto.verdict, "cumple-parcial", conTexto.detail);
+  assert.match(conTexto.detail, /se identifica por su propio texto/);
+
+  // Sin texto, lo único que lo identifica es una forma o un icono: eso hay que
+  // mirarlo a mano. Es el caso real que lo encontró: un `div role="slider"`
+  // vacío con `aria-label`, que no pinta absolutamente nada.
+  const sinTexto = unico1411('<div role="slider" tabindex="0" aria-label="Volumen"></div>');
+  assert.equal(sinTexto.verdict, "revisar", sinTexto.detail);
+  assert.match(sinTexto.detail, /tampoco lleva texto/);
+  assert.match(sinTexto.detail, /forma, una sombra o un icono/);
+});
+
+test("boundaryContrastOf no se inventa un límite cuando el fondo lleva imagen", () => {
+  const { doc, win } = dom('<div id="p" data-cs=\'{"backgroundImage":"url(x.png)"}\'>' +
+    '<span role="button" tabindex="0" data-cs=\'' + borde(2, "rgb(0,0,0)") + '\'>X</span></div>');
+  // Sin fondo medible no hay ratio que dar: de eso habla la nota de cobertura.
+  assert.equal(boundaryContrastOf(doc.querySelector("span"), win), null);
 });
 
 /* ── 1.4.3 aplica a TODO el texto, no solo al de los controles ── */
