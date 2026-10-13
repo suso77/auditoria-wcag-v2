@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { compareAnnouncement, bridge } from "../src/guidepup-bridge.js";
+import { compareAnnouncement, bridge, sesionUtil } from "../src/guidepup-bridge.js";
 import { stripReaderNoise, spokenHasRole, esRuidoDeEscritorio } from "../src/reader-lexicon.js";
 import "./helpers.mjs"; // inyecta el DOMParser
 
@@ -120,4 +120,52 @@ test("el recuento del puente cuenta también las capturas inservibles", async ()
   assert.ok("sin-captura" in out.summary, "el resumen tiene que contemplar «sin-captura»");
   const total = Object.values(out.summary).reduce((a, b) => a + b, 0);
   assert.equal(total, out.results.length, "ningún veredicto se queda fuera del recuento");
+});
+
+/* ── El resumen de la SESIÓN ──
+ *
+ * Faltaba, y se notó el día que la prueba con VoiceOver real se ejecutó por
+ * primera vez: 103 segundos y un fallo que decía «el icono sin nombre debería
+ * confirmarse», el mismo mensaje tanto si el lector habló y dijo otra cosa
+ * —defecto del léxico— como si no llegó a leer la página —el entorno—. Son
+ * conclusiones opuestas y el rojo no las distinguía.
+ */
+
+test("una sesión que solo capturó el escritorio se declara NULA, no divergente", () => {
+  const s = sesionUtil([ESCRITORIO], "voiceover");
+  assert.equal(s.ok, false);
+  assert.equal(s.dePagina, 0);
+  assert.match(s.motivo, /NO dice nada sobre el componente/);
+});
+
+test("una sesión con frases de la página es útil, aunque arrastre ruido", () => {
+  const s = sesionUtil(FIXTURE.spokenPhraseLog, "voiceover");
+  assert.equal(s.ok, true);
+  assert.equal(s.total, 3);
+  assert.equal(s.dePagina, 2, "dos de la página y una del escritorio");
+  assert.equal(s.ruido, 1);
+});
+
+test("sin una sola frase, o con todas vacías, la sesión tampoco verifica nada", () => {
+  assert.equal(sesionUtil([], "voiceover").ok, false);
+  assert.match(sesionUtil([], "voiceover").motivo, /no devolvió ni una frase/);
+  assert.equal(sesionUtil(["", "   "], "voiceover").ok, false);
+});
+
+test("sesionUtil acepta las dos formas en que viajan las frases", () => {
+  // `verifyWithScreenReader` devuelve [{step, spoken}]; los fixtures, cadenas.
+  const comoObjetos = FIXTURE.spokenPhraseLog.map((spoken, step) => ({ step, spoken }));
+  assert.deepEqual(sesionUtil(comoObjetos, "voiceover"), sesionUtil(FIXTURE.spokenPhraseLog, "voiceover"));
+});
+
+test("y el puente lo publica junto al resumen de nodos", async () => {
+  const out = await bridge('<button>Enviar formulario</button>', {
+    lector: "voiceover",
+    // Capturado EN VIVO sobre macOS 26.5.1: VoiceOver en español dice el nombre
+    // primero y el rol detrás, al revés que el «link Saltar al contenido» de
+    // abril, que lo decía delante y en inglés. Las dos formas se resuelven.
+    capture: () => [{ step: 0, spoken: "Enviar formulario, botón" }]
+  });
+  assert.equal(out.sesion.ok, true);
+  assert.equal(out.summary.confirmado, 1, JSON.stringify(out.results));
 });

@@ -67,10 +67,40 @@ test("sin campos con restricciones, 3.3.3 no aplica", () => {
 test("un buscador no levanta 3.3.4; un formulario que compra, sí", () => {
   const busca = cuad('<form method="get" action="/buscar"><input name="q"><button>Buscar</button></form>');
   assert.equal(fichaDe(busca, "3.3.4").aplica, false);
-  assert.match(fichaDe(busca, "3.3.4").loQueYaSabemos.join(" "), /consulta o b[uú]squeda/);
+  // El motivo cambió de redacción al invertir la regla (antes se excluía lo que
+  // no fuera POST; ahora se excluye solo lo que SE RECONOCE como buscador), pero
+  // lo que defiende este test —que una búsqueda no levanta el criterio— es lo mismo.
+  assert.match(fichaDe(busca, "3.3.4").loQueYaSabemos.join(" "), /buscador|b[uú]squeda/);
 
   const compra = cuad('<form method="post" action="/pedido"><button>Comprar</button></form>');
   assert.equal(fichaDe(compra, "3.3.4").aplica, true);
+});
+
+test("regresión: un formulario que no declara método NO queda fuera de 3.3.4", () => {
+  // La exclusión se apoyaba en method="post". Un formulario sin `method` envía
+  // por GET, y uno de una aplicación moderna lo envía JavaScript. Medido con una
+  // pantalla de pago: «no aplica», el criterio de los compromisos legales y
+  // económicos cerrado sobre un campo de tarjeta, y con el botón diciendo
+  // «Continuar», que no está ni puede estar en la lista de palabras.
+  const pago = cuad('<form id="checkout"><label for="t">Tarjeta</label><input id="t" name="tarjeta"><button type="submit">Continuar</button></form>');
+  assert.equal(fichaDe(pago, "3.3.4").aplica, true, JSON.stringify(fichaDe(pago, "3.3.4").loQueYaSabemos));
+  assert.ok(fichaDe(pago, "3.3.4").queMirar.length >= 1);
+  assert.match(fichaDe(pago, "3.3.4").loQueYaSabemos.join(" "), /El método no decide nada/);
+  // Y el buscador sigue excluido: la regla acota por lo reconocible, no adivina.
+  assert.equal(fichaDe(cuad('<form><input type="search" name="x"><button>Ir</button></form>'), "3.3.4").aplica, false);
+  assert.equal(fichaDe(cuad('<form role="search"><input name="x"></form>'), "3.3.4").aplica, false);
+});
+
+test("regresión: 1.3.2 aplica a una página de párrafos, no solo a la que trae regiones", () => {
+  // La lista de bloques se quedaba en encabezados, regiones, formularios y
+  // tablas: una página de <div> y <p> salía «no aplica», y 1.3.2 va exactamente
+  // de tres párrafos que se leen en un orden y se ven en otro.
+  const parrafos = cuad('<div><p>Primero esto.</p><p>Después esto otro.</p><p>Y al final, esto.</p></div>');
+  assert.equal(fichaDe(parrafos, "1.3.2").aplica, true);
+  assert.ok(fichaDe(parrafos, "1.3.2").queMirar.length >= 3);
+  // Un solo bloque sí queda fuera: no hay secuencia que alterar.
+  assert.equal(fichaDe(cuad('<p>Una sola cosa.</p>'), "1.3.2").aplica, false);
+  assert.equal(fichaDe(cuad(''), "1.3.2").aplica, false);
 });
 
 test("sin campo de contraseña ni captcha, 3.3.8 no aplica", () => {
@@ -683,4 +713,31 @@ test("3.3.8: un acceso por código de un solo uso SÍ es autenticación", () => 
   // Un buscador no es un acceso: la señal tiene que seguir siendo estrecha.
   const buscador = fichaDe(cuad('<main><h1>h</h1><form><input type="text" name="buscar"><button>Buscar</button></form></main>'), "3.3.8");
   assert.equal(buscador.veredicto, "no-aplica");
+});
+
+test("regresión: un paso de UN solo campo también cuenta para el 3.3.7 de la muestra", () => {
+  // El atajo `campos.length < 2` salía antes de calcular los grupos y sin
+  // `datos`, así que un paso con un único campo no aportaba nada al cruce entre
+  // páginas. Medido: paso 1 con un solo «Correo electrónico» y paso 3 con ese
+  // mismo correo daban, en el cuaderno de la muestra, 3.3.7 «no aplica · no
+  // viene al caso en ninguna de las 2 páginas» — el criterio cerrado justo
+  // sobre el caso para el que existe.
+  const paso1 = cuadernoDeJuicio(doc('<form><label for="e">Correo electrónico</label>' +
+    '<input id="e" name="email" autocomplete="email"></form>'), { url: "https://x/paso-1" });
+  const paso3 = cuadernoDeJuicio(doc('<form><label for="e3">Correo electrónico</label>' +
+    '<input id="e3" name="email" autocomplete="email">' +
+    '<label for="t">Teléfono</label><input id="t" name="tel"></form>'), { url: "https://x/paso-3" });
+
+  // El paso de un solo campo guarda su grupo aunque el criterio no aplique en él.
+  const f1 = fichaDe(paso1, "3.3.7");
+  assert.equal(f1.aplica, false, "en esa página sola no hay repetición");
+  assert.ok(f1.datos && f1.datos.grupos, "pero los datos viajan igual");
+  assert.deepEqual(Object.keys(f1.datos.grupos), ["autocomplete:email"]);
+
+  // Y la muestra ve la repetición entre páginas.
+  const m = cuadernoDeMuestra([paso1, paso3], { sitio: "https://x" }).criterios.find((c) => c.criterio === "3.3.7");
+  assert.equal(m.aplica, true, "3.3.7 tiene que reabrirse: " + (m.loQueYaSabemos || []).join(" | "));
+  assert.equal(m.veredicto, null, "y queda pendiente de juicio, no cerrado");
+  assert.match(m.loQueYaSabemos.join(" "), /autocomplete:email/);
+  assert.match(m.loQueYaSabemos.join(" "), /ENTRE páginas/);
 });

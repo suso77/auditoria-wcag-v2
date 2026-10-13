@@ -304,6 +304,22 @@ export async function captureWithGuidepup(html, opts) {
   try {
     await voiceOver.start();
     await execAsync('open -a "' + app + '" "file://' + file + '"');
+    /* Y ACTIVAR el navegador explícitamente.
+     *
+     * `open -a` abre la URL, pero con el navegador ya corriendo no siempre trae
+     * su ventana al frente, y arrancar VoiceOver justo antes mueve el foco por
+     * su cuenta. Si el navegador no está delante, `lastSpokenPhrase()` —que
+     * escucha a TODO el sistema— devuelve el Finder, el Terminal o la ventana de
+     * otra app: eso es exactamente lo que se ve en la transcripción real de
+     * `voiceover-verificacion-real`, un pegote con Chrome, el Terminal y los
+     * Ajustes del Sistema dentro de una sola «frase».
+     *
+     * NO VERIFICADO AQUÍ: esta línea solo corre en macOS con VoiceOver, y el
+     * contenedor donde se escribió no tiene ninguno de los dos. Lo que sí está
+     * comprobado, contra transcripciones reales, es que si la captura falla el
+     * puente ahora lo DICE (`sesionUtil`) en vez de dejar que parezca una
+     * divergencia del léxico. */
+    try { await execAsync('osascript -e \'tell application "' + app + '" to activate\''); } catch (e) { /* si no se puede, se sigue: la sesión se declarará nula si no capturó nada */ }
     await new Promise(function (r) { setTimeout(r, opts.loadMs == null ? 3000 : opts.loadMs); });
     const phrases = await verifyWithScreenReader({ voiceOver: voiceOver, steps: opts.steps == null ? 15 : opts.steps });
     return phrases;
@@ -478,6 +494,43 @@ export async function captureWithNvda(html, opts) {
  *   `capture` devuelve [{spoken}] (inyectable para tests). `lector` dice de quién
  *   son las frases, para recortar su ruido y no el del otro sistema.
  */
+/**
+ * ¿La sesión llegó a la página, o se capturó el escritorio?
+ *
+ * Esto faltaba, y se notó el día que la prueba con VoiceOver real se ejecutó por
+ * primera vez: tardó 103 segundos y falló diciendo «el icono sin nombre debería
+ * confirmarse». Ese mensaje vale igual si el lector habló y dijo otra cosa —un
+ * defecto del léxico— que si no llegó a leer la página —el entorno—, y son
+ * conclusiones opuestas. El puente ya marcaba `sin-captura` nodo a nodo, pero
+ * nadie resumía la SESIÓN, así que el informe no distinguía «no hay evidencia»
+ * de «la evidencia contradice la predicción».
+ *
+ * Es puro y se comprueba sin lector, con las transcripciones reales del fixture.
+ *
+ * @param {Array<{spoken:string}>|Array<string>} phrases
+ * @param {"voiceover"|"nvda"} [lector]
+ */
+export function sesionUtil(phrases, lector) {
+  const lista = (phrases || []).map(function (p) {
+    return (p && typeof p === "object" && p.spoken != null) ? p.spoken : p;
+  });
+  const total = lista.length;
+  const vacias = lista.filter(function (s) { return !String(s == null ? "" : s).trim(); }).length;
+  const ruido = lista.filter(function (s) {
+    const t = String(s == null ? "" : s).trim();
+    return t && esRuidoDeEscritorio(t, lector);
+  }).length;
+  const dePagina = total - vacias - ruido;
+  let motivo;
+  if (!total) motivo = "El lector no devolvió ni una frase: no llegó a arrancar, o no se le preguntó.";
+  else if (!dePagina) {
+    motivo = "Las " + total + " frase(s) capturadas son del escritorio o están vacías (" + ruido + " del escritorio, " +
+      vacias + " vacías): el navegador perdió el primer plano o el lector nunca leyó la página. " +
+      "Esto NO dice nada sobre el componente.";
+  } else motivo = dePagina + " de " + total + " frase(s) son de la página.";
+  return { ok: dePagina > 0, total: total, dePagina: dePagina, ruido: ruido, vacias: vacias, motivo: motivo };
+}
+
 export async function bridge(html, opts) {
   if (!opts || typeof opts.capture !== "function") {
     throw new Error("bridge necesita opts.capture(html) → [{ spoken }]");
@@ -505,5 +558,13 @@ export async function bridge(html, opts) {
   const tally = { confirmado: 0, parcial: 0, divergente: 0, "barrera-confirmada": 0, "no-encontrado": 0, "sin-captura": 0 };
   results.forEach(function (r) { if (tally[r.verdict] != null) tally[r.verdict]++; });
 
-  return { model: model, lector: lector || null, predicted: predicted, spokenPhrases: phrases, results: results, summary: tally };
+  /* El resumen de la SESIÓN va al mismo nivel que el de los nodos: si no hubo
+     captura de la página, lo de abajo no es un veredicto sobre el componente,
+     es la ausencia de uno, y eso tiene que leerse sin interpretar la tabla. */
+  const sesion = sesionUtil(phrases, lector);
+
+  return {
+    model: model, lector: lector || null, predicted: predicted, spokenPhrases: phrases,
+    results: results, summary: tally, sesion: sesion
+  };
 }

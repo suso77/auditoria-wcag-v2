@@ -3297,6 +3297,32 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   function sinTildesC(t) {
     return String(t == null ? "" : t).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
   }
+  /** Señas de un campo donde se escribe una consulta. */
+  const SENAS_BUSQUEDA = /(^|[^a-z0-9])(q|s|buscar|busqueda|buscador|search|query|keyword|keywords|termino|term|texto|palabra)([^a-z0-9]|$)/;
+  /**
+   * ¿Este formulario es un BUSCADOR?
+   *
+   * Se usa para excluir de 3.3.4 lo único que se puede reconocer con certeza como
+   * inofensivo: una búsqueda. La definición es deliberadamente estrecha —`role=
+   * search`, o un único campo de datos que se llama como una consulta—, porque
+   * aquí un falso «es un buscador» cierra el criterio de los compromisos legales
+   * y económicos sobre un formulario que no lo es.
+   */
+  function esBuscador(f, doc) {
+    if ((f.getAttribute("role") || "").toLowerCase() === "search") return true;
+    const campos = Array.prototype.slice.call(f.querySelectorAll("input,select,textarea")).filter(function (el) {
+      const t = (el.getAttribute("type") || "").toLowerCase();
+      return t !== "hidden" && t !== "submit" && t !== "button" && t !== "reset" && t !== "image";
+    });
+    if (campos.length !== 1) return false;               // un buscador pide UNA cosa
+    const el = campos[0];
+    if ((el.getAttribute("type") || "").toLowerCase() === "search") return true;
+    if (tag(el) !== "input") return false;
+    const senas = sinTildesC((el.getAttribute("name") || "") + " " + (el.getAttribute("id") || "") + " " +
+      (el.getAttribute("placeholder") || "") + " " + (el.getAttribute("aria-label") || "") + " " +
+      (etiquetaDe(el, doc) || ""));
+    return SENAS_BUSQUEDA.test(senas);
+  }
 
   /* ── Las once fichas ──────────────────────────────────────────────────────── */
 
@@ -3443,10 +3469,22 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       // Este se aplica siempre que haya contenido, y no hay atajo honesto: solo
       // comparando el orden del DOM con el orden visual se sabe. Lo que el agente
       // aporta es el orden del DOM ya extraído.
-      const bloques = visibles(doc, "h1,h2,h3,h4,h5,h6,main,nav,aside,section,article,footer,header,form,table")
-        .slice(0, 25);
-      if (!bloques.length) {
-        return noAplica("1.3.2", "La página no tiene bloques de contenido (encabezados, regiones, formularios ni tablas) cuyo orden pueda importar.", null, doc);
+      /* La lista de bloques se quedaba en encabezados, regiones, formularios y
+       * tablas, y con eso una página de `<div>` y `<p>` —que son legión— salía
+       * «no aplica · no tiene bloques de contenido cuyo orden pueda importar».
+       * Medido con tres párrafos en orden de lectura: no-aplica. Y 1.3.2 va
+       * exactamente de eso: tres párrafos reordenados con `order` o `flex-
+       * direction: row-reverse` se leen en un orden y se ven en otro. El criterio
+       * aplica a cualquier contenido cuya secuencia signifique algo, no solo al
+       * que viene en una etiqueta de sección. */
+      const bloques = visibles(doc, "h1,h2,h3,h4,h5,h6,main,nav,aside,section,article,footer,header," +
+        "form,table,p,ul,ol,dl,blockquote,figure,pre,li").slice(0, 25);
+      if (bloques.length < 2) {
+        return noAplica("1.3.2",
+          bloques.length
+            ? "La página tiene un solo bloque de contenido: no hay secuencia que se pueda alterar."
+            : "La página no tiene ningún bloque de contenido visible cuyo orden pueda importar.",
+          null, doc);
       }
       return ficha("1.3.2", {
         pregunta: "Leyendo la página en el orden del código (el de abajo), ¿se entiende lo mismo que viéndola?",
@@ -3713,17 +3751,39 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       if (!forms.length && !botones.length) {
         return noAplica("3.3.4", "La página no tiene formularios ni acciones con consecuencias legales, económicas o sobre datos del usuario.", null, doc);
       }
-      if (!conPost.length && !botones.length) {
+      /* ESTE ERA EL PEOR «no aplica» DEL CUADERNO.
+       *
+       * La exclusión se apoyaba en `method="post"`: lo que no fuera POST ni
+       * llevara una palabra comprometedora en un botón se declaraba «de consulta
+       * o búsqueda» y el criterio se cerraba. Pero un formulario sin `method`
+       * envía por GET por omisión, y un formulario de una aplicación moderna no
+       * declara método ninguno: lo envía JavaScript. Medido con
+       * `<form id="checkout"><input name="tarjeta"><button>Continuar</button></form>`:
+       * «no aplica», es decir, el criterio sobre compromisos legales y económicos
+       * cerrado sobre una pantalla de pago. Y el botón decía «Continuar», que no
+       * está ni puede estar en la lista de palabras comprometedoras.
+       *
+       * Se invierte la regla: lo que se excluye es lo que SÍ se puede reconocer
+       * —un buscador, que es un campo de texto donde se escribe una consulta—, y
+       * todo lo demás queda pendiente de juicio. Excluir por lo reconocible y no
+       * por lo no reconocible es la diferencia entre acotar y adivinar. */
+      const noBuscadores = forms.filter(function (f) { return !esBuscador(f, doc); });
+      if (!noBuscadores.length && !botones.length) {
         return noAplica("3.3.4",
-          "Los " + forms.length + " formulario(s) de la página no envían por POST ni llevan ninguna acción comprometedora (comprar, contratar, eliminar, firmar, tramitar…): " +
-          "parecen de consulta o búsqueda, que quedan fuera del criterio.");
+          "Los " + forms.length + " formulario(s) de la página son buscadores (un solo campo de consulta): " +
+          "una búsqueda no compromete nada, así que queda fuera del criterio.");
       }
       return ficha("3.3.4", {
         pregunta: "¿Estas acciones son legales, económicas o modifican/borran datos del usuario? Si lo son, ¿se pueden revertir, se comprueban o se confirman?",
-        queMirar: conPost.map(function (f) { return ref(f, "<form method=post action=" + (f.getAttribute("action") || "(misma página)").slice(0, 50) + ">"); })
-          .concat(botones.slice(0, 20).map(function (el) { return ref(el, "«" + (nombreDe(el) || el.getAttribute("value") || "").slice(0, 50) + "»"); })),
+        queMirar: noBuscadores.slice(0, 20).map(function (f) {
+          const met = (f.getAttribute("method") || "").toLowerCase();
+          return ref(f, "<form" + (met ? " method=" + met : " (sin method: GET, o lo envía JavaScript)") +
+            " action=" + (f.getAttribute("action") || "(misma página)").slice(0, 50) + ">");
+        }).concat(botones.slice(0, 20).map(function (el) { return ref(el, "«" + (nombreDe(el) || el.getAttribute("value") || "").slice(0, 50) + "»"); })),
         loQueYaSabemos: [
-          conPost.length + " formulario(s) que envían por POST y " + botones.length + " control(es) cuyo texto sugiere una acción con consecuencias.",
+          noBuscadores.length + " formulario(s) que no son un buscador (" + conPost.length + " por POST) y " +
+            botones.length + " control(es) cuyo texto sugiere una acción con consecuencias.",
+          "El método no decide nada: un formulario sin `method` envía por GET, y uno de una aplicación moderna lo envía JavaScript. Por eso se listan todos los que no son una búsqueda.",
           "Que la acción sea realmente legal o económica no se ve en el marcado: se ve usándola o sabiendo de qué va el sitio."
         ],
         comoDecidir: [
@@ -3739,12 +3799,19 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         const t = (el.getAttribute("type") || "").toLowerCase();
         return t !== "hidden" && t !== "submit" && t !== "button" && t !== "reset";
       });
-      if (campos.length < 2) {
-        return noAplica("3.3.7", "La página no tiene dos campos que pudieran pedir el mismo dato.", null, doc);
-      }
-      // Los grupos se calculan y se GUARDAN siempre, aunque en esta página no se
-      // repita ninguno: el cruce entre páginas de `cuadernoDeMuestra` los necesita
-      // para ver el dato que se pide en el paso 1 y otra vez en el paso 3.
+      /* Los grupos se calculan y se GUARDAN siempre —lo decía el comentario de
+       * abajo y no se cumplía—, porque el cruce entre páginas de
+       * `cuadernoDeMuestra` los necesita para ver el dato que se pide en el paso 1
+       * y otra vez en el paso 3.
+       *
+       * El atajo `campos.length < 2` salía ANTES de calcularlos y sin `datos`, así
+       * que un paso con UN solo campo no aportaba nada al cruce. Medido: paso 1
+       * con un único «Correo electrónico» y paso 3 con ese mismo correo más un
+       * teléfono daban, en el cuaderno de la muestra, **3.3.7 «no aplica · no
+       * viene al caso en ninguna de las 2 páginas»** — el criterio cerrado
+       * justo sobre el caso para el que existe, un trámite que pide dos veces el
+       * mismo dato. Ahora se calculan primero y viajan también en el «no aplica»
+       * de página, que solo habla de ESTA página. */
       const grupos = {};
       campos.forEach(function (el) {
         const ac = (el.getAttribute("autocomplete") || "").toLowerCase().trim();
@@ -3759,6 +3826,13 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         });
       });
       const datos = { grupos: grupos, campos: campos.length };
+      if (campos.length < 2) {
+        return noAplica("3.3.7",
+          "La página no tiene dos campos que pudieran pedir el mismo dato dentro de ella. " +
+          "Lo que pida —" + (Object.keys(grupos).join(", ") || "nada") + "— se cruza con el resto de la muestra, " +
+          "porque 3.3.7 habla del proceso entero y un paso de un solo campo también es un paso.",
+          datos);
+      }
       const repetidos = Object.keys(grupos).filter(function (k) { return grupos[k].length > 1; });
       if (!repetidos.length) {
         return noAplica("3.3.7",
