@@ -426,6 +426,127 @@ export function analyzeContextChange(eventos, noSondados, censo) {
 }
 
 /**
+ * 3.3.3 Sugerencias ante errores — sobre el MENSAJE que se vio de verdad.
+ *
+ * El cuaderno de juicio dejaba este criterio con una frase honesta: «este
+ * criterio va del CONTENIDO del mensaje, y eso hay que leerlo». Pero el mensaje
+ * ya lo tenemos: la capa dinámica envía el formulario en modo seguro y se trae
+ * el texto que apareció —de `aria-describedby`, de `aria-errormessage` o del
+ * entorno del campo—. Lo que faltaba era leerlo.
+ *
+ * LA DISTINCIÓN QUE HACE QUE ESTO NO SEA RUIDO: 3.3.3 pide una sugerencia
+ * «cuando se conoce». Un obligatorio vacío se corrige rellenándolo y el propio
+ * «este campo es obligatorio» ya dice cómo; ahí no hay nada que reprochar. Un
+ * formato incumplido es otra cosa: el formato esperado lo conoce la página,
+ * porque está escrito en sus propios atributos (`type`, `pattern`, `minlength`,
+ * `min`/`max`), así que un mensaje que solo diga «campo inválido» incumple. El
+ * navegador dice cuál de las dos cosas ha pasado (`ValidityState`), y por eso
+ * esto se puede decidir sin adivinar.
+ *
+ * El veredicto es `revisar`, nunca `falla`: que una sugerencia sea SUFICIENTE lo
+ * juzga una persona, y puede estar fuera del mensaje —en una pista junto al
+ * campo, en una ayuda de la página—. Lo que no se puede es firmar el criterio
+ * sin haber leído el mensaje, ni callarlo cuando el mensaje leído no sugiere
+ * nada.
+ */
+const FORMATO_FALLADO = { typeMismatch: 1, patternMismatch: 1, tooShort: 1, tooLong: 1, rangeUnderflow: 1, rangeOverflow: 1, stepMismatch: 1, badInput: 1 };
+const COMO_SE_DICE_LA_CAUSA = {
+  valueMissing: "está vacío y es obligatorio", typeMismatch: "no tiene la forma que pide su tipo",
+  patternMismatch: "no encaja con el patrón declarado", tooShort: "es más corto que el mínimo",
+  tooLong: "es más largo que el máximo", rangeUnderflow: "está por debajo del mínimo",
+  rangeOverflow: "está por encima del máximo", stepMismatch: "no cae en uno de los pasos permitidos",
+  badInput: "no se puede interpretar"
+};
+/* Lo que cuenta como SUGERENCIA en un mensaje, en español y en inglés.
+ *
+ * No es «sentimiento»: son las formas con las que de verdad se dice un formato
+ * esperado. Un ejemplo («ej. nombre@dominio.es»), una regla («debe tener al
+ * menos 8 caracteres»), un formato («dd/mm/aaaa»), un rango («entre 1 y 99») o
+ * una instrucción («incluye una mayúscula»). Si no hay ninguna de estas y el
+ * campo falló por formato, el mensaje dice QUÉ pasa y no CÓMO arreglarlo. */
+const SUGIERE = [
+  /\bpor ejemplo\b|\bej(\.|emplo)\b|\be\.g\.|\bfor example\b/i,
+  /\bformato\b|\bformat\b|\bdd\s*\/\s*mm|\baaaa\b|\byyyy\b|\bmm\s*\/\s*aa/i,
+  /\bdebe\b|\bdeben\b|\btiene que\b|\btienen que\b|\bmust\b|\bshould\b|\bneeds? to\b/i,
+  /\bal menos\b|\bcomo m[ií]nimo\b|\bm[ií]nimo\b|\bm[áa]ximo\b|\bat least\b|\bminimum\b|\bmaximum\b/i,
+  /\bentre \d+ y \d+\b|\bbetween \d+ and \d+\b/i,
+  /\bincluy[ae]\b|\bincluir\b|\binclude\b|\bcontain\b|\bcontenga\b/i,
+  /\bcaracteres\b|\bcharacters\b|\bd[ií]gitos\b|\bdigits\b|\bletras\b|\bletters\b|\bmay[úu]scula\b|\buppercase\b|\bmin[úu]scula\b|\blowercase\b|\bs[íi]mbolo\b|\bsymbol\b/i,
+  /@[a-z0-9.-]+\.[a-z]{2,}/i,
+  /\busa\b|\butiliza\b|\bescribe\b|\bintroduce\b.*\b(con|en el formato|sin)\b|\benter\b.*\b(in|with|without)\b/i
+];
+function mensajeSugiere(t) {
+  const s = String(t || "");
+  for (let i = 0; i < SUGIERE.length; i++) if (SUGIERE[i].test(s)) return true;
+  return false;
+}
+
+export function analyzeSuggestions(trace) {
+  const out = [];
+  if (!trace || !trace.submitted) return out;
+  const campos = (trace.fields || []).filter(function (f) {
+    return f && (f.invalid || f.nativoInvalido || (f.required && f.vacio));
+  });
+  if (!campos.length) return out;
+
+  const textoDe = function (f) {
+    return [f.describedbyText, f.errormessageText, f.errorCercaText]
+      .map(function (t) { return String(t || "").trim(); }).filter(Boolean).join(" · ");
+  };
+  const comoSeLlama = function (f) { return f.locator + (f.etiqueta ? " «" + f.etiqueta + "»" : (f.name ? " «" + f.name + "»" : "")); };
+
+  const deFormato = campos.filter(function (f) { return FORMATO_FALLADO[f.causa]; });
+  /* Los que TIENEN restricción de formato y aun así no acabaron en error: en
+   * esos no se pudo provocar el fallo, y hay que decirlo. Pasa de verdad con
+   * `minlength`/`maxlength`: el navegador solo marca `tooShort`/`tooLong` cuando
+   * el valor lo ha escrito una persona, no cuando se pone por programa, así que
+   * un campo con `minlength="8"` no se puede provocar desde aquí. Callarlo haría
+   * leer «se probó el formulario» como «se probó todo». */
+  const sinProvocar = (trace.fields || []).filter(function (f) {
+    if (!f || !f.restricciones || !f.restricciones.length) return false;
+    return !FORMATO_FALLADO[f.causa];
+  });
+  const cola = sinProvocar.length
+    ? " En " + sinProvocar.length + " campo(s) con restricción no se pudo provocar el error de formato desde la prueba (" +
+      sinProvocar.slice(0, 4).map(function (f) { return f.locator + " [" + f.restricciones.join(", ") + "]"; }).join(", ") +
+      "): de esos no se sabe qué mensaje dan. El caso típico es `minlength`, que el navegador solo marca cuando el valor lo escribe una persona."
+    : "";
+  const sinSugerencia = deFormato.filter(function (f) { return !mensajeSugiere(textoDe(f) + " " + (f.mensajeNativo || "")); });
+  const conSugerencia = deFormato.filter(function (f) { return mensajeSugiere(textoDe(f) + " " + (f.mensajeNativo || "")); });
+  const soloVacios = campos.length - deFormato.length;
+
+  if (sinSugerencia.length) {
+    out.push(Object.assign(F("3.3.3", "revisar", null, [
+      sinSugerencia.length + " campo(s) fallaron por FORMATO y el mensaje que apareció no dice cómo corregirlo: " +
+      sinSugerencia.slice(0, 4).map(function (f) {
+        const t = textoDe(f) || (f.mensajeNativo ? "(sin mensaje propio; el navegador diría «" + f.mensajeNativo.slice(0, 60) + "»)" : "(sin mensaje de ninguna clase)");
+        return comoSeLlama(f) + " — " + (COMO_SE_DICE_LA_CAUSA[f.causa] || f.causa) +
+          (f.restricciones && f.restricciones.length ? " [" + f.restricciones.join(", ") + "]" : "") + ": «" + String(t).slice(0, 90) + "»";
+      }).join(" · ") +
+      ". El formato esperado lo conoce la página —está en sus propios atributos—, así que 3.3.3 pide decirlo: un ejemplo, " +
+      "la regla («al menos 8 caracteres») o el formato («dd/mm/aaaa»). No sale como falla porque la sugerencia puede estar " +
+      "fuera del mensaje, en una pista junto al campo o en la ayuda de la página: eso lo juzga una persona con esto delante." + cola
+    ], sinSugerencia.slice(0, 8).map(function (f) { return { locator: f.locator, name: f.etiqueta || f.name || "" }; })), { origen: "dinámico" }));
+  }
+  if (conSugerencia.length && !sinSugerencia.length) {
+    out.push(Object.assign(F("3.3.3", "cumple-parcial", null, [
+      "Los " + conSugerencia.length + " campo(s) que fallaron por formato traen un mensaje que apunta al formato esperado: " +
+      conSugerencia.slice(0, 3).map(function (f) { return comoSeLlama(f) + ": «" + String(textoDe(f) || f.mensajeNativo).slice(0, 80) + "»"; }).join(" · ") +
+      ". `cumple-parcial` y no `cumple`: que la sugerencia sea SUFICIENTE y correcta lo juzga una persona" +
+      (soloVacios ? ". Y los otros " + soloVacios + " campo(s) fallaron por estar vacíos, donde la corrección es rellenarlos y no hay más que sugerir" : "") + "." + cola
+    ]), { origen: "dinámico" }));
+  }
+  if (!deFormato.length && campos.length) {
+    out.push(Object.assign(F("3.3.3", "cumple-parcial", null, [
+      "El envío solo produjo errores de campo VACÍO (" + campos.length + "), que se corrigen rellenándolos: ahí 3.3.3 no exige más sugerencia que decir que falta. " +
+      "Lo que no se ha podido probar es qué dice la página cuando un campo se rellena MAL —con un formato que no encaja—, porque el modo seguro no inventa datos. " +
+      "Eso es lo que hay que comprobar a mano, y es donde este criterio suele fallar." + cola
+    ]), { origen: "dinámico" }));
+  }
+  return out;
+}
+
+/**
  * 2.2.2 Poner en pausa, detener u ocultar — a partir de lo OBSERVADO.
  *
  * La medición sobre el render ve lo que el CSS declara: `animationName`,

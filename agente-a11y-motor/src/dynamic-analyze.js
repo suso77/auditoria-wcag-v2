@@ -31,7 +31,7 @@
  * Además, cada fase va en su propio try/catch: un fallo en una no tira la
  * ejecución entera ni pierde lo ya medido.
  */
-import { analyzeTabTrace, analyzeDisclosure, analyzeTabs, analyzeErrorState, analyzeContextChange, analyzeAutoMovement, analyzeCharKeyShortcuts, analyzeStatusMessages } from "./dynamic.js";
+import { analyzeTabTrace, analyzeDisclosure, analyzeTabs, analyzeErrorState, analyzeSuggestions, analyzeContextChange, analyzeAutoMovement, analyzeCharKeyShortcuts, analyzeStatusMessages } from "./dynamic.js";
 import { launchOptions } from "./playwright-launch.js";
 
 // Palabras que marcan un formulario como destructivo: no se tocan ni en modo real.
@@ -262,6 +262,106 @@ function __controlesDePausa(){
   });
   return out;
 }
+`;
+
+const CAPTURA_CAMPOS = `
+          var f=__el(__arg.uid); if(!f) return null;
+          var previo=__arg.antes||{ live:'', campos:{} };
+          function vis(el){ if(!el||!el.getClientRects||!el.getClientRects().length) return false;
+            var cs=getComputedStyle(el); return cs.visibility!=='hidden'&&cs.display!=='none'; }
+          function txt(el){ return vis(el) ? (el.innerText||el.textContent||'').replace(/[\\s\\u00a0]+/g,' ').trim() : ''; }
+          function entorno(el){
+            var partes=[], n=el.parentElement, saltos=0;
+            while(n && n!==f && saltos<3){ partes.push(txt(n)); n=n.parentElement; saltos++; }
+            return partes.join(' § ');
+          }
+          /* Lo NUEVO que hay alrededor del campo después de enviar. Se compara
+             palabra a palabra contra la foto de antes y se queda con lo añadido:
+             así el texto que ya estaba —la etiqueta, una pista de ayuda— no se
+             confunde con una descripción de error que nadie ha escrito. */
+          function nuevo(despues, antes){
+            var ya={}; String(antes||'').split(' ').forEach(function(w){ ya[w]=(ya[w]||0)+1; });
+            var res=[];
+            String(despues||'').split(' ').forEach(function(w){
+              if(ya[w]) { ya[w]--; return; }
+              res.push(w);
+            });
+            return res.join(' ').replace(/[\\s§]+/g,' ').trim();
+          }
+          var fields=Array.prototype.slice.call(f.querySelectorAll('input:not([type=hidden]),textarea,select')).map(function(el){
+            var k=__loc(el);
+            var d=el.getAttribute('aria-describedby'); var dt='';
+            if(d){ d.split(/\\s+/).forEach(function(id){ var r=document.getElementById(id); if(r) dt+=' '+(r.textContent||''); }); }
+            var emt='';
+            var em=el.getAttribute('aria-errormessage'); if(em){ var r2=document.getElementById(em); if(r2) emt+=' '+(r2.textContent||''); }
+            /* Si el campo está DE VERDAD en error, lo dice el navegador.
+             *
+             * (OJO: sin comillas invertidas en este comentario — vive dentro de
+             * un template literal y cerrarían la cadena.)
+             *
+             * Aquí solo se recogía aria-invalid, y el analizador usaba
+             * «obligatorio» como sustituto de «habrá fallado». Eso falla en la
+             * dirección mala: un campo obligatorio CORRECTAMENTE RELLENADO
+             * contaba como campo en error, y 3.3.1 emitía una falla grave sobre
+             * un formulario conforme. checkValidity() no tiene efectos
+             * secundarios —a diferencia de reportValidity— y da exactamente la
+             * decisión que ha tomado el navegador al enviar.
+             */
+            var nativoInvalido = false;
+            try { nativoInvalido = (el.willValidate === true) && (el.checkValidity() === false); } catch(e) { nativoInvalido = false; }
+            var valor = '';
+            try { valor = String(el.value == null ? '' : el.value); } catch(e) { valor = ''; }
+            /* POR QUÉ ha fallado, dicho por el navegador, y qué diría él.
+             *
+             * 3.3.3 pide una SUGERENCIA de corrección cuando se conoce. Para
+             * saber si se conoce hay que saber qué restricción se ha incumplido:
+             * un obligatorio vacío se corrige rellenándolo y no hace falta más,
+             * pero un formato incumplido (tipo, patrón, longitud, rango) tiene un
+             * formato esperado que la página sí conoce, porque está en sus
+             * propios atributos. ValidityState lo dice sin efectos secundarios, y
+             * validationMessage es el texto que pondría el navegador si nadie
+             * pone uno propio. */
+            var causa = null, mensajeNativo = '';
+            try {
+              var v = el.validity;
+              if (v) {
+                ['valueMissing','typeMismatch','patternMismatch','tooShort','tooLong',
+                 'rangeUnderflow','rangeOverflow','stepMismatch','badInput'].forEach(function(k){
+                  if (!causa && v[k]) causa = k;
+                });
+              }
+              mensajeNativo = String(el.validationMessage || '');
+            } catch(e) { causa = null; }
+            var restricciones = [];
+            ['pattern','min','max','minlength','maxlength','step'].forEach(function(a){ if (el.hasAttribute(a)) restricciones.push(a + '=' + el.getAttribute(a)); });
+            var tipo = String(el.getAttribute('type') || el.tagName.toLowerCase());
+            return { locator:k, name:(el.getAttribute('aria-label')||el.getAttribute('name')||'').slice(0,40),
+                     required: el.hasAttribute('required')||el.getAttribute('aria-required')==='true',
+                     invalid: el.getAttribute('aria-invalid')==='true',
+                     nativoInvalido: nativoInvalido,
+                     vacio: !valor.replace(/[\\s]+/g,''),
+                     describedbyText: dt.trim(),
+                     errormessageText: emt.trim(),
+                     // G83: texto de error visible junto al campo, sin asociar.
+                     errorCercaText: nuevo(entorno(el), previo.campos[k]),
+                     // Para 3.3.3: por qué falló, qué restricciones tiene y qué
+                     // diría el navegador si nadie pone un mensaje propio.
+                     causa: causa, mensajeNativo: mensajeNativo,
+                     restricciones: restricciones, tipo: tipo,
+                     etiqueta: (function(){
+                       var id = el.getAttribute('id');
+                       var l = id ? document.querySelector('label[for="' + id + '"]') : null;
+                       if (!l && el.closest) l = el.closest('label');
+                       return l ? txt(l).slice(0, 50) : '';
+                     })() };
+          });
+          var regiones=Array.prototype.slice.call(document.querySelectorAll('[role=alert],[role=status],[aria-live]'));
+          var liveAhora=regiones.map(function(r){ return __loc(r)+'='+txt(r); }).join(' | ');
+          return { submitted:true, fields:fields,
+                   hasAlert: regiones.length>0,
+                   // Que el ANUNCIO se haya producido, no que exista el contenedor.
+                   liveCambio: liveAhora !== (previo.live||''),
+                   liveAntes: (previo.live||'').slice(0,300), liveDespues: liveAhora.slice(0,300) };
 `;
 
 const SHIM_VENTANAS = "if(!window.__a11yOpenShim){window.__a11yOpenShim=1;window.__a11yVentanas=[];" +
@@ -936,71 +1036,72 @@ export async function dynamicAnalyze(target, opts) {
         if (!trace) { formInfo.motivo = "el formulario desapareció del DOM"; desarmar(); return; }
         await page.waitForTimeout(400);
 
-        const campos = await evalIn(page, `
-          var f=__el(__arg.uid); if(!f) return null;
-          var previo=__arg.antes||{ live:'', campos:{} };
-          function vis(el){ if(!el||!el.getClientRects||!el.getClientRects().length) return false;
-            var cs=getComputedStyle(el); return cs.visibility!=='hidden'&&cs.display!=='none'; }
-          function txt(el){ return vis(el) ? (el.innerText||el.textContent||'').replace(/[\\s\\u00a0]+/g,' ').trim() : ''; }
-          function entorno(el){
-            var partes=[], n=el.parentElement, saltos=0;
-            while(n && n!==f && saltos<3){ partes.push(txt(n)); n=n.parentElement; saltos++; }
-            return partes.join(' § ');
-          }
-          /* Lo NUEVO que hay alrededor del campo después de enviar. Se compara
-             palabra a palabra contra la foto de antes y se queda con lo añadido:
-             así el texto que ya estaba —la etiqueta, una pista de ayuda— no se
-             confunde con una descripción de error que nadie ha escrito. */
-          function nuevo(despues, antes){
-            var ya={}; String(antes||'').split(' ').forEach(function(w){ ya[w]=(ya[w]||0)+1; });
-            var res=[];
-            String(despues||'').split(' ').forEach(function(w){
-              if(ya[w]) { ya[w]--; return; }
-              res.push(w);
+        const campos = await evalIn(page, CAPTURA_CAMPOS, { uid: cand.uid, antes: antesDeEnviar });
+
+        /* SEGUNDA PASADA: UN ERROR DE FORMATO, QUE EL VACIADO HACE IMPOSIBLE.
+         *
+         * El modo seguro vacía los campos antes de enviar —no manda los datos de
+         * nadie a ninguna parte—, y la consecuencia es que TODOS los errores que
+         * provoca son de campo vacío. Medido: sobre un formulario con un
+         * `type="email"` mal rellenado a propósito, el análisis solo veía
+         * `valueMissing`, así que de 3.3.3 nunca se podía decir nada — y 3.3.3 va
+         * justo de lo otro: cuando el formato no encaja, hay que decir cuál es el
+         * formato.
+         *
+         * Así que se envía una segunda vez con un valor INVÁLIDO en los campos que
+         * tienen restricción de formato. Nada de esto sale a la red: el
+         * cortafuegos sigue armado y el `submit` sigue interceptado; y los valores
+         * del usuario se restauran igual que en la primera pasada. El valor malo
+         * se elige probando candidatos y quedándose con el primero que el propio
+         * navegador declare inválido por algo que NO sea estar vacío.
+         */
+        let camposFormato = null;
+        if (formMode !== "submit") {
+          const puesto = await evalIn(page, `
+            var f = __el(__arg); if (!f) return null;
+            var CAND = ['@@@', 'x', 'no-vale', '1', '-1', '999999999', 'a'];
+            var previos = [], tocados = [];
+            var saltar = { hidden:1, submit:1, button:1, image:1, reset:1, file:1, checkbox:1, radio:1 };
+            Array.prototype.forEach.call(f.querySelectorAll('input,textarea'), function(el){
+              var t=(el.getAttribute('type')||'').toLowerCase();
+              if (saltar[t]) return;
+              if (el.disabled || el.readOnly) return;
+              if (!el.willValidate) return;
+              // Solo los que tienen restricción de FORMATO: un «required» a secas
+              // ya se probó vacío en la primera pasada.
+              var conFormato = el.hasAttribute('pattern') || el.hasAttribute('minlength') ||
+                el.hasAttribute('min') || el.hasAttribute('max') || el.hasAttribute('step') ||
+                /^(email|url|tel|number|date|time|month|week|datetime-local)$/.test(t);
+              if (!conFormato) return;
+              var original = el.value;
+              for (var i=0;i<CAND.length;i++) {
+                try { el.value = CAND[i]; } catch(e) { continue; }
+                var v = el.validity;
+                if (el.value !== '' && v && !v.valid && !v.valueMissing) {
+                  previos.push({ el: el, value: original });
+                  tocados.push(__loc(el) + '=' + CAND[i]);
+                  el.dispatchEvent(new Event('input', { bubbles: true }));
+                  el.dispatchEvent(new Event('change', { bubbles: true }));
+                  return;
+                }
+              }
+              el.value = original;   // ninguno sirvió: se deja como estaba
             });
-            return res.join(' ').replace(/[\\s§]+/g,' ').trim();
+            window.__a11yRestaurarFormato = function(){ previos.forEach(function(p){ try { p.el.value = p.value; } catch(e) {} }); };
+            if (!tocados.length) return { tocados: [] };
+            f.setAttribute('novalidate','');
+            try { if (f.requestSubmit) f.requestSubmit(); else f.dispatchEvent(new Event('submit', { bubbles:true, cancelable:true })); } catch(e) {}
+            f.removeAttribute('novalidate');
+            return { tocados: tocados };`, cand.uid);
+          if (puesto && puesto.tocados && puesto.tocados.length) {
+            await page.waitForTimeout(200);
+            camposFormato = await evalIn(page, CAPTURA_CAMPOS, { uid: cand.uid, antes: antesDeEnviar });
+            formInfo.formatoProbado = puesto.tocados.slice(0, 6);
+          } else {
+            formInfo.formatoProbado = [];
           }
-          var fields=Array.prototype.slice.call(f.querySelectorAll('input:not([type=hidden]),textarea,select')).map(function(el){
-            var k=__loc(el);
-            var d=el.getAttribute('aria-describedby'); var dt='';
-            if(d){ d.split(/\\s+/).forEach(function(id){ var r=document.getElementById(id); if(r) dt+=' '+(r.textContent||''); }); }
-            var emt='';
-            var em=el.getAttribute('aria-errormessage'); if(em){ var r2=document.getElementById(em); if(r2) emt+=' '+(r2.textContent||''); }
-            /* Si el campo está DE VERDAD en error, lo dice el navegador.
-             *
-             * (OJO: sin comillas invertidas en este comentario — vive dentro de
-             * un template literal y cerrarían la cadena.)
-             *
-             * Aquí solo se recogía aria-invalid, y el analizador usaba
-             * «obligatorio» como sustituto de «habrá fallado». Eso falla en la
-             * dirección mala: un campo obligatorio CORRECTAMENTE RELLENADO
-             * contaba como campo en error, y 3.3.1 emitía una falla grave sobre
-             * un formulario conforme. checkValidity() no tiene efectos
-             * secundarios —a diferencia de reportValidity— y da exactamente la
-             * decisión que ha tomado el navegador al enviar.
-             */
-            var nativoInvalido = false;
-            try { nativoInvalido = (el.willValidate === true) && (el.checkValidity() === false); } catch(e) { nativoInvalido = false; }
-            var valor = '';
-            try { valor = String(el.value == null ? '' : el.value); } catch(e) { valor = ''; }
-            return { locator:k, name:(el.getAttribute('aria-label')||el.getAttribute('name')||'').slice(0,40),
-                     required: el.hasAttribute('required')||el.getAttribute('aria-required')==='true',
-                     invalid: el.getAttribute('aria-invalid')==='true',
-                     nativoInvalido: nativoInvalido,
-                     vacio: !valor.replace(/[\\s]+/g,''),
-                     describedbyText: dt.trim(),
-                     errormessageText: emt.trim(),
-                     // G83: texto de error visible junto al campo, sin asociar.
-                     errorCercaText: nuevo(entorno(el), previo.campos[k]) };
-          });
-          var regiones=Array.prototype.slice.call(document.querySelectorAll('[role=alert],[role=status],[aria-live]'));
-          var liveAhora=regiones.map(function(r){ return __loc(r)+'='+txt(r); }).join(' | ');
-          return { submitted:true, fields:fields,
-                   hasAlert: regiones.length>0,
-                   // Que el ANUNCIO se haya producido, no que exista el contenedor.
-                   liveCambio: liveAhora !== (previo.live||''),
-                   liveAntes: (previo.live||'').slice(0,300), liveDespues: liveAhora.slice(0,300) };`,
-          { uid: cand.uid, antes: antesDeEnviar });
+          await evalIn(page, "try{ window.__a11yRestaurarFormato && window.__a11yRestaurarFormato(); }catch(e){} delete window.__a11yRestaurarFormato; return true;").catch(function () {});
+        }
 
         // Deshacer lo que la prueba tocó ANTES de seguir: los valores del
         // usuario y el escuchador de submit. Sin esto, la página se devolvía con
@@ -1013,7 +1114,13 @@ export async function dynamicAnalyze(target, opts) {
         if (campos) {
           formInfo.probado = true;
           formInfo.interceptado = !!trace.intercepted;
-          errFindings = analyzeErrorState(Object.assign(campos, { intercepted: trace.intercepted }));
+          const trazaErr = Object.assign(campos, { intercepted: trace.intercepted });
+          // 3.3.1 se juzga con la pasada de vaciado (el error más común) y 3.3.3
+          // con la de formato cuando se pudo provocar, que es de lo que habla.
+          errFindings = analyzeErrorState(trazaErr)
+            .concat(analyzeSuggestions(camposFormato
+              ? Object.assign(camposFormato, { intercepted: trace.intercepted, probadoFormato: true })
+              : trazaErr));
           if (formMode !== "submit" && !trace.intercepted) {
             avisos.push("El formulario no disparó ningún evento submit cancelable: puede que el sitio envíe por fetch/XHR. No ha salido nada a la red (el cortafuegos abortó todo lo que no fuera GET/HEAD), pero revisa el caso a mano.");
           }

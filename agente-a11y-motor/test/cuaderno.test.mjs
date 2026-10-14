@@ -769,3 +769,58 @@ test("aplicaCuaderno sigue barriendo el `humano` genérico del motor", () => {
   assert.ok(!out.some((f) => f.c.n === "1.3.2" && f.verdict === "humano" && f.scope !== "juicio"),
     "el relleno del motor es justo lo que el cuaderno viene a sustituir");
 });
+
+/* ── 1.3.3: el léxico, medido con frases de respuesta sabida ─────────────────
+ *
+ * El anterior se le escapaba la mitad: solo artículo determinado («el botón
+ * verde» sí, «un recuadro rojo» no), la forma solo en botón/icono, nada del
+ * TAMAÑO ni del SONIDO —que el criterio nombra expresamente—, nada en gallego
+ * y «el botón de abajo» tampoco. Y tenía un falso positivo claro: «más abajo»
+ * a secas en prosa normal, que no es una instrucción de operar nada.
+ */
+const frases133 = (t) => {
+  const c = cuad('<main><h1>T</h1><p>' + t + "</p></main>");
+  const f = fichaDe(c, "1.3.3");
+  return f.aplica === false ? [] : (f.queMirar || []).map((m) => m.detalle);
+};
+const pilla = (t, que) => {
+  const h = frases133(t);
+  assert.ok(h.length, "no pilló nada en: " + t);
+  if (que) assert.ok(h.some((x) => x.indexOf("[" + que + "]") === 0), que + " esperado en: " + JSON.stringify(h));
+};
+
+test("1.3.3: color, forma, tamaño, posición y sonido, con cualquier artículo", () => {
+  pilla("Pulse el botón verde para continuar", "color");
+  pilla("Rellena los campos del cuadro azul", "color");
+  pilla("Verás un recuadro rojo con el error", "color");
+  pilla("Haz clic en el icono redondo", "forma");
+  pilla("Selecciona la casilla cuadrada", "forma");
+  pilla("Pulsa el botón grande de la cabecera", "tamaño");
+  pilla("Usa el menú de la izquierda", "posición");
+  pilla("El botón de abajo guarda los cambios", "posición");
+  pilla("Pulsa el botón de la derecha", "posición");
+  pilla("Cuando oigas el pitido, pulsa Enter", "sonido");
+});
+
+test("1.3.3: también en gallego, que es la mitad de los sitios de aquí", () => {
+  pilla("Preme o botón verde para continuar", "color");
+  pilla("Usa a columna da dereita", "posición");
+});
+
+test("1.3.3: y la prosa normal NO es una instrucción sensorial", () => {
+  // «más abajo» a secas era un falso positivo: aparece en cualquier página.
+  [
+    "Más abajo encontrarás el teléfono de contacto.",
+    "A continuación se explica el proceso de solicitud.",
+    "El plazo se amplía hasta el 30 de junio.",
+    "La casilla de verificación es obligatoria.",
+    "Pulsa el botón Enviar para terminar.",
+    "El color corporativo es el verde desde 1998."
+  ].forEach((t) => assert.deepEqual(frases133(t), [], "falso positivo en: " + t));
+});
+
+test("1.3.3: sin ninguna frase sensorial, el criterio NO aplica y lo dice", () => {
+  const f = fichaDe(cuad("<main><h1>T</h1><p>Texto normal sin instrucciones.</p></main>"), "1.3.3");
+  assert.equal(f.aplica, false);
+  assert.match(f.loQueYaSabemos.join(" "), /solo se ha mirado el TEXTO/, "y dice qué no ha mirado");
+});

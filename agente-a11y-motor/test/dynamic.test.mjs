@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { analyzeContextChange, analyzeAutoMovement, analyzeCharKeyShortcuts, analyzeStatusMessages } from "../src/dynamic.js";
+import { analyzeContextChange, analyzeAutoMovement, analyzeCharKeyShortcuts, analyzeStatusMessages, analyzeSuggestions } from "../src/dynamic.js";
 import { esConforme } from "../src/verdicts.js";
 import { analyzeTabTrace, analyzeDisclosure, analyzeTabs, analyzeErrorState } from "../src/index.js";
 
@@ -484,4 +484,72 @@ test("3.2.x: sin nada que reprochar y con todo sondado, `pasa`; si falta algo, `
   // Un control que no se pudo sondar baja el veredicto: no se declara conforme
   // lo que no se ha mirado.
   assert.ok(unCrit(analyzeContextChange(limpio, 1, { total: 2, sondados: 2 }), "3.2.1", "cumple-parcial"));
+});
+
+/* ── 3.3.3 Sugerencias ante errores, sobre el mensaje que se vio ─────────────
+ *
+ * El cuaderno decía, con razón, que «este criterio va del CONTENIDO del
+ * mensaje, y eso hay que leerlo». El mensaje ya lo teníamos: la capa dinámica
+ * envía el formulario y se trae el texto que apareció. Lo que faltaba era
+ * leerlo — y provocar el error que de verdad lo pone a prueba, porque el modo
+ * seguro vacía los campos y así TODOS los errores salían de campo vacío.
+ */
+const campo = (extra) => Object.assign({
+  locator: "input#c", etiqueta: "Correo", invalid: true, nativoInvalido: true, vacio: false,
+  describedbyText: "", errormessageText: "", errorCercaText: "", mensajeNativo: "",
+  causa: "typeMismatch", restricciones: [], tipo: "email"
+}, extra || {});
+const sug = (fields) => analyzeSuggestions({ submitted: true, fields: fields });
+
+test("3.3.3: un error de formato cuyo mensaje solo dice «campo inválido» sale a revisar", () => {
+  const out = sug([campo({ describedbyText: "Campo inválido. Revise el dato." })]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].c.n, "3.3.3");
+  assert.equal(out[0].verdict, "revisar", out[0].evid[0]);
+  assert.match(out[0].evid[0], /no dice cómo corregirlo/);
+  assert.match(out[0].evid[0], /Campo inválido/, "la ficha trae el mensaje que apareció");
+  assert.equal(out[0].origen, "dinámico", "tiene que sobrevivir al cuaderno de juicio");
+});
+
+test("3.3.3: un mensaje que dice el formato esperado no es una barrera", () => {
+  const formas = [
+    "El correo debe tener el formato nombre@dominio.es",
+    "Por ejemplo: ana@ejemplo.gal",
+    "La contraseña tiene que tener al menos 8 caracteres",
+    "La fecha va en formato dd/mm/aaaa",
+    "Introduce un número entre 1 y 99",
+    "Incluye una mayúscula y un dígito",
+    "Must include at least 8 characters"
+  ];
+  formas.forEach((t) => {
+    const out = sug([campo({ describedbyText: t })]);
+    assert.equal(out.length, 1, t);
+    assert.equal(out[0].verdict, "cumple-parcial", t + " → " + out[0].evid[0]);
+    assert.match(out[0].evid[0], /que la sugerencia sea SUFICIENTE/, "y no se firma como cumple");
+  });
+});
+
+test("3.3.3: un campo VACÍO no exige más sugerencia que decir que falta", () => {
+  // Y se dice qué NO se ha podido probar, que es justo donde el criterio falla.
+  const out = sug([campo({ causa: "valueMissing", vacio: true, required: true, nativoInvalido: true, describedbyText: "Este campo es obligatorio." })]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].verdict, "cumple-parcial");
+  assert.match(out[0].evid[0], /solo produjo errores de campo VACÍO/);
+  assert.match(out[0].evid[0], /no se ha podido probar/);
+});
+
+test("3.3.3: lo que no se pudo provocar se dice, con el nombre del campo", () => {
+  const out = sug([
+    campo({ causa: "typeMismatch", describedbyText: "Campo inválido" }),
+    campo({ locator: "input#p", etiqueta: "Contraseña", causa: "valueMissing", required: true, vacio: true, restricciones: ["minlength=8"] })
+  ]);
+  assert.match(out[0].evid[0], /no se pudo provocar el error de formato/);
+  assert.match(out[0].evid[0], /minlength=8/);
+  assert.match(out[0].evid[0], /solo marca cuando el valor lo escribe una persona/);
+});
+
+test("3.3.3: sin envío o sin campos en error, no se dice nada", () => {
+  assert.deepEqual(analyzeSuggestions(null), []);
+  assert.deepEqual(analyzeSuggestions({ submitted: false, fields: [campo()] }), []);
+  assert.deepEqual(sug([campo({ invalid: false, nativoInvalido: false, required: false, vacio: false })]), []);
 });

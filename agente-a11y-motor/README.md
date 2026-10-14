@@ -64,8 +64,8 @@ const informe = analyze(understand(html));
 ## Tests
 
 ```bash
-npm test                    # suite pura (node --test), sin navegador — 699 tests
-npm run test:integracion    # integración con Chromium (Playwright) — 159 tests
+npm test                    # suite pura (node --test), sin navegador — 708 tests
+npm run test:integracion    # integración con Chromium (Playwright) — 160 tests
 npm run bench               # banco de precisión accname contra corpus WPT
 npm run smoke               # humo del artifact generado, en Chromium real
 node scripts/quien-declara-conforme.mjs   # quién puede declarar conforme qué, y con qué base
@@ -981,6 +981,24 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 **En el cruce con axe, dos afirmaciones que no se podían sostener.** `crossCheck` fabricaba `{findings: []}` cuando el motor no llegaba a construir el modelo —texto suelto, un comentario, una cadena vacía—, y ese resultado entraba en la reconciliación como una comprobación limpia: «soloMotor: 0» era indistinguible de «el motor comprobó y no encontró nada». Y el «acuerdo» se construía solo porque coincidía el número de criterio: el motor acusando a `img.logo` y axe a otro `img` de la página salían como «acuerdo: 1». Casar los elementos exige la página abierta —lo hace la orquestación, no la reconciliación pura—, así que ahora se publica cuántos elementos trae cada fuente, que la coincidencia a nivel de elemento NO está comprobada, y que el motor no miró cuando no miró.
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
+
+### v0.51.0 — 3.3.3 leyendo el mensaje de verdad, y el léxico de 1.3.3 medido
+
+Los dos criterios que quedaban del repaso, y los dos tenían más tela de la que parecía.
+
+**3.3.3 Sugerencias ante errores: el mensaje ya lo teníamos y nadie lo leía.** El cuaderno de juicio decía, con razón, que «este criterio va del contenido del mensaje, y eso hay que leerlo» — pero la capa dinámica ya envía el formulario en modo seguro y se trae el texto que apareció, de `aria-describedby`, de `aria-errormessage` o del entorno del campo. Lo que faltaba era leerlo.
+
+Y al ir a leerlo apareció el problema de fondo: **el modo seguro vacía los campos antes de enviar** —no manda los datos de nadie a ninguna parte—, así que *todos* los errores que provocaba eran de campo vacío. Y 3.3.3 va justo de lo otro: un obligatorio vacío se corrige rellenándolo y «este campo es obligatorio» ya dice cómo; lo que exige una sugerencia es el formato incumplido, porque **el formato esperado lo conoce la página: está escrito en sus propios atributos** (`type`, `pattern`, `minlength`, `min`/`max`). Medido sobre un formulario con un `type="email"` mal rellenado a propósito, el análisis solo veía `valueMissing`.
+
+Así que hay una **segunda pasada** que escribe un valor inválido en los campos con restricción de formato, envía otra vez y lee el mensaje. Nada sale a la red —el cortafuegos sigue armado y el `submit` sigue interceptado— y los valores del usuario se restauran: hay un test de integración que comprueba las tres cosas a la vez, que el error se provoca, que el servidor no recibe nada y que el formulario queda con sus datos y su token CSRF intactos.
+
+Con el mensaje delante, el veredicto: si el campo falló por formato y el mensaje no apunta a ningún formato —«Campo inválido. Revise el dato.»— sale **`revisar`** con el texto citado, el motivo que dio el navegador y las restricciones del campo; si el mensaje dice el formato («debe tener el formato nombre@dominio.es, por ejemplo ana@ejemplo.gal»), `cumple-parcial`, porque que la sugerencia sea *suficiente* lo juzga una persona. Nunca `falla`: la sugerencia puede estar fuera del mensaje, en una pista junto al campo. Y se dice lo que **no** se pudo provocar: `minlength` no se puede, porque el navegador solo marca `tooShort` cuando el valor lo escribe una persona, no cuando se pone por programa. Callarlo haría leer «se probó el formulario» como «se probó todo».
+
+**1.3.3 Características sensoriales: el léxico existía y se le escapaba la mitad.** Aquí me equivoqué al proponerlo como criterio sin medir: ya estaba implementado. Lo que faltaba era medirlo, y medido con frases de respuesta sabida salió esto: solo admitía artículo determinado («el botón verde» sí, «un recuadro rojo» no); la forma solo en botón, icono, forma y figura, así que «la casilla cuadrada» no; nada del **tamaño** ni del **sonido**, que el criterio nombra expresamente; «el botón de abajo» tampoco; y nada en **gallego** —«preme o botón verde», en un sitio público de aquí, que es media provincia—. Y a la vez tenía un falso positivo claro: «más abajo» a secas, en prosa normal («más abajo encontrarás el teléfono»), que no es una instrucción para operar nada.
+
+Reescrito con listas en español, gallego e inglés, y con una regla que cambia el resultado: **la posición tiene que ir acompañada** de un elemento («el botón de abajo») o de un verbo de acción («haz clic arriba a la izquierda»). Sola no cuenta. Trece frases que debía pillar, las trece; seis que no debía, ninguna.
+
+**708 tests unitarios** (de 699) y **160 de integración** (de 159), en verde. El entregable no se mueve: 7 familias, 21 hallazgos, 55 de 55 con veredicto.
 
 ### v0.50.0 — los dos huecos que quedaban de la lista de «quién declara conforme»
 

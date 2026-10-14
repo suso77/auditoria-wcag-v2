@@ -174,3 +174,63 @@ document.querySelectorAll("button[aria-expanded]").forEach(function (b) {
       }
     });
 }
+
+test("modo seguro: la pasada de FORMATO provoca el error sin que salga nada, y devuelve los valores", { skip: disponible ? false : "sin navegador" }, async () => {
+  /* El modo seguro vacía los campos antes de enviar, así que todos los errores
+   * que provocaba eran de campo vacío y de 3.3.3 nunca se podía decir nada.
+   * Ahora hay una segunda pasada que escribe un valor INVÁLIDO en los campos con
+   * restricción de formato — y eso hay que probarlo en las dos direcciones: que
+   * el error se provoca de verdad, y que nada de ese valor sale a la red ni se
+   * queda en la página del auditor. */
+  const peticiones = [];
+  const servidor = createServer((req, res) => {
+    peticiones.push(req.method + " " + req.url);
+    res.setHeader("content-type", "text/html; charset=utf-8");
+    res.end(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>F</title></head><body><main>
+      <form action="/enviar" method="post">
+        <label for="c">Correo</label>
+        <input id="c" name="c" type="email" value="ana@ejemplo.gal" required aria-describedby="c-err">
+        <p id="c-err" hidden>Campo inválido.</p>
+        <input type="hidden" name="csrf" value="TOKEN-123">
+        <button type="submit">Enviar</button>
+      </form>
+      <script>
+        var f = document.querySelector("form");
+        f.addEventListener("submit", function (e) {
+          e.preventDefault();
+          var el = document.getElementById("c");
+          if (!el.checkValidity()) { el.setAttribute("aria-invalid", "true"); document.getElementById("c-err").hidden = false; }
+        });
+      </script></main></body></html>`);
+  });
+  await new Promise((r) => servidor.listen(0, "127.0.0.1", r));
+  const base = "http://127.0.0.1:" + servidor.address().port + "/";
+  const { chromium } = await import("playwright");
+  const navegador = await chromium.launch(launchOptions);
+  try {
+    const page = await navegador.newPage();
+    await page.goto(base, { waitUntil: "load" });
+    peticiones.length = 0;
+    const out = await dynamicAnalyze({ page, url: base }, { movimientoMs: 0, teclas: false, forms: "safe" });
+
+    // 1) El error de formato se provocó y 3.3.3 lo dice.
+    const f = out.findings.find((x) => x.c.n === "3.3.3");
+    assert.ok(f, "3.3.3 debería pronunciarse: " + JSON.stringify(out.findings.map((x) => x.c.n)));
+    assert.equal(f.verdict, "revisar", f.evid[0]);
+    assert.match(f.evid[0], /FORMATO/);
+    assert.match(f.evid[0], /Campo inválido/, "con el mensaje real de la página: " + f.evid[0]);
+
+    // 2) NADA salió a la red con el valor inválido.
+    assert.deepEqual(peticiones.filter((p) => p.includes("/enviar")), [], "el formulario llegó al servidor: " + JSON.stringify(peticiones));
+
+    // 3) La página queda como estaba, valores del usuario y token incluidos.
+    const despues = await page.evaluate(() => ({
+      c: document.getElementById("c").value,
+      csrf: document.querySelector("[name=csrf]").value
+    }));
+    assert.deepEqual(despues, { c: "ana@ejemplo.gal", csrf: "TOKEN-123" }, "los valores no volvieron a su sitio");
+  } finally {
+    await navegador.close();
+    await new Promise((r) => servidor.close(r));
+  }
+});

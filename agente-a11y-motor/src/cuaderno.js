@@ -219,11 +219,50 @@ export function medios(doc) {
  * Reconoce de menos, no de más: si una página usa una fórmula que no está aquí,
  * el criterio sale «no aplica» habiendo material. Por eso la ficha dice siempre
  * que solo se ha mirado el texto, y el «no aplica» de 1.3.3 lo deja escrito. */
+/* 1.3.3 · Las instrucciones que apelan a la forma, el color, el tamaño, la
+ * posición o el sonido.
+ *
+ * El léxico anterior se midió con frases de respuesta sabida y se le escapaba
+ * la mitad: solo admitía artículo determinado («el botón verde» sí, «un
+ * recuadro rojo» no), la forma solo en botón/icono/forma/figura («la casilla
+ * cuadrada» no), nada del TAMAÑO ni del SONIDO —que el criterio nombra
+ * expresamente—, nada en gallego («preme o botón verde», en un sitio público de
+ * Galicia, que es media provincia) y «el botón de abajo» tampoco. Y a la vez
+ * tenía un falso positivo claro: «más abajo» a secas, en prosa normal
+ * («más abajo encontrarás el teléfono»), que no es una instrucción de operar
+ * nada.
+ *
+ * Ahora se construye con listas, en español, gallego e inglés, y la posición
+ * exige ir acompañada: de un ELEMENTO («el botón de abajo») o de un VERBO de
+ * acción («haz clic arriba a la izquierda»). Sola no cuenta.
+ *
+ * Esto NO dictamina: alimenta la ficha del cuaderno. Encontrar la frase no es
+ * fallar —«el botón verde Guardar» está bien, porque además del color dice el
+ * nombre—; lo que hace falta es que alguien lea las frases, y para eso hay que
+ * encontrarlas. */
+const DET = "(?:el|la|los|las|un|una|unos|unas|del|de la|al|o|a|os|as|unha|dun|dunha|the)";
+const ELEM = "(?:bot[oó]n|botons?|enlace|ligaz[oó]n|link|icono|icona|icon|cuadro|recuadro|caixa|box|men[uú]|campo|field|casilla|checkbox|pesta[ñn]a|lapela|tab|secci[oó]n|columna|column|fila|row|caja|imagen|imaxe|image|flecha|frecha|arrow|banner|barra|bar)";
+const COLOR = "(?:verde|green|roj[oa]|vermell[oa]|red|azul|blue|amarill[oa]|amarel[oa]|yellow|naranja|laranxa|orange|gris|grey|gray|negr[oa]|negr[oa]|black|blanc[oa]|white|morad[oa]|violeta|purple|ros[a]|pink)";
+const FORMA = "(?:redond[oa]|circular|cuadrad[oa]|cadrad[oa]|triangular|con forma de|en forma de|round|square)";
+const TAMANO = "(?:grande|peque[ñn][oa]|pequen[oa]|m[aá]s grande|m[aá]s peque[ñn][oa]|big|large|small)";
+const POS = "(?:derecha|dereita|right|izquierda|esquerda|left|arriba|enriba|abaixo|abajo|top|bottom|superior|inferior|primero|primeiro|[uú]ltimo)";
+const VERBO = "(?:pulse|pulsa|preme|premede|clica|clique|haga clic en|haz clic en|hacer clic en|click(?: on)?|seleccione|selecciona|escolla|escolle|elige|elixe|marque|marca|vea|ve a|mira|busca|busque|rellene|rellena|enche|introduzca|introduce|tap)";
+
 const SENSORIALES = [
-  { re: /\b(el|la|los|las)\s+(bot[oó]n|enlace|icono|cuadro|recuadro|men[uú]|campo|casilla|pesta[ñn]a|secci[oó]n|columna|fila|caja)\s+(verde|roja?|azul|amarill[oa]|naranja|gris|negr[oa]|blanc[oa]|morad[oa]|violeta|rosa)\b/gi, que: "color" },
-  { re: /\b(el|la)\s+(bot[oó]n|icono|forma|figura)\s+(redond[oa]|cuadrad[oa]|triangular|con forma de)\b/gi, que: "forma" },
-  { re: /\b(a la (derecha|izquierda)|arriba a la (derecha|izquierda)|abajo a la (derecha|izquierda)|m[aá]s (arriba|abajo)|en la parte (superior|inferior)|(columna|men[uú]|barra) de la (derecha|izquierda)|el de (arriba|abajo)|el primero de la (derecha|izquierda))\b/gi, que: "posición" },
-  { re: /\b(pulse|pulsa|haga clic en|haz clic en|seleccione|selecciona|vea|ve a)\s+(el|la)\s+\w+\s+de\s+(la derecha|la izquierda|arriba|abajo)\b/gi, que: "posición" }
+  // «el botón verde», «un recuadro rojo», «o botón vermello»
+  { re: new RegExp("\\b" + DET + "\\s+" + ELEM + "\\s+(?:m[aá]s\\s+)?" + COLOR + "\\b", "gi"), que: "color" },
+  // «la casilla cuadrada», «el icono redondo»
+  { re: new RegExp("\\b" + DET + "\\s+" + ELEM + "\\s+" + FORMA + "\\b", "gi"), que: "forma" },
+  { re: new RegExp("\\b" + DET + "\\s+(?:forma|figura|icono|icona)\\s+(?:" + FORMA + "|" + COLOR + ")\\b", "gi"), que: "forma" },
+  // «el botón grande»
+  { re: new RegExp("\\b" + DET + "\\s+" + ELEM + "\\s+" + TAMANO + "\\b", "gi"), que: "tamaño" },
+  // «el botón de abajo», «la columna da dereita», «el menú de la izquierda»
+  { re: new RegExp("\\b" + ELEM + "\\s+(?:de|da|do|en|of|on)\\s+(?:la|el|a|o|the)?\\s*(?:parte\\s+)?" + POS + "\\b", "gi"), que: "posición" },
+  // «pulsa arriba a la izquierda», «haz clic en el de abajo»
+  { re: new RegExp("\\b" + VERBO + "[^.;:!?]{0,40}?\\b(?:arriba|abajo|enriba|abaixo|a la (?:derecha|izquierda)|[áa] (?:dereita|esquerda)|en la parte (?:superior|inferior))\\b", "gi"), que: "posición" },
+  // «cuando oigas el pitido», «al sonar la señal»
+  { re: /\b(cuando|al|tras)\s+(oigas?|oiga|escuches?|escoite|sonar|suene|soe|hear)\b[^.;:!?]{0,40}/gi, que: "sonido" },
+  { re: /\b(el|la|un|una|o|a)\s+(pitido|bip|beep|tono|se[ñn]al (sonora|ac[uú]stica)|sonido)\b/gi, que: "sonido" }
 ];
 
 /* 2.4.4 · Enlaces cuyo nombre no dice a dónde van.
