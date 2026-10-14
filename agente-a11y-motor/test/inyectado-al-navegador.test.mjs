@@ -159,3 +159,42 @@ test("regresión: la firma de plantilla distingue singular de plural", () => {
   assert.equal(con("sitio"), "sitio", "y una clase con «s» dentro no se parte por ahí");
   assert.equal(con("cabecera destacada"), "cabecera", "la lista de clases se parte por el espacio, que es de lo que iba la regex");
 });
+
+/**
+ * UNA FUNCIÓN NUEVA QUE NADIE AÑADIÓ A LA LISTA.
+ *
+ * El cuerpo que se inyecta en el navegador no es el módulo: es la lista `FNS`
+ * convertida a texto. Al añadir `hojasLegibles` y llamarla desde
+ * `reglasDeFoco`, la función se quedó fuera de esa lista — y eso NO lo ve ni el
+ * módulo cargando, ni el linter, ni la suite pura: solo aparece dentro del
+ * navegador, como `ReferenceError: hojasLegibles is not defined`, y lo tapaba el
+ * canal de errores de la capa. Lo encontró la suite de integración; esto lo
+ * encuentra antes.
+ *
+ * La comprobación: si el código inyectado LLAMA a una función que el módulo
+ * define, esa función tiene que estar también inyectada.
+ */
+import { MEASURE_FNS } from "../src/measure.browser.js";
+import { readFile as leer } from "node:fs/promises";
+import { fileURLToPath as aRuta } from "node:url";
+import { dirname as carpeta, join as une } from "node:path";
+
+test("inyectado: todo lo que el cuerpo llama está también dentro del cuerpo", async () => {
+  const dir = carpeta(aRuta(import.meta.url));
+  const fuente = await leer(une(dir, "..", "src", "measure.browser.js"), "utf8");
+  const definidasEnElModulo = new Set(
+    [...fuente.matchAll(/^function\s+([A-Za-z_$][\w$]*)\s*\(/gm)].map((m) => m[1])
+  );
+  const definidasEnElCuerpo = new Set(
+    [...MEASURE_FNS.matchAll(/^function\s+([A-Za-z_$][\w$]*)\s*\(/gm)].map((m) => m[1])
+  );
+  const faltan = [];
+  definidasEnElModulo.forEach((nombre) => {
+    if (definidasEnElCuerpo.has(nombre)) return;
+    // ¿La llama alguien desde dentro del cuerpo?
+    const llamada = new RegExp("(^|[^\\w$.])" + nombre.replace(/\$/g, "\\$") + "\\s*\\(");
+    if (llamada.test(MEASURE_FNS)) faltan.push(nombre);
+  });
+  assert.deepEqual(faltan, [],
+    "estas funciones se llaman dentro del navegador pero no se inyectan — añádelas a `FNS`: " + faltan.join(", "));
+});

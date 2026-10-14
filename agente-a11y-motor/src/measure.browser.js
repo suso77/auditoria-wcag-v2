@@ -663,13 +663,40 @@ function pinta(valor) {
   for (let i = 0; i < t.length; i++) if (NULOS.indexOf(t[i]) === -1) return true;
   return false;
 }
-function reglasDeFoco(el, doc) {
-  let encontradas = 0, bloqueadas = 0, conIndicador = 0;
-  const ejemplos = [];
+/* Las hojas que se pueden leer, incluidas las RESCATADAS de otro origen.
+ *
+ * `cssRules` lanza en una hoja de otro dominio y antes eso era el final del
+ * camino: se contaba como bloqueada y el criterio se quedaba sin poder
+ * declararse conforme. Playwright las trae desde fuera —la CORS es del
+ * navegador dentro de la página, no suya— y las deja en
+ * `window.__a11yHojasRescatadas` como hojas SUELTAS, sin adoptar: se leen sus
+ * selectores y declaraciones, y la cascada de la página no se toca.
+ *
+ * Una hoja de otro origen sin `href` (un `<style>` de un marco sellado, por
+ * ejemplo) no se puede pedir, así que sigue contando como bloqueada: la nota de
+ * cobertura tiene que seguir diciendo lo que queda fuera. */
+function hojasLegibles(doc) {
+  const out = [];
+  let bloqueadas = 0;
   const hojas = doc.styleSheets || [];
   for (let i = 0; i < hojas.length; i++) {
+    try { if (hojas[i].cssRules) out.push(hojas[i]); } catch (e) { bloqueadas++; }
+  }
+  const extra = (typeof window !== "undefined" && window.__a11yHojasRescatadas) || [];
+  for (let i = 0; i < extra.length; i++) {
+    try { if (extra[i].cssRules) { out.push(extra[i]); if (bloqueadas > 0) bloqueadas--; } } catch (e) { /* una rescatada ilegible no cuenta dos veces */ }
+  }
+  return { hojas: out, bloqueadas: bloqueadas };
+}
+function reglasDeFoco(el, doc) {
+  let encontradas = 0, conIndicador = 0;
+  const ejemplos = [];
+  const leg = hojasLegibles(doc);
+  const hojas = leg.hojas;
+  const bloqueadas = leg.bloqueadas;
+  for (let i = 0; i < hojas.length; i++) {
     let reglas = null;
-    try { reglas = hojas[i].cssRules; } catch (e) { bloqueadas++; continue; }
+    try { reglas = hojas[i].cssRules; } catch (e) { continue; }
     if (!reglas) continue;
     const pila = [reglas];
     while (pila.length) {
@@ -1803,7 +1830,7 @@ function runChecksReal(doc, win, limit) {
 
 const FNS = [parseColor, over, lum, contrastRatio, rgbStr, apcaContrast, apcaMin,
   animacionesPersistentes, distintivoDeEnlace, enTextoCorrido, elementosFlotantes, fraccionTapada, ratioTxt, refrescar, todosM, enfocadoM, shadowCerrados, resolverColor, ownText, opacidadAcumulada, coloresDe, mismoColor, aparienciaFoco, indicadorDeFoco, fondoRealCoincide, bgBehind, contrastOf, boundaryContrastOf, ordenReordenado, literalesDeContent, tienePalabra, contrasteGenerado, isInteractiveM, locatorM, rutaM, renderedM, disabledM, managedM, textTargets,
-  pinta, sinPseudoFoco, coincideSinFoco, reglasDeFoco, runChecksReal];
+  pinta, sinPseudoFoco, coincideSinFoco, hojasLegibles, reglasDeFoco, runChecksReal];
 const FN_SRC = "var MANAGED_PARENT = " + JSON.stringify(MANAGED_PARENT) + ";\nvar NATIVOS = " + JSON.stringify(NATIVOS) + ";\n" +
   "var PROP_INDICADOR = " + JSON.stringify(PROP_INDICADOR) + ";\nvar NULOS = " + JSON.stringify(NULOS) + ";\n" +
   FNS.map(function (f) { return f.toString(); }).join("\n");

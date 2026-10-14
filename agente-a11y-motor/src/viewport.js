@@ -33,10 +33,28 @@ function F(n, verdict, sev, evid, nodes) {
  * un locator que no distingue: cinco filas de 1.4.13 diciendo `li.float-left` y
  * nada con que ir a buscarlas. Una barrera que no se puede localizar no se puede
  * arreglar ni comprobar. */
-function nodesOf(list, max) {
+/* Y CADA FILA, CON LA EVIDENCIA DE SU ELEMENTO.
+ *
+ * `report-oaw` ya sabe hacerlo —si el nodo trae su propio `evid`, la fila lleva
+ * ese y no la unión de los mensajes del criterio—, pero esta capa no lo
+ * rellenaba. Resultado medido en una auditoría real: las cinco filas de 1.4.13
+ * de una página salían con el mismo párrafo entero («5 contenido(s)
+ * emergente(s) incumplen: …» con los cinco listados dentro), y las de 1.4.4 con
+ * la lista de los quince bloques repetida fila a fila. En el CSV y en el Word
+ * eso es el mismo texto cinco veces, y quien lee una fila no sabe cuál de los
+ * cinco es el suyo.
+ *
+ * El tercer argumento es la frase de la fila: lo que le pasa a ESE elemento. El
+ * recuento y las advertencias del criterio siguen en el hallazgo, que es su
+ * sitio. */
+function nodesOf(list, max, frase) {
   return (list || []).slice(0, max || 10).map(function (x) {
     const n = { locator: x.locator, name: x.detalle || "" };
     if (x.uid) n.path = x.uid;
+    if (frase) {
+      const t = frase(x);
+      if (t) n.evid = [t];
+    }
     return n;
   });
 }
@@ -78,7 +96,10 @@ export function analyzeReflow(trace) {
       "`overflow:" + rec[0].overflow + "`, así que no hay barra ni forma de desplazarlo. " +
       rec.slice(0, 6).map(function (r) { return r.locator + " (" + r.px + " px ocultos, termina en «…" + r.muestra + "»)"; }).join(" · ") +
       (rec.length > 6 ? " · …" : "") + ". 1.4.10 exige que no haya pérdida de información, no solo que no haya barra horizontal."
-    ], nodesOf(rec))];
+    ], nodesOf(rec, 10, function (r) {
+      return r.locator + " recorta " + r.px + " px" + donde + " y lo que sobra no se puede alcanzar: el desbordamiento está oculto con " +
+        "`overflow:" + r.overflow + "`, no hay barra ni forma de desplazarlo. Termina en «…" + r.muestra + "».";
+    }))];
   }
   if (exceso <= 2) {
     const tapado = (trace.recortados || []).filter(function (r) { return r.alcanzable; });
@@ -87,7 +108,10 @@ export function analyzeReflow(trace) {
         "Sin desplazamiento horizontal" + donde + ", pero " + tapado.length + " contenedor(es) esconden contenido que no les cabe (" +
         tapado.slice(0, 4).map(function (r) { return r.locator + ", " + r.px + " px"; }).join(" · ") +
         "). Tienen controles dentro, así que el teclado sí arrastra el contenedor al enfocarlos; comprueba que con el ratón y a la vista también se llegue, porque no hay barra."
-      ], nodesOf(tapado))];
+      ], nodesOf(tapado, 10, function (r) {
+        return r.locator + " esconde " + r.px + " px que no le caben" + donde + ". Tiene controles dentro, así que el teclado arrastra el " +
+          "contenedor al enfocarlos; comprueba que con el ratón y a la vista también se llegue, porque no hay barra.";
+      }))];
     }
     return [F("1.4.10", "cumple", null, ["Sin desplazamiento horizontal ni contenido recortado" + donde + " (equivale al 400 % sobre 1280 px)."])];
   }
@@ -126,7 +150,10 @@ function informeRecorte(n, etiqueta, cambio, trace, sevFalla) {
         "Con " + cambio + " no empeora nada, pero " + prev.length + " bloque(s) YA venían con contenido recortado antes del cambio: " +
         prev.slice(0, 6).map(function (o) { return o.locator + (o.detalle ? " (" + o.detalle + ")" : ""); }).join(", ") + (prev.length > 6 ? "…" : "") +
         ". No lo provoca " + cambio + ", pero hay texto que no se puede leer: compruébalo."
-      ], nodesOf(prev))];
+      ], nodesOf(prev, 10, function (x) {
+        return x.locator + " ya venía con contenido recortado ANTES de aplicar " + cambio +
+          (x.detalle ? " (" + x.detalle + ")" : "") + ": no lo provoca el cambio, pero hay texto que no se puede leer.";
+      }))];
     }
     const cob = trace.cobertura;
     if (cob && cob.truncado) {
@@ -156,7 +183,16 @@ function informeRecorte(n, etiqueta, cambio, trace, sevFalla) {
   if (rec.length) ev.push(rec.length + " bloque(s) de texto se recortan al aplicar " + cambio + " (el contenido queda oculto, sin barra de desplazamiento): " +
     rec.slice(0, 6).map(function (o) { return o.locator + (o.detalle ? " (" + o.detalle + ")" : ""); }).join(", ") + (rec.length > 6 ? "…" : "") + ".");
   if (sup.length) ev.push(sup.length + " bloque(s) se solapan con el contenido contiguo: " + sup.slice(0, 6).map(function (o) { return o.locator; }).join(", ") + ".");
-  return [F(n, rec.length ? "falla" : "revisar", rec.length ? sevFalla : null, ev, nodesOf(rec.concat(sup)))];
+  /* La frase de cada fila: si el bloque se recorta, cuánto; si se solapa, con
+   * qué. El `detalle` ya lo dice, y aquí se convierte en una oración que se
+   * entiende sola dentro de una celda del CSV. */
+  const suya = function (x) {
+    if (!x.detalle) return etiqueta + ": este bloque falla al aplicar " + cambio + ".";
+    return /se solapa/.test(x.detalle)
+      ? x.locator + " " + x.detalle + " al aplicar " + cambio + "."
+      : x.locator + " recorta contenido al aplicar " + cambio + ": " + x.detalle + ", y sin barra de desplazamiento con la que llegar a él.";
+  };
+  return [F(n, rec.length ? "falla" : "revisar", rec.length ? sevFalla : null, ev, nodesOf(rec.concat(sup), 10, suya))];
 }
 
 /**
@@ -309,7 +345,13 @@ export function analyzeHoverContent(trace) {
         return h.locator + " (" + q.join(" y ") + ")";
       }).join(", ") + (rotos.length > 6 ? ", …" : "") + ".",
       "Las tres condiciones de 1.4.13 son descartable sin mover el puntero ni el foco, señalable con el puntero sin que se cierre, y persistente. «Descartable» solo se exige cuando el emergente tapa o sustituye otro contenido, que es lo que se ha comprobado aquí."
-    ], nodesOf(rotos)));
+    ], nodesOf(rotos, 10, function (h) {
+      const q = [];
+      if (noDescartable(h) && tapa(h)) q.push("no se descarta con Esc y tapa contenido que había debajo" + (h.tapa === undefined ? " (o no se pudo comprobar que no lo tape)" : ""));
+      if (noSenalable(h)) q.push("desaparece al llevar el puntero encima");
+      return "El emergente que dispara " + h.locator + " " + q.join(" y ") +
+        ". «Descartable» solo se exige cuando el emergente tapa o sustituye otro contenido, y aquí se ha comprobado que lo tapa.";
+    })));
   }
   if (eximidos.length) {
     // No es una barrera: la excepción del criterio lo dice. Se cuenta, porque un

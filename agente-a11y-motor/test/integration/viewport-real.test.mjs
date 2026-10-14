@@ -36,6 +36,12 @@ const CASOS = {
   // Caja que YA viene recortada antes de tocar nada.
   "/recorte-previo": BASE(`<main><div class="card"><p>${TEXTO}</p></div></main>`,
     "main{padding:1em}.card{height:32px;overflow:hidden;width:300px}"),
+  /* DOS tarjetas IDÉNTICAS. El `locator` de las dos es `div.card`, así que sin un
+     selector canónico las dos filas del informe son indistinguibles — y eso es
+     justo lo que pasaba: el 12 % de las barreras de una auditoría real salía con
+     la columna «Selector» vacía, toda de esta capa. */
+  "/dos-tarjetas": BASE(`<main><div class="card"><p>Texto que cabe justo en dos líneas con el interlineado de serie.</p></div><div class="card"><p>Texto que cabe justo en dos líneas con el interlineado de serie.</p></div></main>`,
+    "main{padding:1em}.card{height:48px;overflow:hidden;width:420px}.card p{margin:0;line-height:1.2}"),
   // Solo tabla ancha: candidata a la excepción de uso esencial.
   "/tabla": BASE(`<main><table><tr>${"<td>columna larga de datos</td>".repeat(8)}</tr></table></main>`,
     "main{padding:1em}table{border-collapse:collapse}td{white-space:nowrap;padding:4px}"),
@@ -332,4 +338,56 @@ test("2.2.1 real: con solo temporizadores cortos no se acusa, pero se dice qué 
   const f = m["2.2.1"];
   assert.equal(f.verdict, "cumple-parcial");
   assert.match(f.evid[1], /DESPUÉS del momento de mirar/);
+});
+
+/**
+ * EL SELECTOR, Y LA EVIDENCIA DE CADA FILA.
+ *
+ * Dos cosas que se vieron midiendo una auditoría real de diez páginas, y que no
+ * eran del criterio sino del informe:
+ *
+ * 1. De 522 filas, 62 —el 12 %— salían con la columna «Selector» VACÍA, todas de
+ *    esta capa (1.4.4, 1.4.10, 1.4.12). La ruta canónica estaba calculada
+ *    (`__caja` guarda `uid:__uid(el)`) y se usaba solo para emparejar el antes
+ *    con el después: no salía del fichero. Sin selector no hay captura —la guía
+ *    resalta el elemento por selector— ni cotejo entre pasadas.
+ *
+ * 2. Las N filas de un hallazgo llevaban todas el MISMO párrafo: la lista
+ *    completa de los bloques afectados, repetida fila a fila. Quien lee una fila
+ *    no sabe cuál de los quince es el suyo.
+ */
+test("adaptación: dos tarjetas iguales salen con selectores DISTINTOS", { skip }, async () => {
+  const m = await ver("/dos-tarjetas");
+  const f = m["1.4.12"];
+  assert.equal(f.verdict, "falla", JSON.stringify(f.evid));
+  const rutas = (f.nodes || []).map((n) => n.path).filter(Boolean);
+  assert.ok(rutas.length >= 2, "las dos tarjetas tienen que traer ruta: " + JSON.stringify(f.nodes));
+  assert.equal(new Set(rutas).size, rutas.length, "y rutas distintas, no la misma dos veces: " + JSON.stringify(rutas));
+  rutas.forEach((r) => assert.match(r, /^html > body >/, "la ruta es canónica, no un locator: " + r));
+  /* Y resuelven: cada una selecciona UN elemento y el que le toca. */
+  assert.match(rutas[0], /div:nth-of-type\(1\)/);
+  assert.match(rutas[1], /div:nth-of-type\(2\)/);
+});
+
+test("adaptación: cada fila trae la evidencia de SU elemento, no la lista entera", { skip }, async () => {
+  const m = await ver("/dos-tarjetas");
+  const nodes = m["1.4.12"].nodes || [];
+  assert.ok(nodes.length >= 2);
+  nodes.forEach((n) => {
+    assert.ok(n.evid && n.evid.length, "cada nodo con su evidencia: " + JSON.stringify(n));
+    const t = n.evid.join(" ");
+    assert.match(t, /recorta contenido al aplicar|se solapa|ya venía/);
+    assert.doesNotMatch(t, /bloque\(s\) de texto se recortan/, "el recuento es del hallazgo, no de la fila");
+  });
+});
+
+test("adaptación: 1.4.10 también trae ruta en lo que recorta", { skip }, async () => {
+  const m = await ver("/recorte-oculto");
+  const f = m["1.4.10"];
+  assert.equal(f.verdict, "falla", JSON.stringify(f.evid));
+  assert.ok((f.nodes || []).length, "tiene que señalar el contenedor");
+  f.nodes.forEach((n) => {
+    assert.match(String(n.path || ""), /^html > body >/, "con su ruta: " + JSON.stringify(n));
+    assert.ok(n.evid && n.evid.length && /px/.test(n.evid[0]), "y con su propia frase: " + JSON.stringify(n.evid));
+  });
 });

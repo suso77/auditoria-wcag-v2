@@ -182,6 +182,22 @@ function evalIn(page, body, arg) {
 }
 
 // Compara dos instantáneas y devuelve lo que EMPEORA: recortes nuevos y solapes nuevos.
+/* EL SELECTOR YA ESTABA AQUÍ Y NO SALÍA DEL FICHERO.
+ *
+ * `__caja` guarda `uid:__uid(el)`, que es la ruta canónica —la misma forma que
+ * usa la capa de medición—, y se usaba solo para emparejar el antes con el
+ * después. Los hallazgos salían con el `locator`, que se LEE pero no identifica:
+ * `div.list_item`.
+ *
+ * Medido sobre una auditoría real de diez páginas: de 522 filas, 62 —el 12 %—
+ * salían con la columna «Selector» vacía, todas de esta capa (1.4.4, 1.4.10,
+ * 1.4.12). Y eso tiene dos consecuencias que se notan: la guía de capturas
+ * resalta el elemento POR SELECTOR, así que esas 62 barreras no podían llevar
+ * evidencia visual; y el cotejo entre dos pasadas identifica la barrera por
+ * criterio, página y selector, con lo que diez filas de una página se fundían en
+ * una y los cambios de dentro no se veían.
+ *
+ * No hacía falta calcular nada nuevo: solo dejar de tirarlo. */
 function diffCajas(antes, despues) {
   const A = {};
   (antes || []).forEach(function (c) { A[c.uid] = c; });
@@ -196,10 +212,10 @@ function diffCajas(antes, despues) {
     if (!a) return;
     if (!d.recortado) return;
     // Solo cuenta como falla del cambio lo que EMPEORA con él.
-    if (!a.recortado) { recortados.push({ locator: d.locator, detalle: detalle(d) }); return; }
+    if (!a.recortado) { recortados.push({ locator: d.locator, uid: d.uid, detalle: detalle(d) }); return; }
     // Lo que ya venía recortado no lo causa el cambio, pero es pérdida de
     // contenido igualmente: se informa aparte en vez de tragárselo.
-    previos.push({ locator: d.locator, detalle: detalle(a) });
+    previos.push({ locator: d.locator, uid: d.uid, detalle: detalle(a) });
   });
   // Solape: dos bloques hermanos que antes no se pisaban y ahora sí.
   const porTop = (despues || []).slice().sort(function (x, y) { return x.top - y.top; });
@@ -212,7 +228,7 @@ function diffCajas(antes, despues) {
     const pa = (antes || []).find(function (c) { return c.uid === p.uid; });
     const qa = (antes || []).find(function (c) { return c.uid === q.uid; });
     if (pa && qa && qa.top < pa.bottom - 2 && qa.left < pa.right - 2 && qa.right > pa.left + 2) continue; // ya se pisaban antes
-    solapados.push({ locator: q.locator, detalle: "se solapa con " + p.locator });
+    solapados.push({ locator: q.locator, uid: q.uid, detalle: "se solapa con " + p.locator });
   }
   return { recortados: recortados, solapados: solapados.slice(0, 20), previos: previos };
 }
@@ -352,7 +368,7 @@ export async function viewportAnalyze(target, opts) {
             var p=el.parentElement, cubierto=false;
             while(p && p!==document.body){ var pr=p.getBoundingClientRect(); if(pr.right>cw+2){ cubierto=true; break; } p=p.parentElement; }
             if (cubierto) continue;
-            offenders.push({ locator:__loc(el), tag:el.tagName.toLowerCase(),
+            offenders.push({ locator:__loc(el), uid:__uid(el), tag:el.tagName.toLowerCase(),
               role:(el.getAttribute('role')||'').split(/\\s+/)[0],
               detalle: Math.round(r.right-cw)+' px fuera' });
           }
@@ -403,7 +419,7 @@ export async function viewportAnalyze(target, opts) {
           if (r2.width<=0||r2.height<=0) continue;
           var txt=(e2.innerText||e2.textContent||'').replace(/[\\s\\u00a0]+/g,' ').trim();
           if(!txt) continue;   // sin texto dentro, no hay información que perder
-          recortados.push({ locator:__loc(e2), px:Math.round(exceso), overflow:ox,
+          recortados.push({ locator:__loc(e2), uid:__uid(e2), px:Math.round(exceso), overflow:ox,
             alcanzable: alcanzable, conFoco: conFoco, muestra: txt.slice(-60) });
         }
         return { w:cw, h:de.clientHeight, scrollWidth:sw, clientWidth:cw, offenders:offenders, recortados:recortados };`);

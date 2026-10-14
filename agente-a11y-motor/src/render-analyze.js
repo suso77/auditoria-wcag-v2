@@ -69,6 +69,85 @@ export async function analyzeRendered(target, opts) {
     else throw new Error("analyzeRendered necesita { url } o { html }");
     if (opts.waitMs) await page.waitForTimeout(opts.waitMs);
 
+    /* 0) LAS HOJAS DE OTRO ORIGEN, RESCATADAS — antes que nada que lea el CSSOM.
+     *
+     * `hoja.cssRules` lanza en una hoja servida desde otro dominio, y lo único
+     * que se hacía era contarla: cada pasada de medición decía «1 hoja(s) de
+     * estilo de otro origen no se han podido leer» y 2.4.7 se quedaba sin poder
+     * declararse conforme — en un sitio real, 93, 225 y 41 mediciones en tres
+     * páginas distintas. Lo mismo arrastraba a 2.3.1 y 1.3.4, que también leen
+     * el CSSOM.
+     *
+     * Pero la hoja está ahí y se puede traer: la CORS es del navegador DENTRO de
+     * la página, no de Playwright. Se piden los ficheros desde fuera y se le
+     * pasan al documento.
+     *
+     * DONDE IMPORTA: no se inyectan en la página. Un `<style>` añadido
+     * duplicaría reglas y movería la cascada, y entonces lo medido ya no sería
+     * lo que ve el usuario. Se montan como `CSSStyleSheet` SUELTAS —
+     * `replaceSync`, sin adoptar— y la medición las consulta aparte: se leen los
+     * selectores y las declaraciones, que es lo único que necesita, y la página
+     * se queda exactamente como estaba. */
+    let rescate = null, falloRescate = null;
+    try {
+      /* Apagable, como todas las capas: `hojasExternas: false`. Hay redes donde
+       * conviene que el agente no pida nada que el navegador no haya pedido ya.
+       *
+       * Y el candado: solo se piden URLs que la PROPIA PÁGINA declara en
+       * `styleSheets[].href` y solo por http(s). Son ficheros que el navegador
+       * ya ha descargado para pintar la página, así que esto no abre ningún
+       * destino nuevo; lo que hace es volver a pedir el mismo desde fuera, donde
+       * la CORS no aplica. */
+      const urls = opts.hojasExternas === false ? [] : await page.evaluate(function () {
+        const out = [];
+        const hojas = document.styleSheets || [];
+        for (let i = 0; i < hojas.length; i++) {
+          try { if (hojas[i].cssRules) continue; } catch (e) {
+            const h = hojas[i].href || "";
+            if (/^https?:\/\//i.test(h)) out.push(h);
+          }
+        }
+        return out;
+      });
+      if (urls.length) {
+        const textos = [];
+        for (const u of urls.slice(0, 12)) {
+          try {
+            const resp = await page.context().request.get(u, { timeout: 8000 });
+            if (!resp.ok()) { textos.push({ url: u, error: "HTTP " + resp.status() }); continue; }
+            const css = await resp.text();
+            textos.push({ url: u, css: css.length > 2000000 ? css.slice(0, 2000000) : css });
+          } catch (e) {
+            textos.push({ url: u, error: (e && e.message) || String(e) });
+          }
+        }
+        rescate = await page.evaluate(function (lista) {
+          window.__a11yHojasRescatadas = [];
+          const ok = [], mal = [];
+          lista.forEach(function (x) {
+            if (!x.css) { mal.push({ url: x.url, motivo: x.error || "sin contenido" }); return; }
+            try {
+              const h = new CSSStyleSheet();
+              h.replaceSync(x.css);
+              window.__a11yHojasRescatadas.push(h);
+              ok.push({ url: x.url, reglas: h.cssRules.length });
+            } catch (e) {
+              mal.push({ url: x.url, motivo: "no se pudo parsear: " + ((e && e.message) || e) });
+            }
+          });
+          return { rescatadas: ok, fallidas: mal };
+        }, textos);
+      }
+    } catch (e) {
+      /* El rescate corre ANTES de que exista la lista de errores —tiene que ir
+       * por delante de todo lo que lee el CSSOM—, así que su fallo se guarda
+       * aquí y se vuelca en cuanto la lista existe. Esto lo encontró el test de
+       * «una fase caída no hace desaparecer criterios del informe»: la rama de
+       * error era justo la que se rompía. */
+      falloRescate = "el rescate de hojas falló: " + ((e && e.message) || e);
+    }
+
+
     // 1) DOM renderizado → motor determinista + auditoría de página
     const html = await page.evaluate(function () { return document.documentElement.outerHTML; });
     const model = understand(html);
@@ -94,6 +173,7 @@ export async function analyzeRendered(target, opts) {
      * en ninguna parte. En un IRA, un criterio que no está es un criterio del que
      * nadie sabe que no se comprobó, y eso es peor que un `revisar`. */
     const errores = [];
+    if (falloRescate) errores.push({ capa: "hojas-de-otro-origen", error: falloRescate });
     const coberturasPropias = [];
     if (pageScope) {
       let docPagina = null;
@@ -144,11 +224,20 @@ export async function analyzeRendered(target, opts) {
           try {
             const lectura = await page.evaluate(function () {
               let bloqueadas = 0;
-              const texto = Array.prototype.map.call(document.styleSheets, function (s) {
+              const trozos = Array.prototype.map.call(document.styleSheets, function (s) {
                 try { return Array.prototype.map.call(s.cssRules, function (r) { return r.cssText; }).join("\n"); }
                 catch (e) { bloqueadas++; return ""; }   // hoja de otro origen: no se puede leer
-              }).join("\n");
-              return { texto: texto, bloqueadas: bloqueadas };
+              });
+              /* Y las de otro origen que se hayan podido traer desde fuera. Lo que
+               * declaren —animaciones, reglas por orientación, revelados— decide
+               * 2.3.1 y 1.3.4, así que no leerlas era decidirlos a medias. */
+              (window.__a11yHojasRescatadas || []).forEach(function (h) {
+                try {
+                  trozos.push(Array.prototype.map.call(h.cssRules, function (r) { return r.cssText; }).join("\n"));
+                  if (bloqueadas > 0) bloqueadas--;
+                } catch (e) { /* ilegible incluso rescatada: sigue contando como bloqueada */ }
+              });
+              return { texto: trozos.join("\n"), bloqueadas: bloqueadas };
             });
             css = lectura.texto;
             cssBloqueadas = lectura.bloqueadas || 0;

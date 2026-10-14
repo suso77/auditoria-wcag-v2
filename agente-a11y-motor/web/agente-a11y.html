@@ -4024,13 +4024,28 @@
     }
     return false;
   }
-  function reglasDeFoco(el, doc) {
-    let encontradas = 0, bloqueadas = 0, conIndicador = 0;
-    const ejemplos = [];
+  function hojasLegibles(doc) {
+    const out = [];
+    let bloqueadas = 0;
     const hojas = doc.styleSheets || [];
     for (let i = 0; i < hojas.length; i++) {
+      try { if (hojas[i].cssRules) out.push(hojas[i]); } catch (e) { bloqueadas++; }
+    }
+    const extra = (typeof window !== "undefined" && window.__a11yHojasRescatadas) || [];
+    for (let i = 0; i < extra.length; i++) {
+      try { if (extra[i].cssRules) { out.push(extra[i]); if (bloqueadas > 0) bloqueadas--; } } catch (e) { /* una rescatada ilegible no cuenta dos veces */ }
+    }
+    return { hojas: out, bloqueadas: bloqueadas };
+  }
+  function reglasDeFoco(el, doc) {
+    let encontradas = 0, conIndicador = 0;
+    const ejemplos = [];
+    const leg = hojasLegibles(doc);
+    const hojas = leg.hojas;
+    const bloqueadas = leg.bloqueadas;
+    for (let i = 0; i < hojas.length; i++) {
       let reglas = null;
-      try { reglas = hojas[i].cssRules; } catch (e) { bloqueadas++; continue; }
+      try { reglas = hojas[i].cssRules; } catch (e) { continue; }
       if (!reglas) continue;
       const pila = [reglas];
       while (pila.length) {

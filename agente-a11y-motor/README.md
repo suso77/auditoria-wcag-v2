@@ -64,7 +64,7 @@ const informe = analyze(understand(html));
 ## Tests
 
 ```bash
-npm test                    # suite pura (node --test), sin navegador — 738 tests
+npm test                    # suite pura (node --test), sin navegador — 739 tests
 npm run test:integracion    # integración con Chromium (Playwright) — 160 tests
 npm run bench               # banco de precisión accname contra corpus WPT
 npm run smoke               # humo del artifact generado, en Chromium real
@@ -985,6 +985,24 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 **En el cruce con axe, dos afirmaciones que no se podían sostener.** `crossCheck` fabricaba `{findings: []}` cuando el motor no llegaba a construir el modelo —texto suelto, un comentario, una cadena vacía—, y ese resultado entraba en la reconciliación como una comprobación limpia: «soloMotor: 0» era indistinguible de «el motor comprobó y no encontró nada». Y el «acuerdo» se construía solo porque coincidía el número de criterio: el motor acusando a `img.logo` y axe a otro `img` de la página salían como «acuerdo: 1». Casar los elementos exige la página abierta —lo hace la orquestación, no la reconciliación pura—, así que ahora se publica cuántos elementos trae cada fuente, que la coincidencia a nivel de elemento NO está comprobada, y que el motor no miró cuando no miró.
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
+
+### v0.55.0 — las tres de la lista: el selector, la evidencia repetida y las hojas del CDN
+
+Tres cosas que no eran huecos de criterio sino del informe y de la cobertura, y las tres salieron midiendo una auditoría real de diez páginas.
+
+**El selector que estaba calculado y no salía del fichero.** De 522 filas, **62 —el 12 %— tenían la columna «Selector» vacía**, todas de la capa de adaptación (1.4.4, 1.4.10, 1.4.12). Y la ruta canónica ya estaba ahí: `__caja` guarda `uid:__uid(el)`, con la misma forma que usa la capa de medición, y se usaba solo para emparejar el antes con el después. Eso tenía dos consecuencias que se notan: la guía de capturas resalta el elemento **por selector**, así que esas 62 barreras no podían llevar evidencia visual; y el cotejo entre dos pasadas identifica la barrera por criterio, página y selector, con lo que diez filas de una misma página se fundían en una. No había que calcular nada nuevo: solo dejar de tirarlo. Medido con dos tarjetas idénticas —el caso que el `locator` no puede distinguir, las dos son `div.card`—: ahora salen con `div:nth-of-type(1)` y `div:nth-of-type(2)`.
+
+**Y cada fila con la evidencia de su elemento.** Las N filas de un hallazgo llevaban todas el mismo párrafo: la lista completa de los bloques afectados, repetida fila a fila. En la auditoría real eran cinco filas de 1.4.13 con el mismo «5 contenido(s) emergente(s) incumplen: …» con los cinco listados dentro, y las de 1.4.4 con la lista de los quince bloques en cada una. `report-oaw` ya sabía hacerlo bien —si el nodo trae su propio `evid`, la fila lleva ese—; esta capa no lo rellenaba. Ahora cada fila dice lo que le pasa a **ese** elemento, y el recuento se queda en el hallazgo, que es su sitio.
+
+**Las hojas de estilo de otro origen, traídas.** `hoja.cssRules` lanza en una hoja servida desde otro dominio, y lo único que se hacía era contarla: cada pasada dejaba una nota de cobertura que **limita cuatro criterios** —2.3.1, 1.3.4, 1.4.1 y 2.4.7—, de modo que ninguno de los cuatro podía declararse conforme. En el sitio real eso fueron **93, 225 y 41 mediciones** en tres páginas distintas: el agente se negaba a firmar por una limitación que tenía arreglo. Y lo tiene, porque la CORS es del navegador **dentro** de la página, no de Playwright: se piden los ficheros desde fuera y se le pasan al documento.
+
+Lo que importa de cómo se hace: **no se inyectan en la página**. Un `<style>` añadido duplicaría reglas y movería la cascada, y entonces lo medido ya no sería lo que ve el usuario. Se montan como `CSSStyleSheet` sueltas —`replaceSync`, sin adoptar— y la medición las consulta aparte. Hay un test que lo vigila con dos servidores de verdad: la geometría idéntica, `adoptedStyleSheets` en cero y ningún `<style>` nuevo. Es apagable (`hojasExternas: false`), solo se piden URLs que la propia página declara en `styleSheets[].href` y solo por http(s) — ficheros que el navegador ya descargó para pintar, así que no se abre ningún destino nuevo.
+
+**Y lo honesto sobre el alcance:** lo medido es que la nota de cobertura desaparece, no que cambie ningún veredicto. Lo intenté de dos maneras —con foco de documento y sin él— y la vía del render encontraba el indicador igual, porque `el.focus()` cambia el estilo computado aunque el documento no tenga el foco. El CSS es la vía de respaldo; lo que se gana es que cuatro criterios dejen de estar marcados como «medición incompleta» en cada página con un CDN. La capa de viewport tiene su propia pasada y todavía no rescata nada: eso queda pendiente y dicho.
+
+**Dos errores propios por el camino, los dos encontrados por la suite de integración.** `hojasLegibles` se llamaba desde el navegador y no estaba en la lista `FNS` que se inyecta: `ReferenceError` que ni el módulo cargando ni la suite pura ven, y que tapaba el canal de errores de la capa. Hay ahora un guardián estático que lo caza antes: si el cuerpo inyectado **llama** a una función que el módulo define, esa función tiene que estar también inyectada (comprobado poniéndolo rojo a propósito). Y el rescate, al colocarse por delante de todo lo que lee el CSSOM, quedó por encima de la declaración de `errores`: su rama de error —justo la que no puede romperse— lanzaba `Cannot access 'errores' before initialization`. Lo cazó el test de «una fase caída no hace desaparecer criterios del informe».
+
+**739 tests unitarios** (de 738) y 169 de integración (de 162), en verde.
 
 ### v0.54.0 — «candidato a falso positivo» y «nadie lo ha mirado» no son lo mismo
 
