@@ -64,14 +64,15 @@ const informe = analyze(understand(html));
 ## Tests
 
 ```bash
-npm test                    # suite pura (node --test), sin navegador — 725 tests
+npm test                    # suite pura (node --test), sin navegador — 738 tests
 npm run test:integracion    # integración con Chromium (Playwright) — 160 tests
 npm run bench               # banco de precisión accname contra corpus WPT
 npm run smoke               # humo del artifact generado, en Chromium real
 node scripts/quien-declara-conforme.mjs   # quién puede declarar conforme qué, y con qué base
 node scripts/quien-declara-conforme.mjs --no-aplica   # y quién puede cerrar un criterio sin dejar rastro
 node scripts/comparar-auditorias.mjs a.json b.json      # qué cambió entre dos auditorías del mismo sitio
-node scripts/comparar-auditorias.mjs a.json --referencia barreras.csv   # contra una auditoría hecha a mano
+node scripts/comparar-auditorias.mjs a.json --referencia barreras.csv   # contra una lista de barreras
+node scripts/comparar-auditorias.mjs a.json --seguimiento hoja.xlsx     # contra la hoja de seguimiento de una persona
 ```
 
 `PW_CHROMIUM=/ruta/a/chrome` apunta a un Chromium ya instalado y lo respetan todos los drivers a la vez (`src/playwright-launch.js`).
@@ -984,6 +985,25 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 **En el cruce con axe, dos afirmaciones que no se podían sostener.** `crossCheck` fabricaba `{findings: []}` cuando el motor no llegaba a construir el modelo —texto suelto, un comentario, una cadena vacía—, y ese resultado entraba en la reconciliación como una comprobación limpia: «soloMotor: 0» era indistinguible de «el motor comprobó y no encontró nada». Y el «acuerdo» se construía solo porque coincidía el número de criterio: el motor acusando a `img.logo` y axe a otro `img` de la página salían como «acuerdo: 1». Casar los elementos exige la página abierta —lo hace la orquestación, no la reconciliación pura—, así que ahora se publica cuántos elementos trae cada fuente, que la coincidencia a nivel de elemento NO está comprobada, y que el motor no miró cuando no miró.
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
+
+### v0.54.0 — «candidato a falso positivo» y «nadie lo ha mirado» no son lo mismo
+
+Con la hoja de seguimiento de una auditoría humana delante, el modo `--referencia` quedó en evidencia. Lee una **lista de barreras**, y una lista de barreras no puede decir lo único que de verdad hace falta saber. La hoja traía cuatro criterios con hallazgos, el agente denunciaba catorce, y el informe sacó «**SOLO EL AGENTE · 10 — candidatos a falso positivo**». Era falso: de esos diez, **nueve estaban sin evaluar** en la hoja y **uno estaba marcado como que cumple**. Son dos cosas distintísimas —de la primera no se concluye nada sobre precisión, y la segunda es el único desacuerdo real de todo el libro— y meterlas en el mismo montón es exactamente la forma de no mirar la que importaba.
+
+Una hoja de seguimiento sí lo distingue, porque tiene vocabulario para ello: una matriz de criterios por páginas donde cada celda dice cumple, falla, no aplica, o que todavía nadie lo ha visto. Así que hay un modo nuevo, `--seguimiento hoja.xlsx`, que **lee el `.xlsx` directamente** y parte el cotejo en los cuatro montones que exigen cuatro reacciones distintas:
+
+- **Se le escapan** — la persona lo denuncia y el agente no. Lo más grave que puede salir, y va primero.
+- **Candidatos a falso positivo** — la persona dice que **cumple** y el agente lo denuncia. Estos sí hay que ir a verlos.
+- **Desacuerdo de aplicabilidad** — la persona dice «no aplica» y el agente denuncia. Un «no aplica» saca el criterio del informe sin que nadie lo mire; si el agente tiene razón, ese cierre es el que hay que deshacer.
+- **El agente va por delante** — la persona no lo ha mirado todavía. De aquí no se concluye nada.
+
+Y al final, **la cuenta tiene que cerrar**: una línea suma los montones y los compara con los criterios de la hoja, porque un criterio que no aparezca en ninguno sería un criterio del que no se está diciendo nada.
+
+**El `.xlsx` se lee sin dependencias** (`scripts/xlsx-min.mjs`): un `.xlsx` es un ZIP con XML dentro, y para leer celdas de texto hace falta el directorio central del ZIP, el `inflateRaw` que ya trae Node, la tabla de cadenas compartidas y el XML de la hoja. Unas cien líneas, y el lector dice por escrito lo que **no** hace: no evalúa fórmulas, no entiende formatos de fecha y no mira colores ni celdas combinadas. Comprobado contra el libro real de una auditoría —seis pestañas, 1006 filas, celdas desplazadas— celda por celda contra lo que leía `openpyxl`.
+
+**Tres cosas que la hoja real enseñó por el camino.** La columna de criterios y las de páginas **se localizan solas**, por contenido: nada que configurar. El primer umbral pedía dos veredictos por columna y se cargaba las hojas pequeñas, donde una columna legítima tiene uno. Un valor que no esté en el vocabulario **se dice** en vez de darse por «sin mirar», porque así un error de escritura se convertiría en silencio — pero el aviso solo mira dentro de las columnas de veredictos, que si no saltaba por «A», «AA» y «Obligatorio», y un aviso que salta donde no hay nada enseña a no leer los avisos. Y una columna que **mezcla** veredictos con otra cosa se señala: en la hoja real era una fila en la que el veredicto de la primera página se había escrito una columna antes.
+
+**738 tests unitarios** (de 725) y 162 de integración, en verde.
 
 ### v0.53.2 — el 12 % de las barreras que el cotejo no veía
 

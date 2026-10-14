@@ -204,3 +204,98 @@ test("comparar: lo que sigue sin poder distinguirse se CUENTA y se dice", async 
   assert.match(r.stdout, /NI selector NI elemento/);
   assert.match(r.stdout, /comparten identidad con otra/);
 });
+
+/**
+ * EL MODO HOJA DE SEGUIMIENTO, Y POR QUÉ HIZO FALTA.
+ *
+ * El modo `--referencia` lee una LISTA DE BARRERAS, y con la auditoría real de
+ * un sitio delante quedó claro lo que eso no puede decir. La hoja traía cuatro
+ * criterios con hallazgos y el agente denunciaba catorce, así que el informe
+ * sacó «SOLO EL AGENTE · 10 (candidatos a falso positivo)». Y era falso: de
+ * esos diez, nueve estaban SIN EVALUAR en la hoja y uno estaba marcado como que
+ * CUMPLE. Son dos cosas distintísimas —una no dice nada de la precisión del
+ * agente y la otra es el único desacuerdo de verdad— y meterlas en el mismo
+ * montón es la forma de no mirar la que importaba.
+ *
+ * Una hoja de seguimiento sí lo distingue, porque tiene vocabulario: cumple,
+ * falla, no aplica, y «nulo» para lo que nadie ha visto todavía.
+ */
+const hojaCsv = (filas) => "Criterio;Nivel;home;destino;galeria\n" + filas.map((f) => f.join(";")).join("\n") + "\n";
+
+test("seguimiento: «la persona dice que cumple y el agente denuncia» va aparte de «nadie lo ha mirado»", async () => {
+  const h = await escribe("seg1.csv", hojaCsv([
+    ["SC 2.4.11 — Foco no oscurecido", "AA", "Total", "Total", "Total"],
+    ["SC 1.4.3 — Contraste", "AA", "Nulo", "Nulo", "Nulo"]
+  ]));
+  const audit = await escribe("r.json", auditoria({ "2.4.11": { v: "falla", n: 7 }, "1.4.3": { v: "falla", n: 138 } }));
+  const r = await run([audit, "--seguimiento", h]);
+  const falsos = r.stdout.split("CANDIDATOS A FALSO POSITIVO")[1].split("── ")[0];
+  assert.match(falsos, /2\.4\.11/, "este sí es un candidato: la persona dice que cumple");
+  assert.doesNotMatch(falsos, /1\.4\.3/, "y este no: nadie se ha pronunciado enfrente");
+  assert.match(r.stdout.split("VA POR DELANTE")[1], /1\.4\.3/);
+});
+
+test("seguimiento: un «no aplica» contra una denuncia es un desacuerdo de APLICABILIDAD", async () => {
+  const h = await escribe("seg2.csv", hojaCsv([["SC 1.4.13 — Contenido al recibir foco", "AA", "No aplica", "No aplica", "No aplica"]]));
+  const audit = await escribe("s.json", auditoria({ "1.4.13": { v: "falla", n: 14 } }));
+  const r = await run([audit, "--seguimiento", h]);
+  assert.match(r.stdout.split("APLICABILIDAD")[1], /1\.4\.13/);
+  assert.match(r.stdout, /saca el criterio del informe sin que nadie lo mire/);
+});
+
+test("seguimiento: lo que la persona denuncia y el agente no es LO MÁS GRAVE y sale primero", async () => {
+  const h = await escribe("seg3.csv", hojaCsv([["SC 1.1.1 — Contenido no textual", "A", "Ninguno", "Total", "Total"]]));
+  const audit = await escribe("t.json", auditoria({ "1.1.1": { v: "revisar" } }));
+  const r = await run([audit, "--seguimiento", h]);
+  const antes = r.stdout.split("CANDIDATOS A FALSO POSITIVO")[0];
+  assert.match(antes, /SE LE ESCAPAN[\s\S]*1\.1\.1/, "primero, y antes que todo lo demás");
+  /* Lo peor de alguna página manda: falla en una, falla en el sitio. */
+  assert.match(r.stdout, /falla x1, cumple x2/);
+});
+
+test("seguimiento: la cuenta cierra — ningún criterio se queda sin decir", async () => {
+  const h = await escribe("seg4.csv", hojaCsv([
+    ["SC 1.1.1", "A", "Ninguno", "Total", "Total"],
+    ["SC 2.4.11", "AA", "Total", "Total", "Total"],
+    ["SC 1.4.13", "AA", "No aplica", "No aplica", "No aplica"],
+    ["SC 1.4.3", "AA", "Nulo", "Nulo", "Nulo"],
+    ["SC 2.4.5", "AA", "Total", "Total", "Total"]
+  ]));
+  const audit = await escribe("u.json", auditoria({
+    "1.1.1": { v: "revisar" }, "2.4.11": { v: "falla", n: 7 }, "1.4.13": { v: "falla", n: 14 },
+    "1.4.3": { v: "falla", n: 1 }, "2.4.5": { v: "cumple" }
+  }));
+  const r = await run([audit, "--seguimiento", h]);
+  const m = /Criterios de la hoja: (\d+) = (\d+) escapados \+ (\d+) falsos candidatos \+ (\d+) de aplicabilidad \+ (\d+) por delante \+ (\d+) coincidentes \+ (\d+) sin absolver \+ (\d+) sin ficha \+ (\d+) de acuerdo/.exec(r.stdout);
+  assert.ok(m, "la línea del recuento tiene que estar: " + r.stdout.slice(-400));
+  const total = Number(m[1]);
+  const suma = m.slice(2).reduce((a, x) => a + Number(x), 0);
+  assert.equal(suma, total, "los montones tienen que sumar los criterios de la hoja");
+  assert.equal(total, 5);
+});
+
+test("seguimiento: un valor que no está en el vocabulario se DICE, no se da por «sin mirar»", async () => {
+  const h = await escribe("seg5.csv", hojaCsv([
+    ["SC 1.4.3", "AA", "Total", "Total", "Total"],
+    ["SC 1.1.1", "A", "Regulal", "Total", "Total"]
+  ]));
+  const audit = await escribe("v.json", auditoria({ "1.4.3": { v: "cumple" }, "1.1.1": { v: "cumple" } }));
+  const r = await run([audit, "--seguimiento", h]);
+  assert.match(r.stdout, /no reconozco/);
+  assert.match(r.stdout, /Regulal/);
+});
+
+test("seguimiento: una hoja sin columna de criterios se rechaza con las cabeceras delante", async () => {
+  const h = await escribe("seg6.csv", "Pagina;Nota\nhttps://x.test/;Total\n");
+  const audit = await escribe("w.json", auditoria({ "1.4.3": { v: "falla", n: 1 } }));
+  const r = await run([audit, "--seguimiento", h]);
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /ninguna columna con números de criterio/);
+});
+
+test("seguimiento: y un fichero que no existe, igual que en los otros modos", async () => {
+  const audit = await escribe("x.json", auditoria({ "1.4.3": { v: "falla", n: 1 } }));
+  const r = await run([audit, "--seguimiento", join(dir, "no-esta.csv")]);
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /No existe la hoja de seguimiento/);
+});

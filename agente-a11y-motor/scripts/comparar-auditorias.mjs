@@ -36,14 +36,20 @@ import { readFile } from "node:fs/promises";
 const args = process.argv.slice(2);
 const refIx = args.indexOf("--referencia");
 const referencia = refIx !== -1 ? args[refIx + 1] : null;
+const segIx = args.indexOf("--seguimiento");
+const seguimientoRuta = segIx !== -1 ? args[segIx + 1] : null;
+const hojaIx = args.indexOf("--hoja");
+const hojaNombre = hojaIx !== -1 ? args[hojaIx + 1] : null;
 // OJO con el `refIx + 1`: sin `--referencia`, refIx es -1 y eso se comía el
 // primer fichero. Lo encontró el primer uso, que es lo que tienen las pruebas
 // de verdad frente a leer el código.
-const ficheros = args.filter((a, i) => a.indexOf("--") !== 0 && !(refIx !== -1 && i === refIx + 1));
+const valorDeOpcion = new Set([refIx, segIx, hojaIx].filter((i) => i !== -1).map((i) => i + 1));
+const ficheros = args.filter((a, i) => a.indexOf("--") !== 0 && !valorDeOpcion.has(i));
 
 if (!ficheros.length) {
   console.error("Uso:\n  node scripts/comparar-auditorias.mjs antes.json despues.json" +
-    "\n  node scripts/comparar-auditorias.mjs auditoria.json --referencia barreras.csv");
+    "\n  node scripts/comparar-auditorias.mjs auditoria.json --referencia barreras.csv" +
+    "\n  node scripts/comparar-auditorias.mjs auditoria.json --seguimiento hoja.xlsx [--hoja Seguimiento]");
   process.exit(2);
 }
 
@@ -149,7 +155,262 @@ const notaIdentidad = function (a, b) {
 
 const uno = await leer(ficheros[0]);
 
-if (referencia) {
+if (seguimientoRuta) {
+  /* ── MODO HOJA DE SEGUIMIENTO ───────────────────────────────────────────────
+   *
+   * El modo `--referencia` lee una LISTA DE BARRERAS, y con la auditoría real de
+   * un sitio delante se vio lo que eso no puede decir. La hoja traía cuatro
+   * criterios con hallazgos y el agente denunciaba catorce, así que el informe
+   * sacó «SOLO EL AGENTE · 10 (candidatos a falso positivo)». Y era falso: de
+   * esos diez, nueve estaban sin evaluar en la hoja —«Nulo»— y uno estaba
+   * marcado como que CUMPLE. Son dos cosas distintísimas, y meterlas en el mismo
+   * montón es la forma de no mirar la única que importaba.
+   *
+   * Una hoja de seguimiento sí lo distingue, porque tiene vocabulario para ello:
+   * una matriz de criterios por páginas donde cada celda dice cumple, falla, no
+   * aplica o todavía nadie lo ha visto. Con eso el cotejo se parte en cuatro
+   * montones que exigen cuatro reacciones distintas. */
+  const { leeLibro } = await import("./xlsx-min.mjs");
+  let filas;
+  if (/\.xlsx$/i.test(seguimientoRuta)) {
+    let libro;
+    try { libro = await leeLibro(seguimientoRuta); }
+    catch (e) { salir("✕ No puedo leer " + seguimientoRuta + ": " + e.message); }
+    const cual = hojaNombre || libro.hojas.find((h) => /seguimiento/i.test(h));
+    if (!cual) {
+      salir("✕ En " + seguimientoRuta + " no hay ninguna hoja que se llame «Seguimiento».",
+        "  Hojas del libro: " + libro.hojas.join(" | "),
+        "  Dime cuál con `--hoja «<nombre>»`.");
+    }
+    try { filas = libro.filas(cual); }
+    catch (e) { salir("✕ " + e.message); }
+    console.log("HOJA:    " + seguimientoRuta + "  (pestaña «" + cual + "»)");
+  } else {
+    let txt;
+    try { txt = await readFile(seguimientoRuta, "utf8"); }
+    catch (e) {
+      if (e.code === "ENOENT") salir("✕ No existe la hoja de seguimiento: " + seguimientoRuta);
+      salir("✕ No puedo leer " + seguimientoRuta + ": " + e.message);
+    }
+    const ls = txt.split(/\r?\n/).filter((l) => l.trim());
+    if (ls.length < 2) salir("✕ " + seguimientoRuta + " no tiene filas suficientes (" + ls.length + ").");
+    const sp = (ls[0].match(/;/g) || []).length >= (ls[0].match(/,/g) || []).length ? ";" : ",";
+    filas = ls.map((l) => l.replace(/^﻿/, "").split(sp).map((c) => c.replace(/^"|"$/g, "").trim()));
+    console.log("HOJA:    " + seguimientoRuta);
+  }
+  console.log("AGENTE:  " + ficheros[0] + "\n");
+
+  /* El vocabulario de la hoja. Se normaliza sin acentos y en minúsculas porque
+   * lo escribe una persona a mano, pero NO se adivina: un valor que no esté en
+   * ninguna lista se dice al final en vez de tratarse como «sin mirar», que es
+   * como un error de escritura se convertiría en silencio. */
+  const pela = (s) => String(s == null ? "" : s).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
+  const VOCAB = [
+    ["falla", ["ninguno", "no cumple", "falla", "fallo", "incumple", "no", "fail", "error", "barrera", "ko"]],
+    ["parcial", ["parcial", "parcialmente", "cumple parcial", "cumple parcialmente", "partial"]],
+    ["cumple", ["total", "totalmente", "cumple", "pasa", "conforme", "ok", "si", "pass", "aprobado", "correcto"]],
+    ["no-aplica", ["no aplica", "no procede", "n/a", "na", "not applicable", "no aplicable"]],
+    ["sin-mirar", ["nulo", "pendiente", "sin evaluar", "sin comprobar", "por revisar", "tbd", "-", "", "null"]]
+  ];
+  const desconocidos = {};
+  let numericos = 0;
+  const clasifica = function (celda) {
+    const t = pela(celda);
+    for (const [clase, lista] of VOCAB) if (lista.indexOf(t) !== -1) return clase;
+    /* Un número no es un veredicto en ninguna hoja: una prioridad, un peso, un
+     * recuento. Se cuentan aparte en vez de engordar la lista de avisos. */
+    if (/^-?\d+([.,]\d+)?%?$/.test(t)) { numericos++; return null; }
+    desconocidos[celda] = (desconocidos[celda] || 0) + 1;
+    return null;   // null ≠ «sin mirar»: es «no sé qué pone aquí»
+  };
+
+  /* La columna del criterio es la primera que contenga un número de criterio en
+   * la mayoría de sus filas; las columnas de páginas son las que traen valores
+   * del vocabulario. Así no hay que configurar nada. */
+  const RE = /\b([1-4])\.(\d)\.(\d+)\b/;
+  const anchura = filas.reduce((a, f) => Math.max(a, f.length), 0);
+  let colCrit = -1, mejor = 0;
+  for (let c = 0; c < anchura; c++) {
+    const n = filas.filter((f) => RE.test(String(f[c] == null ? "" : f[c]))).length;
+    if (n > mejor) { mejor = n; colCrit = c; }
+  }
+  if (colCrit === -1) {
+    salir("✕ En la hoja no encuentro ninguna columna con números de criterio («1.4.3» o «SC 1.4.3 — …»).",
+      "  La primera fila dice: " + (filas[0] || []).slice(0, 12).join(" | "));
+  }
+
+  /* QUÉ COLUMNAS SON LAS DE LAS PÁGINAS.
+   *
+   * Hacía falta saberlo antes de clasificar nada. La primera versión miraba
+   * TODAS las columnas de la fila, y con la hoja real delante avisó de diez
+   * «valores que no reconozco» que eran las columnas de al lado —«A», «AA»,
+   * «Obligatorio», «Visual», la prioridad—. Un aviso que salta donde no hay
+   * nada que avisar enseña a no leer los avisos, y entonces el día que uno sea
+   * de verdad tampoco se lee.
+   *
+   * Así que primero se localizan las columnas que de verdad llevan veredictos
+   * —las que traen dos o más celdas del vocabulario— y el aviso solo mira ahí
+   * dentro. */
+  const esVocabulario = function (celda) {
+    const t = pela(celda);
+    if (!t) return false;                                  // vacía no es un valor
+    for (const [, lista] of VOCAB) if (lista.indexOf(t) !== -1) return true;
+    return false;
+  };
+  const sonVeredicto = [];
+  for (let c = 0; c < anchura; c++) {
+    if (c === colCrit) continue;
+    /* Basta UNA celda del vocabulario para que la columna cuente. El primer
+     * umbral pedía dos y se cargaba las hojas pequeñas —tres páginas y dos
+     * criterios— donde una columna legítima tiene una sola. Lo que separa una
+     * columna de páginas de la de «Nivel» o «Requisito» no es cuántas tiene,
+     * sino que tenga alguna: «A», «AA» u «Obligatorio» no son veredictos. */
+    if (filas.some((f) => esVocabulario(f[c]))) sonVeredicto.push(c);
+  }
+  /* UNA COLUMNA MEZCLADA SUELE SER UNA FILA DESPLAZADA.
+   *
+   * En la hoja real, la columna «Prioridad» traía 50 números y además seis
+   * veredictos: en seis filas —las de los criterios que añadió WCAG 2.2— el
+   * veredicto de la primera página se había escrito una columna antes, y la
+   * última columna de páginas quedaba vacía. El cotejo sale bien porque cuenta
+   * valores y no posiciones, pero callarlo sería quedarse con un dato que a
+   * quien mantiene la hoja le interesa. */
+  const mezcladas = sonVeredicto.filter((c) => {
+    let v = 0, o = 0;
+    filas.forEach((f) => {
+      const t = pela(f[c]);
+      if (!t) return;
+      let esV = false;
+      for (const [clase, lista] of VOCAB) if (clase !== "sin-mirar" && lista.indexOf(t) !== -1) esV = true;
+      if (esV) v++; else o++;
+    });
+    return v && o > v;
+  });
+  if (!sonVeredicto.length) {
+    salir("✕ He encontrado la columna de criterios (la " + (colCrit + 1) + ") pero ninguna columna de veredictos.",
+      "  Vocabulario que entiendo: " + VOCAB.map(([k, l]) => k + " (" + l.slice(0, 4).join(", ") + "…)").join(" · "),
+      "  La primera fila dice: " + (filas[0] || []).slice(0, 14).join(" | "));
+  }
+
+  const hoja = {};
+  filas.forEach((f) => {
+    const m = RE.exec(String(f[colCrit] == null ? "" : f[colCrit]));
+    if (!m) return;
+    const n = m[1] + "." + m[2] + "." + m[3];
+    const cuenta = { falla: 0, parcial: 0, cumple: 0, "no-aplica": 0, "sin-mirar": 0 };
+    let celdas = 0;
+    sonVeredicto.forEach((c) => {
+      const v = f[c];
+      /* Una celda vacía al final de la fila es que la fila se acabó, no un
+       * criterio sin mirar: no se cuenta ni como una cosa ni como la otra. */
+      if (!pela(v)) return;
+      const k = clasifica(v);
+      if (k === null) return;
+      cuenta[k]++; celdas++;
+    });
+    if (!celdas) return;
+    hoja[n] = cuenta;
+  });
+  if (!Object.keys(hoja).length) {
+    salir("✕ He encontrado la columna de criterios pero ninguna celda con veredicto reconocible.",
+      "  Vocabulario que entiendo: " + VOCAB.map(([k, l]) => k + " (" + l.slice(0, 4).join(", ") + "…)").join(" · "));
+  }
+
+  /* El veredicto de la persona para el criterio entero, con el mismo criterio de
+   * seguridad que usa el agente: lo peor que haya dicho de alguna página manda.
+   * Un criterio que falla en una página falla en el sitio. */
+  const suyo = function (c) {
+    if (c.falla) return "falla";
+    if (c.parcial) return "parcial";
+    if (c.cumple) return "cumple";
+    if (c["no-aplica"]) return "no-aplica";
+    return "sin-mirar";
+  };
+  const mios = porCriterio(uno);
+  const DENUNCIA = (v) => v === "falla";
+  const ABSUELVE = (v) => v === "cumple" || v === "pasa";
+
+  const escapan = [], falsos = [], aplicabilidad = [], adelantado = [], coinciden = [], noAbsuelve = [], fuera = [];
+  let deAcuerdo = 0;
+  const detalle = (c) => Object.keys(c).filter((k) => c[k]).map((k) => k + " x" + c[k]).join(", ");
+
+  Object.keys(hoja).sort((a, b) => a.localeCompare(b, "en", { numeric: true })).forEach((n) => {
+    const s = suyo(hoja[n]);
+    const mio = mios[n];
+    const v = mio ? mio.veredicto : null;
+    const nb = mio ? mio.barreras : 0;
+    const linea = n + "  [persona: " + detalle(hoja[n]) + "]  [agente: " + (v || "sin ficha") +
+      (nb ? " · " + nb + " barrera(s)" : "") + "]";
+    /* Un criterio de la hoja del que el agente no tiene ficha no es el agente
+     * callándose: la hoja puede venir de WCAG 2.1 y traer el 4.1.1, que 2.2
+     * retiró. Eso va aparte o se leería como un hueco del motor. */
+    if (!v) { fuera.push(n + "  [persona: " + detalle(hoja[n]) + "]"); return; }
+    if (s === "falla" && DENUNCIA(v)) coinciden.push(linea);
+    else if (s === "falla") escapan.push(linea);
+    else if ((s === "cumple" || s === "parcial") && DENUNCIA(v)) falsos.push(linea);
+    else if (s === "no-aplica" && DENUNCIA(v)) aplicabilidad.push(linea);
+    else if (s === "sin-mirar" && DENUNCIA(v)) adelantado.push(linea);
+    else if ((s === "cumple" || s === "no-aplica") && !ABSUELVE(v) && v !== "no-aplica") noAbsuelve.push(linea);
+    else deAcuerdo++;
+  });
+
+  const bloque = (t, xs, marca, nota) => {
+    console.log("── " + t + " · " + xs.length);
+    if (nota) nota.forEach((l) => console.log("   " + l));
+    xs.forEach((x) => console.log("   " + marca + " " + x));
+    console.log("");
+  };
+  bloque("SE LE ESCAPAN al agente (la persona lo denuncia y él no)", escapan, "✕",
+    ["Lo más grave que puede salir aquí: una barrera real que el agente no ve."]);
+  bloque("CANDIDATOS A FALSO POSITIVO (la persona dice que CUMPLE y el agente lo denuncia)", falsos, "!",
+    ["Esto sí son candidatos de verdad, y hay que ir a verlos uno por uno.",
+     "O el agente se lo inventa, o la persona lo miró en otras condiciones."]);
+  bloque("DESACUERDO DE APLICABILIDAD (la persona dice «no aplica» y el agente denuncia)", aplicabilidad, "?",
+    ["Un «no aplica» saca el criterio del informe sin que nadie lo mire.",
+     "Si el agente tiene razón en que aplica, ese cierre es el que hay que deshacer."]);
+  bloque("EL AGENTE VA POR DELANTE (la persona no lo ha mirado todavía)", adelantado, "·",
+    ["De aquí NO se concluye nada sobre precisión: nadie se ha pronunciado enfrente."]);
+  bloque("COINCIDEN (los dos lo denuncian)", coinciden, "✓");
+  if (noAbsuelve.length) {
+    console.log("── Y donde la persona absuelve, el agente no (sin denunciar) · " + noAbsuelve.length);
+    console.log("   Esto es el diseño, no un desacuerdo: `revisar`, `humano` y `cumple-parcial`");
+    console.log("   no son conformidad, y el agente no firma lo que no ha medido entero.");
+    noAbsuelve.forEach((x) => console.log("   – " + x));
+    console.log("");
+  }
+  if (fuera.length) {
+    console.log("── Criterios de la hoja de los que el agente no tiene ficha · " + fuera.length);
+    console.log("   No es un hueco del motor: una hoja de WCAG 2.1 trae criterios que 2.2 retiró.");
+    fuera.forEach((x) => console.log("   » " + x));
+    console.log("");
+  }
+  /* La cuenta tiene que cerrar: si los montones no suman los criterios de la
+   * hoja, hay criterios que no se están diciendo en ninguna parte. */
+  const total = Object.keys(hoja).length;
+  console.log("Criterios de la hoja: " + total + " = " + escapan.length + " escapados + " + falsos.length +
+    " falsos candidatos + " + aplicabilidad.length + " de aplicabilidad + " + adelantado.length +
+    " por delante + " + coinciden.length + " coincidentes + " + noAbsuelve.length + " sin absolver + " +
+    fuera.length + " sin ficha + " + deAcuerdo + " de acuerdo sin más.\n");
+
+  if (mezcladas.length) {
+    console.log("── Ojo con la hoja: " + mezcladas.length + " columna(s) mezclan veredictos con otra cosa");
+    mezcladas.forEach((c) => console.log("   » columna " + (c + 1) +
+      " («" + String((filas[0] || [])[c] || "sin cabecera") + "»): suele ser una fila en la que el" +
+      " veredicto de la primera página se escribió una columna antes."));
+    console.log("   El cotejo cuenta valores, no posiciones, así que sale bien de todas formas.");
+    console.log("");
+  }
+  const mal = Object.keys(desconocidos);
+  if (mal.length) {
+    console.log("── Celdas con un valor que no reconozco · " + mal.length + " distinto(s)");
+    console.log("   No las he contado como nada. Si alguna es un veredicto, dímelo y amplío el vocabulario:");
+    mal.slice(0, 12).forEach((k) => console.log("   » " + JSON.stringify(k) + " x" + desconocidos[k]));
+    if (mal.length > 12) console.log("   … y " + (mal.length - 12) + " más");
+    console.log("");
+  }
+  console.log("Lo que esto NO dice: si las barreras que coinciden en criterio son las MISMAS");
+  console.log("barreras. Eso se compara elemento a elemento, con el selector delante.");
+} else if (referencia) {
   // ── MODO REFERENCIA ────────────────────────────────────────────────────────
   let csv;
   try {
