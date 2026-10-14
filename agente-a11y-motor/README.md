@@ -64,12 +64,14 @@ const informe = analyze(understand(html));
 ## Tests
 
 ```bash
-npm test                    # suite pura (node --test), sin navegador — 712 tests
+npm test                    # suite pura (node --test), sin navegador — 719 tests
 npm run test:integracion    # integración con Chromium (Playwright) — 160 tests
 npm run bench               # banco de precisión accname contra corpus WPT
 npm run smoke               # humo del artifact generado, en Chromium real
 node scripts/quien-declara-conforme.mjs   # quién puede declarar conforme qué, y con qué base
 node scripts/quien-declara-conforme.mjs --no-aplica   # y quién puede cerrar un criterio sin dejar rastro
+node scripts/comparar-auditorias.mjs a.json b.json      # qué cambió entre dos auditorías del mismo sitio
+node scripts/comparar-auditorias.mjs a.json --referencia barreras.csv   # contra una auditoría hecha a mano
 ```
 
 `PW_CHROMIUM=/ruta/a/chrome` apunta a un Chromium ya instalado y lo respetan todos los drivers a la vez (`src/playwright-launch.js`).
@@ -982,6 +984,22 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 **En el cruce con axe, dos afirmaciones que no se podían sostener.** `crossCheck` fabricaba `{findings: []}` cuando el motor no llegaba a construir el modelo —texto suelto, un comentario, una cadena vacía—, y ese resultado entraba en la reconciliación como una comprobación limpia: «soloMotor: 0» era indistinguible de «el motor comprobó y no encontró nada». Y el «acuerdo» se construía solo porque coincidía el número de criterio: el motor acusando a `img.logo` y axe a otro `img` de la página salían como «acuerdo: 1». Casar los elementos exige la página abierta —lo hace la orquestación, no la reconciliación pura—, así que ahora se publica cuántos elementos trae cada fuente, que la coincidencia a nivel de elemento NO está comprobada, y que el motor no miró cuando no miró.
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
+
+### v0.53.0 — la herramienta para medir el agente contra una verdad conocida
+
+Hasta aquí la precisión se ha medido por dentro: criterios que no podían denunciar, capas que firmaban conformidad sin haberlo visto todo, «no aplica» que cerraban sin dejar rastro. Todo eso se encuentra leyendo el código y midiendo con páginas de respuesta sabida, y da para once versiones. Lo que no se puede medir así es lo único que de verdad importa: **sobre un sitio real y grande, qué se le escapa y qué se inventa**.
+
+Para eso hacen falta dos cosas que no están en el código —una auditoría anterior del mismo sitio, o una hecha a mano por una persona— y esta versión es la herramienta que las compara. `node scripts/comparar-auditorias.mjs` con dos modos:
+
+**Dos pasadas del agente** (`antes.json despues.json`): qué criterio cambió de veredicto y en qué dirección, y qué barreras aparecieron y desaparecieron **elemento a elemento**, cotejadas por criterio, página y selector. Lo que se vuelve más indulgente se lista aparte y con aviso, porque en este proyecto esa es la dirección peligrosa: cada caso hay que justificarlo —un falso positivo retirado está bien— o es una regresión. Y un criterio que **desaparece del informe** sale primero, que es lo más grave que puede aparecer ahí.
+
+**Contra una referencia humana** (`auditoria.json --referencia barreras.csv`): lo que la persona marca y el agente no —distinguiendo «lo deja a juicio» de «lo absuelve», que no es lo mismo— y lo que solo ve el agente, que son los candidatos a falso positivo. Vale cualquier CSV con una columna de criterio: el `-barreras.csv` del propio agente o un export de una hoja de seguimiento.
+
+**Y los dos errores que cometió en su primer uso, con datos reales delante.** Probada contra dos pasadas reales de visitspain.com.cn (464 barreras cada una), clasificó como «más indulgente» cuatro criterios que antes tenían el veredicto a `null` —es decir, que nadie se había pronunciado—, que es exactamente lo contrario. Y en modo referencia leyó la columna del subcriterio de la EN («9.1.1.1»), sacó de ahí «9.1.1» con la expresión del criterio WCAG, y produjo siete criterios inventados y todo lo demás «escapado». Los dos están arreglados y fijados en tests. La comprobación de que el mecanismo entero funciona: la pasada v5 contra su propio CSV de barreras da **14 criterios de 14, con el mismo recuento en cada uno**.
+
+Dicho lo obvio: esto **no concluye nada solo**. Señala dónde mirar, y que dos auditorías coincidan en el criterio no quiere decir que coincidan en la barrera. Eso se compara elemento a elemento, con el selector delante, y lo hace una persona.
+
+**719 tests unitarios** (de 712) y 160 de integración, en verde.
 
 ### v0.52.0 — los cinco «no aplica» que absolvían en silencio
 
