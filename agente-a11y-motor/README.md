@@ -64,11 +64,12 @@ const informe = analyze(understand(html));
 ## Tests
 
 ```bash
-npm test                    # suite pura (node --test), sin navegador — 708 tests
+npm test                    # suite pura (node --test), sin navegador — 712 tests
 npm run test:integracion    # integración con Chromium (Playwright) — 160 tests
 npm run bench               # banco de precisión accname contra corpus WPT
 npm run smoke               # humo del artifact generado, en Chromium real
 node scripts/quien-declara-conforme.mjs   # quién puede declarar conforme qué, y con qué base
+node scripts/quien-declara-conforme.mjs --no-aplica   # y quién puede cerrar un criterio sin dejar rastro
 ```
 
 `PW_CHROMIUM=/ruta/a/chrome` apunta a un Chromium ya instalado y lo respetan todos los drivers a la vez (`src/playwright-launch.js`).
@@ -981,6 +982,20 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 **En el cruce con axe, dos afirmaciones que no se podían sostener.** `crossCheck` fabricaba `{findings: []}` cuando el motor no llegaba a construir el modelo —texto suelto, un comentario, una cadena vacía—, y ese resultado entraba en la reconciliación como una comprobación limpia: «soloMotor: 0» era indistinguible de «el motor comprobó y no encontró nada». Y el «acuerdo» se construía solo porque coincidía el número de criterio: el motor acusando a `img.logo` y axe a otro `img` de la página salían como «acuerdo: 1». Casar los elementos exige la página abierta —lo hace la orquestación, no la reconciliación pura—, así que ahora se publica cuántos elementos trae cada fuente, que la coincidencia a nivel de elemento NO está comprobada, y que el motor no miró cuando no miró.
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
+
+### v0.52.0 — los cinco «no aplica» que absolvían en silencio
+
+La absolución viene en dos formas, y hasta ahora solo se había barrido una. Un criterio declarado conforme al menos deja su fila en el informe; uno marcado **«no aplica» desaparece sin que nadie lo mire**. Doce criterios pueden cerrarse así, casi todos desde el cuaderno de juicio, y medidos con casos de respuesta sabida había **cinco que se cerraban mal**.
+
+**Un vídeo también está enlazado, o lo sirve JavaScript.** `<a href="/jornada.mp4">Vídeo de la jornada</a>` daba «no aplica · la página no tiene ningún vídeo», y lo mismo un reproductor hecho con un elemento personalizado (`<video-player src>`) o un `div` con `data-video`. Ahora esas dos señales —extensión de medio en un enlace, y pinta de reproductor con un medio en sus datos— no dictaminan nada, pero impiden que el criterio se cierre solo: la ficha se emite y dice qué se vio. Un PDF enlazado sigue sin ser un vídeo.
+
+**El cartel con el titular incrustado casi nunca es un `<img>`.** 1.4.5 ya miraba las imágenes de fondo declaradas en las hojas de estilo, pero no las del atributo `style`, que es donde acaban la mitad: `style="background-image:url(/cartel-con-texto.png)"` firmaba «no aplica». Y lo mismo en **2.3.1** con un GIF puesto de fondo — que es el criterio cuyo incumplimiento puede provocar una crisis epiléptica, el último que puede cerrarse por descuido.
+
+**Y un `<area href>` es un enlace.** Tiene destino y tiene nombre (su `alt`); una página cuyos enlaces eran todos de un mapa de imagen salía con 2.4.4 «no aplica · la página no tiene enlaces visibles». Los `<area>` no se ven ellos mismos —los pinta la imagen—, así que no pasaban por el filtro de visibilidad: ahora se toman aparte, comprobando que su `<map>` no esté oculto.
+
+Ninguno de los cinco arreglos convierte nada en barrera: lo único que hacen es **dejar de cerrar el criterio**, de modo que la ficha del cuaderno se emite y alguien lo mira. Y el barrido queda en el repo junto al otro: `node scripts/quien-declara-conforme.mjs --no-aplica` saca la segunda lista, la de quién puede cerrar un criterio sin dejar rastro.
+
+**712 tests unitarios** (de 708) y 160 de integración, en verde. El entregable no se mueve: 7 familias, 21 hallazgos, 55 de 55 con veredicto.
 
 ### v0.51.0 — 3.3.3 leyendo el mensaje de verdad, y el léxico de 1.3.3 medido
 

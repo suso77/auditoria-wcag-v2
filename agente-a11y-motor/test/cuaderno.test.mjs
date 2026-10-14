@@ -604,7 +604,12 @@ test("sin ningún marco ni medio, «no aplica» sigue siendo «no aplica»", () 
   const c = cuad("<main><h1>H</h1><p>Solo texto.</p></main>", { url: "https://x.test/" });
   ["1.2.4", "1.2.5"].forEach((n) => {
     assert.equal(fichaDe(c, n).aplica, false);
-    assert.match((fichaDe(c, n).loQueYaSabemos || [])[0], /marco embebido de ninguna clase/);
+    // Y el motivo dice TODO lo que se ha mirado, que ahora es más que las
+    // etiquetas: también los enlaces a ficheros de medios y lo que tiene pinta
+    // de reproductor hecho con JavaScript.
+    const porque = (fichaDe(c, n).loQueYaSabemos || [])[0];
+    assert.match(porque, /marco embebido/);
+    assert.match(porque, /pinta de reproductor/);
   });
 });
 
@@ -823,4 +828,46 @@ test("1.3.3: sin ninguna frase sensorial, el criterio NO aplica y lo dice", () =
   const f = fichaDe(cuad("<main><h1>T</h1><p>Texto normal sin instrucciones.</p></main>"), "1.3.3");
   assert.equal(f.aplica, false);
   assert.match(f.loQueYaSabemos.join(" "), /solo se ha mirado el TEXTO/, "y dice qué no ha mirado");
+});
+
+/* ── Los «no aplica» que absolvían en silencio ───────────────────────────────
+ *
+ * Un criterio marcado «no aplica» desaparece del informe sin que nadie lo mire:
+ * es la absolución más silenciosa que hay, porque no deja ni una fila. Medidos
+ * con casos de respuesta sabida, había cinco que se cerraban mal.
+ */
+test("1.2.x: un vídeo ENLAZADO o un reproductor de JavaScript no cierran el criterio", () => {
+  const enlazado = cuad('<main><h1>T</h1><p><a href="/jornada.mp4">Vídeo de la jornada (mp4)</a></p></main>');
+  assert.notEqual(fichaDe(enlazado, "1.2.5").aplica, false, "un vídeo enlazado es un vídeo");
+  assert.match(JSON.stringify(fichaDe(enlazado, "1.2.5").queMirar), /jornada\.mp4/);
+
+  const custom = cuad('<main><h1>T</h1><video-player src="/x.m3u8"></video-player></main>');
+  assert.notEqual(fichaDe(custom, "1.2.4").aplica, false, "un elemento personalizado que se llama reproductor");
+
+  const divPlayer = cuad('<main><h1>T</h1><div class="player" data-video="/x.m3u8"></div></main>');
+  assert.notEqual(fichaDe(divPlayer, "1.2.4").aplica, false, "un div con pinta de reproductor y un medio en sus datos");
+
+  // Y lo que no es un medio sigue sin serlo: un PDF enlazado no es un vídeo.
+  const pdf = cuad('<main><h1>T</h1><p><a href="/memoria.pdf">Memoria (PDF)</a></p></main>');
+  assert.equal(fichaDe(pdf, "1.2.5").aplica, false);
+});
+
+test("1.4.5: una imagen de fondo en el atributo `style` tampoco cierra el criterio", () => {
+  const c = cuad('<main><h1>T</h1><div style="background-image:url(/cartel-con-texto.png);width:300px;height:120px"></div></main>');
+  const f = fichaDe(c, "1.4.5");
+  assert.notEqual(f.aplica, false, "el hero con el titular incrustado es EL caso de 1.4.5");
+  assert.match(JSON.stringify(f.queMirar), /cartel-con-texto/);
+});
+
+test("2.3.1: un GIF de fondo tampoco, que este es el criterio de las crisis epilépticas", () => {
+  const c = cuad('<main><h1>T</h1><div style="background-image:url(/parpadeo.gif);width:200px;height:100px"></div></main>');
+  assert.notEqual(fichaDe(c, "2.3.1").aplica, false);
+  // Y una página sin nada de eso sigue saliendo «no aplica».
+  assert.equal(fichaDe(cuad("<main><h1>T</h1><p>Texto quieto.</p></main>"), "2.3.1").aplica, false);
+});
+
+test("2.4.4: un <area href> de un mapa de imagen es un enlace", () => {
+  const c = cuad('<main><h1>T</h1><img src="/mapa.png" alt="Mapa"' +
+    ' usemap="#m"><map name="m"><area shape="rect" coords="0,0,10,10" href="/galicia" alt="Galicia"></map></main>');
+  assert.notEqual(fichaDe(c, "2.4.4").aplica, false, "tiene destino y tiene nombre: es un enlace");
 });

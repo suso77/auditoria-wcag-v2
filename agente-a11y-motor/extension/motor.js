@@ -3796,7 +3796,35 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       if (!u || EMBEBIDOS.test(u) || NO_MEDIOS.test(u)) return false;
       return true;
     });
-    return { propios: propios, externos: externos, dudosos: dudosos };
+    /* LO QUE NO ES UNA ETIQUETA DE MEDIO Y AUN ASÍ ES UN MEDIO.
+     *
+     * Medido con casos de respuesta sabida: una página cuyo vídeo está ENLAZADO
+     * («Vídeo de la jornada (mp4)») o servido por un reproductor hecho con
+     * JavaScript —un elemento personalizado, un `div` con `data-video`, un
+     * `<source>` suelto— salía «no aplica · la página no tiene ningún vídeo». Y
+     * «no aplica» cierra el criterio en el IRA sin que nadie lo mire: es la
+     * absolución más silenciosa que hay, porque no deja ni una fila.
+     *
+     * Ninguna de estas dos señales DICTAMINA nada: lo único que hacen es impedir
+     * que el criterio se cierre solo. La ficha se emite y dice qué se vio. */
+    const EXT_MEDIO = /\.(mp4|webm|ogv|mov|avi|mkv|m4v|mp3|ogg|oga|wav|m4a|aac|flac|m3u8|mpd)(\?|#|$)/i;
+    const enlazados = visibles(doc, "a[href]").filter(function (el) { return EXT_MEDIO.test(el.getAttribute("href") || ""); });
+    const PINTA_DE_REPRODUCTOR = /player|reproductor|videojs|video-js|jwplayer|plyr|flowplayer|mediaelement|hls|dash/i;
+    const sospechosos = Array.prototype.slice.call(doc.querySelectorAll("*")).filter(function (el) {
+      const t = tag(el);
+      if (t === "video" || t === "audio" || t === "iframe" || t === "embed" || t === "object") return false;
+      if (oculto(el)) return false;
+      // Un elemento personalizado que se llama a sí mismo reproductor.
+      if (t.indexOf("-") !== -1 && /(video|audio|player|media)/i.test(t)) return true;
+      // Un contenedor con pinta de reproductor que además apunta a un medio.
+      const señas = (el.getAttribute("class") || "") + " " + (el.getAttribute("id") || "");
+      const datos = Array.prototype.slice.call(el.attributes || []).filter(function (a2) { return a2.name.indexOf("data-") === 0; })
+        .map(function (a2) { return a2.value || ""; }).join(" ");
+      if (PINTA_DE_REPRODUCTOR.test(señas) && (EXT_MEDIO.test(datos) || el.querySelector("source"))) return true;
+      if (EXT_MEDIO.test(datos)) return true;
+      return false;
+    }).slice(0, 10);
+    return { propios: propios, externos: externos, dudosos: dudosos, enlazados: enlazados, sospechosos: sospechosos };
   }
 
   /* 1.3.3 · Instrucciones que dependen de la forma, el color o la posición.
@@ -4057,14 +4085,18 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
        * reconocidos, ni marcos sin identificar. Un marco desconocido puede ser un
        * reproductor, y declarar que el criterio no viene al caso sin haberlo abierto es
        * afirmar lo que no se sabe. */
-      if (!m.propios.length && !m.externos.length && !dudosos.length) {
-        return noAplica("1.2.4", "La página no tiene ningún <video>, <audio> ni marco embebido de ninguna clase: no hay contenido en directo que subtitular.", null, doc);
+      const enlazados = m.enlazados || [], sospechosos = m.sospechosos || [];
+      const nada = !m.propios.length && !m.externos.length && !dudosos.length && !enlazados.length && !sospechosos.length;
+      if (nada) {
+        return noAplica("1.2.4", "La página no tiene ningún <video>, <audio>, marco embebido, enlace a un fichero de medios ni nada con pinta de reproductor: no hay contenido en directo que subtitular.", null, doc);
       }
       return ficha("1.2.4", {
         pregunta: "¿Alguno de estos medios es una emisión EN DIRECTO? Si lo es, ¿lleva subtítulos en directo?",
         queMirar: m.propios.map(function (x) { return ref(x.el, "<" + x.tag + ">, pistas: " + (x.pistas.join(", ") || "ninguna")); })
           .concat(m.externos.map(function (el) { return ref(el, "reproductor embebido: " + (el.getAttribute("src") || el.getAttribute("data") || "").slice(0, 80)); }))
-          .concat(dudosos.map(refMarcoDudoso)),
+          .concat(dudosos.map(refMarcoDudoso))
+          .concat(enlazados.map(function (el) { return ref(el, "enlace a un fichero de medios: " + (el.getAttribute("href") || "").slice(0, 80)); }))
+          .concat(sospechosos.map(function (el) { return ref(el, "con pinta de reproductor hecho con JavaScript: <" + tag(el) + ">"); })),
         loQueYaSabemos: [
           "Si es DIRECTO o grabado no se puede saber desde el marcado: un <video> y una emisión se escriben igual.",
           m.propios.filter(function (x) { return x.subtitulos; }).length + " de " + m.propios.length + " medio(s) propio(s) declaran pista de subtítulos."
@@ -4080,8 +4112,10 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     "1.2.5": function (doc, ctx) {
       const videos = ctx.medios.propios.filter(function (x) { return x.tag === "video"; });
       const dudosos5 = ctx.medios.dudosos || [];
-      if (!videos.length && !ctx.medios.externos.length && !dudosos5.length) {
-        return noAplica("1.2.5", "La página no tiene ningún vídeo ni marco embebido de ninguna clase: no hay nada que audiodescribir.", null, doc);
+      const enlazados5 = (ctx.medios.enlazados || []).filter(function (el) { return !/\.(mp3|ogg|oga|wav|m4a|aac|flac)(\?|#|$)/i.test(el.getAttribute("href") || ""); });
+      const sospechosos5 = ctx.medios.sospechosos || [];
+      if (!videos.length && !ctx.medios.externos.length && !dudosos5.length && !enlazados5.length && !sospechosos5.length) {
+        return noAplica("1.2.5", "La página no tiene ningún vídeo, marco embebido, enlace a un fichero de vídeo ni nada con pinta de reproductor: no hay nada que audiodescribir.", null, doc);
       }
       const sinDesc = videos.filter(function (x) { return !x.descripciones; });
       return ficha("1.2.5", {
@@ -4090,6 +4124,8 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
           .concat(ctx.medios.externos.map(function (el) {
             return ref(el, "reproductor embebido (" + (el.getAttribute("src") || el.getAttribute("data") || "").slice(0, 80) + "): hay que abrirlo para saberlo");
           }))
+          .concat(enlazados5.map(function (el) { return ref(el, "enlace a un fichero de vídeo: " + (el.getAttribute("href") || "").slice(0, 80) + " — si forma parte del sitio auditado, 1.2.5 le aplica"); }))
+          .concat(sospechosos5.map(function (el) { return ref(el, "con pinta de reproductor hecho con JavaScript: <" + tag(el) + ">"); }))
           .concat(dudosos5.map(refMarcoDudoso)),
         loQueYaSabemos: [
           sinDesc.length + " de " + videos.length + " vídeo(s) propio(s) no declaran pista de audiodescripción.",
@@ -4184,11 +4220,17 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
          * no tiene imágenes visibles con contenido», y «no aplica» cierra el
          * criterio en el IRA. El agente no puede leer lo que hay dentro de esa
          * imagen, así que no dictamina: lo deja pendiente diciendo qué vio. */
-        const conFondo = /background(-image)?\s*:[^;}]*url\(/i.test(ctx.estilos || "");
+        /* Y el `background-image` también se escribe en el atributo `style`, que
+         * no está en las hojas: una página cuyo cartel con texto va en un
+         * `style="background-image:url(...)"` firmaba «no aplica». */
+        const RE_FONDO = /background(-image)?\s*:[^;}"']*url\(/i;
+        const enLinea = visibles(doc, "[style]").filter(function (el) { return RE_FONDO.test(el.getAttribute("style") || ""); });
+        const conFondo = RE_FONDO.test(ctx.estilos || "") || enLinea.length > 0;
         if (conFondo) {
           return ficha("1.4.5", {
             pregunta: "¿Alguna de las imágenes de fondo lleva texto incrustado?",
-            queMirar: [{ locator: "(CSS)", path: "", detalle: "las hojas de estilo declaran imágenes de fondo (`background-image: url(…)`)" }],
+            queMirar: (RE_FONDO.test(ctx.estilos || "") ? [{ locator: "(CSS)", path: "", detalle: "las hojas de estilo declaran imágenes de fondo (`background-image: url(…)`)" }] : [])
+              .concat(enLinea.slice(0, 10).map(function (el) { return ref(el, "imagen de fondo en el atributo `style`: " + (el.getAttribute("style") || "").slice(0, 70)); })),
             loQueYaSabemos: [
               "La página no tiene ninguna etiqueta `<img>`, `<svg>` ni `<picture>` con contenido, pero sí imágenes de fondo declaradas en CSS.",
               "El hero con el titular incrustado —que es el caso típico de 1.4.5— casi siempre es una imagen de fondo, y el agente no puede leer lo que hay dentro de ella."
@@ -4229,10 +4271,23 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     },
 
     "2.3.1": function (doc, ctx) {
+      /* Un GIF también se pone de FONDO, en la hoja o en el atributo `style`.
+       * Medido: una página cuyo único parpadeo era
+       * `style="background-image:url(/parpadeo.gif)"` firmaba «no aplica» — y
+       * 2.3.1 es el criterio cuyo incumplimiento puede provocar una crisis
+       * epiléptica, así que es el último que puede cerrarse por descuido. */
+      const RE_GIF = /\.(gif|apng|webp)(\?|#|$|\))/i;
+      const fondoAnimado = visibles(doc, "[style]").filter(function (el) {
+        const st = el.getAttribute("style") || "";
+        return /url\(/i.test(st) && RE_GIF.test(st);
+      });
       const candidatos = visibles(doc, "video,canvas,object,embed")
-        .concat(visibles(doc, "img").filter(function (el) { return /\.gif(\?|$)/i.test(el.getAttribute("src") || ""); }))
+        .concat(visibles(doc, "img").filter(function (el) { return RE_GIF.test(el.getAttribute("src") || ""); }))
+        .concat(fondoAnimado)
+        .concat(ctx.medios.sospechosos || [])
         .concat(ctx.medios.externos);
-      const conAnimacion = /@keyframes|animation\s*:/i.test(ctx.estilos);
+      const conAnimacion = /@keyframes|animation\s*:/i.test(ctx.estilos) ||
+        (RE_GIF.test(ctx.estilos || "") && /url\(/i.test(ctx.estilos || ""));
       if (!candidatos.length && !conAnimacion) {
         /* Y no se firma «no aplica» si el CSS no se ha leído del todo. */
         if (ctx.cssBloqueadas || ctx.cssLeido === false) {
@@ -4271,7 +4326,16 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     },
 
     "2.4.4": function (doc, ctx) {
-      const enlaces = visibles(doc, "a[href]");
+      /* `<area href>` es un enlace con todas las de la ley —tiene destino y tiene
+       * nombre (su `alt`)— y una página cuyos enlaces eran todos de un mapa de
+       * imagen firmaba «no aplica · la página no tiene enlaces visibles». Los
+       * `<area>` no se ven ellos mismos (los pinta la imagen), así que no pasan
+       * por el filtro de visibilidad: se toman aparte. */
+      const enlaces = visibles(doc, "a[href]")
+        .concat(Array.prototype.slice.call(doc.querySelectorAll("area[href]")).filter(function (el) {
+          const mapa = el.closest ? el.closest("map") : null;
+          return !mapa || !oculto(mapa);
+        }));
       if (!enlaces.length) {
         return noAplica("2.4.4", "La página no tiene enlaces visibles.", null, doc);
       }
