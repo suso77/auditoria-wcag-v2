@@ -113,3 +113,66 @@ test("lo que no es de ningún elemento acompaña a todas las filas", async () =>
   assert.ok(filas.length >= 1);
   assert.ok(filas.every((r) => /subárbol oculto/.test(r.evidencia)), JSON.stringify(filas.map((r) => r.evidencia.slice(0, 80))));
 });
+
+/**
+ * 320 DE 522 FILAS LLEVABAN EL MISMO PÁRRAFO.
+ *
+ * Medido sobre una auditoría real de diez páginas. Y no era un error de
+ * medición —son elementos distintos y la frase es verdad en todos—, sino que la
+ * frase no los distingue: 63 enlaces `a.red-link` con el mismo color dan 63
+ * veces «ratio 3.38:1 … rgb(231 30 15) sobre rgb(28 36 55)», y los 63 de axe,
+ * 63 veces «Links must have discernible text». En el Word eso son 63 párrafos
+ * iguales y quien lee uno no sabe cuál de los 63 elementos es el suyo.
+ *
+ * Intentar arreglarlo capa por capa fue un error: en la de adaptación quedaron
+ * 18 filas igualmente, porque dos elementos pueden compartir `locator` y medida
+ * («p» + «96 px de alto ocultos»). El sitio donde se resuelve de una vez es
+ * aquí, donde nacen las filas.
+ */
+const hallazgo = (n, nodes, evid) => ({
+  c: { n: n, t: n, lvl: "AA" }, verdict: "falla", sev: "grave", evid: [evid], nodes: nodes
+});
+
+test("barreras: elementos distintos con la MISMA medida se distinguen por su selector", () => {
+  const nodes = [1, 2, 3].map((i) => ({
+    locator: "a.red-link", path: "html > body > div:nth-of-type(" + i + ") > a:nth-of-type(1)"
+  }));
+  const rows = barreras([hallazgo("1.4.3", nodes,
+    "a.red-link: ratio 3.38:1 (mín 4.5:1) — rgb(231 30 15) sobre rgb(28 36 55)")], { url: "https://x.test/" });
+  assert.equal(rows.length, 3);
+  const textos = rows.map((r) => r.evidencia);
+  assert.equal(new Set(textos).size, 3, "las tres frases tienen que ser distintas: " + JSON.stringify(textos));
+  textos.forEach((t) => {
+    assert.match(t, /ratio 3\.38:1/, "sin perder la medida");
+    assert.match(t, /de 3 con la misma medida/, "y diciendo que hay tres iguales");
+    assert.match(t, /div:nth-of-type\(\d\)/, "con la ruta de SU elemento");
+  });
+});
+
+test("barreras: si la columna «Elemento» ya distingue, el párrafo NO se toca", () => {
+  /* Las filas de axe traen el dato que falta en el propio elemento
+   * (`a[alt="…"]`), así que la fila se distingue sin tocar nada. Añadirle una
+   * cola sería repetir una columna que el informe ya lleva. */
+  const nodes = ["萨克拉河岸修道院之路", "塞维利亚两日游"].map((t, i) => ({
+    locator: 'a[alt="' + t + '"]', name: "link-name", path: "html > body > a:nth-of-type(" + (i + 1) + ")"
+  }));
+  const rows = barreras([hallazgo("2.4.4", nodes, "axe-core «link-name»: Links must have discernible text")], { url: "https://x.test/" });
+  assert.equal(rows.length, 2);
+  rows.forEach((r) => assert.equal(r.evidencia, "axe-core «link-name»: Links must have discernible text",
+    "intacta: " + r.evidencia));
+  assert.notEqual(rows[0].elemento, rows[1].elemento, "porque el elemento ya las separa");
+});
+
+test("barreras: una sola fila no se adorna con nada", () => {
+  const rows = barreras([hallazgo("1.1.1", [{ locator: "img", path: "html > body > img:nth-of-type(1)" }],
+    "img: sin alternativa textual.")], { url: "https://x.test/" });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].evidencia, "img: sin alternativa textual.");
+});
+
+test("barreras: sin selector ni elemento, al menos se numeran", () => {
+  const rows = barreras([hallazgo("1.4.10", [{ locator: "div" }, { locator: "div" }],
+    "2 bloques se recortan.")], { url: "https://x.test/" });
+  assert.equal(new Set(rows.map((r) => r.evidencia)).size, 2);
+  assert.match(rows[0].evidencia, /elemento 1 de 2/);
+});

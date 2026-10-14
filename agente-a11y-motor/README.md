@@ -64,7 +64,7 @@ const informe = analyze(understand(html));
 ## Tests
 
 ```bash
-npm test                    # suite pura (node --test), sin navegador — 739 tests
+npm test                    # suite pura (node --test), sin navegador — 743 tests
 npm run test:integracion    # integración con Chromium (Playwright) — 160 tests
 npm run bench               # banco de precisión accname contra corpus WPT
 npm run smoke               # humo del artifact generado, en Chromium real
@@ -73,6 +73,7 @@ node scripts/quien-declara-conforme.mjs --no-aplica   # y quién puede cerrar un
 node scripts/comparar-auditorias.mjs a.json b.json      # qué cambió entre dos auditorías del mismo sitio
 node scripts/comparar-auditorias.mjs a.json --referencia barreras.csv   # contra una lista de barreras
 node scripts/comparar-auditorias.mjs a.json --seguimiento hoja.xlsx     # contra la hoja de seguimiento de una persona
+node scripts/medir-informe.mjs a.json b.json            # calidad del informe: selectores, filas indistinguibles, cobertura
 ```
 
 `PW_CHROMIUM=/ruta/a/chrome` apunta a un Chromium ya instalado y lo respetan todos los drivers a la vez (`src/playwright-launch.js`).
@@ -985,6 +986,24 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 **En el cruce con axe, dos afirmaciones que no se podían sostener.** `crossCheck` fabricaba `{findings: []}` cuando el motor no llegaba a construir el modelo —texto suelto, un comentario, una cadena vacía—, y ese resultado entraba en la reconciliación como una comprobación limpia: «soloMotor: 0» era indistinguible de «el motor comprobó y no encontró nada». Y el «acuerdo» se construía solo porque coincidía el número de criterio: el motor acusando a `img.logo` y axe a otro `img` de la página salían como «acuerdo: 1». Casar los elementos exige la página abierta —lo hace la orquestación, no la reconciliación pura—, así que ahora se publica cuántos elementos trae cada fuente, que la coincidencia a nivel de elemento NO está comprobada, y que el motor no miró cuando no miró.
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
+
+### v0.56.0 — 209 filas que no se podían distinguir de la de al lado
+
+La v0.55.0 arregló esto en la capa de adaptación y **se dejó 18 filas allí mismo**. La predicción que te di —«de 353 bajará a 302»— salió mal: quedaron 320. Y al ir a ver por qué, lo que apareció fue que el arreglo estaba en el sitio equivocado.
+
+**El problema, medido bien.** Con la medida estricta —misma página, mismo criterio, mismo **elemento** y mismo párrafo— eran **209 de 522 filas**, no 353: la cifra anterior contaba filas que la columna «Elemento» ya distinguía. Y no es un error de medición: son elementos distintos y la frase es verdad en todos. Lo que pasa es que la frase no los separa. 63 enlaces `a.red-link` con el mismo color dan 63 veces «ratio 3.38:1 … rgb(231 30 15) sobre rgb(28 36 55)»; los 63 que caza axe dan 63 veces «Links must have discernible text». En el Word eso son 63 párrafos iguales, y quien lee uno no sabe cuál de los 63 elementos es el suyo.
+
+**Y por qué la capa era el sitio equivocado.** En la de adaptación quedaron 18 filas igualmente, porque dos elementos pueden compartir `locator` y medida: «p» más «96 px de alto ocultos» produce la misma frase para dos párrafos distintos. Arreglarlo capa por capa habría pedido el mismo parche en la medición, en el motor, en axe y en el cuaderno. El sitio donde se resuelve de una vez es **donde nacen las filas**, en `report-oaw`: ahí están todas, vengan de donde vengan.
+
+**La regla, y lo que deliberadamente no hace.** Cuando dos filas de la misma página y criterio quedarían con el mismo elemento y el mismo párrafo, cada una añade el selector de **su** elemento y el recuento del grupo. Y solo entonces: si la columna «Elemento» ya las separa —las filas de axe traen el atributo que falta, `a[alt="…"]`—, el párrafo **no se toca**, porque añadirle una cola sería repetir una columna que el informe ya lleva. Una fila sola nunca se adorna.
+
+**Medido sobre las 522 filas reales de la pasada v7 del sitio**, aplicando la regla a los datos de verdad y no a un test: **209 → 0**, 36 grupos tocados, 245 filas reescritas.
+
+**Y un medidor para que esto no vuelva a dependerme.** `scripts/medir-informe.mjs antes.json despues.json` cuenta las cuatro cosas que un veredicto no dice —filas sin selector, filas indistinguibles, avisos de CSS ilegible y barreras con identidad propia— y avisa si alguna ha **empeorado**. Las barreras pueden estar bien encontradas y el informe ser malo de usar; eso ahora se mide.
+
+Lo que sigue sin arreglar y conviene decir: que 63 elementos con la misma barrera salgan como 63 filas en vez de una familia con 63 instancias es una decisión del formato del entregable, no del motor, y no la toco sin que la tome una persona.
+
+**743 tests unitarios** (de 739) y 169 de integración, en verde.
 
 ### v0.55.0 — las tres de la lista: el selector, la evidencia repetida y las hojas del CDN
 

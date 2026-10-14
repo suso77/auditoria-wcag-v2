@@ -8995,6 +8995,45 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
           }));
         });
       });
+    /* QUE CADA FILA SE PUEDA DISTINGUIR DE LA DE AL LADO.
+     *
+     * Medido sobre una auditoría real de diez páginas: 320 de 522 filas llevaban
+     * un párrafo IDÉNTICO al de otra fila. Y no era un error de medición —son
+     * elementos distintos y la frase es verdad en todos—, sino que la frase no los
+     * distingue: 63 enlaces `a.red-link` con el mismo color dan 63 veces «ratio
+     * 3.38:1 … rgb(231 30 15) sobre rgb(28 36 55)», y los 63 de axe dan 63 veces
+     * «Links must have discernible text». En el Word eso son 63 párrafos iguales y
+     * quien lee uno no sabe cuál de los 63 elementos es el suyo.
+     *
+     * Arreglarlo capa por capa fue un error mío: en v0.55.0 toqué la de adaptación
+     * y me dejé 18 filas allí mismo, porque dos elementos pueden compartir
+     * `locator` y medida («p» + «96 px de alto ocultos»). El sitio donde esto se
+     * resuelve de una vez es AQUÍ, que es donde nacen las filas.
+     *
+     * Lo único garantizado único es el selector, así que se añade cuando hace
+     * falta — y SOLO cuando hace falta: si la frase ya distingue, no se toca. */
+    const porFrase = {};
+    rows.forEach(function (r) {
+      const k = r.criterio + "|" + r.pagina + "|" + r.evidencia;
+      (porFrase[k] = porFrase[k] || []).push(r);
+    });
+    Object.keys(porFrase).forEach(function (k) {
+      const g = porFrase[k];
+      if (g.length < 2) return;
+      /* Y antes de añadir nada: ¿distingue ya la columna «Elemento»? En las filas
+       * de axe sí —el propio atributo que falta va ahí, `a[alt="…"]`— y entonces
+       * la fila SE distingue, aunque el párrafo se repita. Añadirle una cola
+       * sería repetir una columna que el informe ya trae. Se toca solo lo que de
+       * verdad no se puede separar. */
+      const elems = g.map(function (r) { return r.elemento || ""; });
+      if (new Set(elems).size === g.length && elems.every(Boolean)) return;
+      g.forEach(function (r, i) {
+        const cola = r.selector || ("elemento " + (i + 1) + " de " + g.length);
+        r.evidencia = (r.evidencia ? r.evidencia + " " : "") +
+          "[este elemento, de " + g.length + " con la misma medida: " + cola + "]";
+      });
+    });
+
     return rows.sort(function (a, b) { return cmpSC(a.criterio, b.criterio); });
   }
 
