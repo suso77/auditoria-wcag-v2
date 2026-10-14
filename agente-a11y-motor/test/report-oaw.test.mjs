@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { oawExport, barreras, seguimiento } from "../src/index.js";
+import { oawExport, barreras, barrerasAgrupadas, seguimiento } from "../src/index.js";
 
 const F = (n, lvl, verdict, sev, nodes, evid) => ({ c: { n, lvl, t: n }, verdict, sev, nodes, evid });
 
@@ -175,4 +175,85 @@ test("barreras: sin selector ni elemento, al menos se numeran", () => {
     "2 bloques se recortan.")], { url: "https://x.test/" });
   assert.equal(new Set(rows.map((r) => r.evidencia)).size, 2);
   assert.match(rows[0].evidencia, /elemento 1 de 2/);
+});
+
+/**
+ * UNA FILA POR FAMILIA, EN VEZ DE UNA POR ELEMENTO.
+ *
+ * Decisión suya con los números delante: en la auditoría real, 63 enlaces
+ * `a.red-link` con el mismo color daban 63 filas con la misma medida, y otras 63
+ * de axe con el mismo «Links must have discernible text». Son 63 instancias de
+ * UNA barrera. Medido sobre esas 522 filas, agrupando quedan 202.
+ *
+ * Lo que estos tests vigilan es lo que no se puede perder al agrupar: los 63
+ * elementos y sus 63 rutas. Fundirlos sin más borraría 62 datos que hacen falta
+ * para arreglarlo.
+ */
+const familia = (n, nodes, evid) => ({
+  c: { n: n, t: n, lvl: "AA" }, verdict: "falla", sev: "grave", evid: [evid], nodes: nodes
+});
+
+test("agrupadas: 63 elementos con la misma medida son UNA fila con 63 instancias", () => {
+  const nodes = Array.from({ length: 63 }, (_, i) => ({
+    locator: "a.red-link", path: "html > body > div:nth-of-type(" + (i + 1) + ") > a:nth-of-type(1)"
+  }));
+  const g = barrerasAgrupadas([familia("1.4.3", nodes, "a.red-link: ratio 3.38:1 — rgb(231 30 15) sobre rgb(28 36 55)")], { url: "https://x.test/a" });
+  assert.equal(g.length, 1);
+  assert.equal(g[0].instancias, 63);
+  assert.equal(g[0].selectores.length, 63, "las 63 rutas, enteras, en el objeto");
+  assert.match(g[0].evidencia, /63 elementos con esta misma medida/, "y el recuento en la evidencia, que es lo que leen el Word y el IRA");
+  assert.match(g[0].evidencia, /ratio 3\.38:1/, "sin perder la medida");
+});
+
+test("agrupadas: los elementos distintos NO se pierden", () => {
+  /* El grupo de axe: 63 enlaces, cada uno con su `alt`. Es el dato para
+   * arreglarlo, así que tiene que seguir estando. */
+  const nodes = ["萨克拉河岸修道院之路", "塞维利亚两日游", "马德里王宫"].map((t, i) => ({
+    locator: 'a[alt="' + t + '"]', name: "link-name", path: "html > body > a:nth-of-type(" + (i + 1) + ")"
+  }));
+  const g = barrerasAgrupadas([familia("2.4.4", nodes, "axe-core «link-name»: Links must have discernible text")], { url: "https://x.test/a" });
+  assert.equal(g.length, 1);
+  assert.equal(g[0].instancias, 3);
+  assert.match(g[0].elemento, /y 2 más/, "la columna «Elemento» avisa de que hay más");
+  ["萨克拉河岸修道院之路", "塞维利亚两日游", "马德里王宫"].forEach((t) => {
+    assert.ok(g[0].elementos.indexOf(t) !== -1, "falta " + t + " en: " + g[0].elementos);
+  });
+});
+
+test("agrupadas: dos páginas no se funden, aunque la medida sea la misma", () => {
+  /* Arreglarlo en una página no lo arregla en la otra, y un IRA se afirma por
+   * página. La página es parte de la identidad de la familia. */
+  const uno = familia("1.4.3", [{ locator: "a", path: "html > body > a:nth-of-type(1)" }], "a: ratio 3.38:1");
+  uno.url = "https://x.test/a";
+  const dos = familia("1.4.3", [{ locator: "a", path: "html > body > a:nth-of-type(1)" }], "a: ratio 3.38:1");
+  dos.url = "https://x.test/b";
+  const g = barrerasAgrupadas([uno, dos], {});
+  assert.equal(g.length, 2);
+  assert.deepEqual(g.map((r) => r.pagina).sort(), ["https://x.test/a", "https://x.test/b"]);
+});
+
+test("agrupadas: una sola instancia no se adorna con recuentos", () => {
+  const g = barrerasAgrupadas([familia("1.1.1", [{ locator: "img", path: "html > body > img:nth-of-type(1)" }], "img: sin alternativa textual.")], { url: "https://x.test/a" });
+  assert.equal(g.length, 1);
+  assert.equal(g[0].instancias, 1);
+  assert.equal(g[0].evidencia, "img: sin alternativa textual.");
+  assert.doesNotMatch(g[0].elemento, /más/);
+});
+
+test("agrupadas: la celda del CSV se recorta y dice dónde está la lista entera", () => {
+  const nodes = Array.from({ length: 63 }, (_, i) => ({ locator: "a", path: "html > body > div:nth-of-type(" + (i + 1) + ") > a:nth-of-type(1)" }));
+  const out = oawExport([familia("1.4.3", nodes, "a: ratio 3.38:1")], { url: "https://x.test/a" });
+  const r = out.barrerasAgrupadas[0];
+  assert.equal(r.selectores.length, 63, "en el objeto, las 63");
+  assert.match(r.selectoresCsv, /y 53 más \(las 63 están en el JSON/, "en el CSV, recortada: " + r.selectoresCsv.slice(-80));
+  const lineas = out.csv.barrerasAgrupadas.split("\r\n");
+  assert.ok(Math.max(...lineas.map((l) => l.length)) < 6000, "y ninguna línea monstruosa");
+});
+
+test("agrupadas: el informe por elemento sigue intacto y sale en el mismo viaje", () => {
+  const nodes = [1, 2, 3].map((i) => ({ locator: "a", path: "html > body > a:nth-of-type(" + i + ")" }));
+  const out = oawExport([familia("1.4.3", nodes, "a: ratio 3.38:1")], { url: "https://x.test/a" });
+  assert.equal(out.barreras.length, 3, "una por elemento, que es lo que pide un IRA");
+  assert.equal(out.barrerasAgrupadas.length, 1, "y una por familia, que es lo que se lee");
+  assert.ok(out.csv.barreras && out.csv.barrerasAgrupadas, "los dos CSV");
 });

@@ -64,7 +64,7 @@ const informe = analyze(understand(html));
 ## Tests
 
 ```bash
-npm test                    # suite pura (node --test), sin navegador — 743 tests
+npm test                    # suite pura (node --test), sin navegador — 749 tests
 npm run test:integracion    # integración con Chromium (Playwright) — 160 tests
 npm run bench               # banco de precisión accname contra corpus WPT
 npm run smoke               # humo del artifact generado, en Chromium real
@@ -986,6 +986,22 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 **En el cruce con axe, dos afirmaciones que no se podían sostener.** `crossCheck` fabricaba `{findings: []}` cuando el motor no llegaba a construir el modelo —texto suelto, un comentario, una cadena vacía—, y ese resultado entraba en la reconciliación como una comprobación limpia: «soloMotor: 0» era indistinguible de «el motor comprobó y no encontró nada». Y el «acuerdo» se construía solo porque coincidía el número de criterio: el motor acusando a `img.logo` y axe a otro `img` de la página salían como «acuerdo: 1». Casar los elementos exige la página abierta —lo hace la orquestación, no la reconciliación pura—, así que ahora se publica cuántos elementos trae cada fuente, que la coincidencia a nivel de elemento NO está comprobada, y que el motor no miró cuando no miró.
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
+
+### v0.57.0 — una fila por barrera, no por elemento
+
+Decisión suya, tomada con los números delante. En la auditoría real había **63 enlaces `a.red-link` con el mismo contraste** en una misma página, y el informe los contaba como 63 problemas distintos; igual los 63 que caza axe con «Links must have discernible text» y los 63 sin nombre accesible. Son 63 instancias de **una** barrera. Medido sobre esas 522 filas: agrupando quedan **202**, y 142 de las 202 son familias de una sola instancia — o sea que lo que infla el informe son 60 familias.
+
+**La identidad de una familia es criterio + página + la medida.** La página entra porque un IRA se afirma por página y porque arreglarlo en una no lo arregla en las otras. La medida es el texto de la evidencia, que es justo lo que dice qué le pasa al elemento.
+
+**Y lo que no se puede perder al agrupar son los elementos.** En el grupo de axe los 63 son distintos, cada uno con su `alt`: fundirlos sin más borraría 62 datos que hacen falta para arreglarlo. Así que la fila agrupada lleva el recuento, **todos** los selectores y **todos** los elementos, con el primero repetido en las columnas de siempre para que lo que ya leía el CSV siga leyéndolo. El recuento va también dentro de la evidencia, porque el Word y el IRA leen ese texto y «63 elementos» es parte del hallazgo.
+
+**La celda del CSV, recortada a propósito.** La familia mayor tiene 63 rutas: 15 108 caracteres en una celda. Cabe en el límite de Excel (32 767) pero no se puede leer ni usar, y hay herramientas que se atragantan. En el CSV van las diez primeras y el aviso de dónde están todas; la lista completa se queda en el JSON, que es donde se busca con un programa. Línea más larga del CSV agrupado: 2 987 caracteres, y el fichero baja de 301 KB a 177 KB.
+
+**Se entregan LAS DOS FORMAS, siempre y en el mismo viaje** (`-barreras.csv` y `-barreras-agrupadas.csv`). No es indecisión: el informe por elemento es el que pide un IRA y el que leen la plantilla OAW y el informe de hallazgos, y el agrupado es el que se lee. Elegir una y tirar la otra obligaría a volver a auditar el sitio —seis minutos, diez páginas— solo para cambiar de forma. Cuál es el canónico lo decide quien firma; si es el agrupado, hay que tocar las dos skills que leen el CSV, y eso no lo hace el motor solo.
+
+**Y el medidor, corregido.** Avisaba de que «familias» había empeorado al pasar de 169 a 202, y eso no es peor: son las filas de adaptación, que desde v0.55.0 llevan la frase de su propio elemento y por tanto ya no se confunden entre sí. Ahora solo avisa de las cuatro métricas que tienen una dirección mala clara. Un aviso que salta donde no hay nada que avisar es el mismo error que callar uno de verdad.
+
+**749 tests unitarios** (de 743) y 169 de integración, en verde.
 
 ### v0.56.0 — 209 filas que no se podían distinguir de la de al lado
 

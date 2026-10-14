@@ -54,8 +54,12 @@ const mide = async function (f) {
   const identidad = function (b) {
     return [b.criterio, b.pagina, String(b.selector || "").trim() || String(b.elemento || "").trim()].join("|");
   };
+  /* Y cuántas FAMILIAS hay detrás de esas filas: mismo criterio, misma página,
+   * misma medida. Es el número de barreras de verdad, frente al de instancias. */
+  const familia = function (b) { return [b.criterio, b.pagina, b.evidencia || ""].join("|"); };
   return {
     filas: B.length,
+    familias: new Set(B.map(familia)).size,
     sinSelector: sinSel.length,
     sinSelectorEnAdaptacion: sinSel.filter(function (b) { return ADAPTACION.indexOf(b.criterio) !== -1; }).length,
     filasIndistinguibles: indistinguibles,
@@ -76,9 +80,13 @@ Object.keys(A).forEach(function (k) {
   console.log("  " + (k + ":").padEnd(28) + String(A[k]).padStart(6) + (B ? String(B[k]).padStart(8) : ""));
 });
 if (B) {
-  const peor = Object.keys(A).filter(function (k) {
-    return k !== "filas" && k !== "barrerasDistinguibles" && B[k] > A[k];
-  });
+  /* Solo son «peor» las que tienen una dirección mala clara. `filas` y
+   * `familias` no la tienen —más familias puede ser que la evidencia distinga
+   * mejor, que es justo lo que se buscaba— y `barrerasDistinguibles` sube
+   * cuando mejora. Avisar de un cambio neutro es el mismo error que un aviso
+   * que salta donde no hay nada: enseña a no leerlos. */
+  const MALO_SI_SUBE = ["sinSelector", "sinSelectorEnAdaptacion", "filasIndistinguibles", "avisosDeCssIlegible"];
+  const peor = MALO_SI_SUBE.filter(function (k) { return B[k] > A[k]; });
   if (peor.length) console.log("\n⚠ Ha EMPEORADO en: " + peor.join(", "));
   if (B.barrerasDistinguibles < A.barrerasDistinguibles) console.log("\n⚠ Hay menos barreras distinguibles que antes.");
 }

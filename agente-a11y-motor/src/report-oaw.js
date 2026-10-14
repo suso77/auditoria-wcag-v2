@@ -63,7 +63,7 @@ function instancias(f) {
  * Una fila de "Barreras" por cada ELEMENTO afectado (no por criterio): en un IRA
  * cada instancia es una fila. Un hallazgo con 7 nodos produce 7 filas.
  */
-export function barreras(findings, ctx) {
+function filasPorElemento(findings, ctx) {
   ctx = ctx || {};
   const rows = [];
   (findings || [])
@@ -121,6 +121,15 @@ export function barreras(findings, ctx) {
         }));
       });
     });
+  return rows;
+}
+
+/**
+ * Una fila por ELEMENTO afectado, que es la forma que pide un IRA.
+ */
+export function barreras(findings, ctx) {
+  const rows = filasPorElemento(findings, ctx);
+
   /* QUE CADA FILA SE PUEDA DISTINGUIR DE LA DE AL LADO.
    *
    * Medido sobre una auditoría real de diez páginas: 320 de 522 filas llevaban
@@ -253,6 +262,96 @@ export function toCsv(rows, columns) {
   return "﻿" + lines.join("\r\n") + "\r\n";
 }
 
+/**
+ * UNA FILA POR FAMILIA DE BARRERA, EN VEZ DE UNA POR ELEMENTO.
+ *
+ * Decisión suya, tomada con los números delante: en la auditoría real, 63
+ * enlaces `a.red-link` con el mismo color producían 63 filas con la misma
+ * medida, y otras 63 de axe con el mismo «Links must have discernible text».
+ * Son 63 instancias de UNA barrera, y el informe las contaba como 63 problemas
+ * distintos. Medido sobre esas 522 filas: agrupando quedan 202.
+ *
+ * LA IDENTIDAD DE UNA FAMILIA es criterio + página + la medida. La página entra
+ * porque un IRA se afirma por página y porque arreglarlo en una no lo arregla en
+ * las otras; la medida es el texto de la evidencia, que es justo lo que dice qué
+ * le pasa al elemento («ratio 3.38:1 — rgb(231 30 15) sobre rgb(28 36 55)»).
+ *
+ * Y LO QUE NO SE PUEDE PERDER AL AGRUPAR: los elementos. En el grupo de axe los
+ * 63 son distintos —cada uno con su `alt`— y fundirlos sin más borraría 62
+ * datos que hacen falta para arreglarlo. Así que la fila agrupada lleva el
+ * recuento, TODOS los selectores y TODOS los elementos, y el primero de cada
+ * uno repetido en las columnas de siempre para que lo que ya leía el CSV siga
+ * leyéndolo.
+ */
+const TOPE_SELECTORES = 10;
+export function barrerasAgrupadas(findings, ctx) {
+  const rows = filasPorElemento(findings, ctx);
+  const grupos = [];
+  const ix = {};
+  rows.forEach(function (r) {
+    const k = [r.criterio, r.pagina, r.evidencia, r.subcriterioOAW || ""].join("\u0000");
+    if (ix[k] === undefined) { ix[k] = grupos.length; grupos.push([]); }
+    grupos[ix[k]].push(r);
+  });
+  const out = grupos.map(function (g) {
+    const p = g[0];
+    const sels = g.map(function (r) { return r.selector || ""; }).filter(Boolean);
+    const els = g.map(function (r) { return r.elemento || ""; }).filter(Boolean);
+    const elsUnicos = [];
+    els.forEach(function (e) { if (elsUnicos.indexOf(e) === -1) elsUnicos.push(e); });
+    return Object.assign({}, p, {
+      instancias: g.length,
+      /* La columna «Elemento» sigue siendo legible de un vistazo: el primero, y
+       * cuántos más hay cuando son distintos entre sí. Si los 63 son el mismo
+       * `a.red-link`, repetirlo 63 veces no dice nada que el recuento no diga. */
+      elemento: elsUnicos.length > 1
+        ? elsUnicos[0] + " y " + (elsUnicos.length - 1) + " más"
+        : (elsUnicos[0] || p.elemento || ""),
+      elementos: elsUnicos.join(" · "),
+      selector: sels[0] || "",
+      selectores: sels,
+      /* Y la versión para la hoja de cálculo, RECORTADA. Medido sobre la
+       * auditoría real: la familia mayor tiene 63 rutas y son 15 108 caracteres
+       * en una celda. Cabe en el límite de Excel (32 767) pero no se puede leer
+       * ni usar, y hay herramientas que se atragantan. En el CSV van las diez
+       * primeras y el aviso de dónde están todas; la lista completa se queda en
+       * el JSON, que es donde se va a buscar con un programa. */
+      selectoresCsv: sels.length > TOPE_SELECTORES
+        ? sels.slice(0, TOPE_SELECTORES).join(" · ") + " · … y " + (sels.length - TOPE_SELECTORES) +
+          " más (las " + sels.length + " están en el JSON, campo `selectores`)"
+        : sels.join(" · "),
+      elementosCsv: elsUnicos.length > TOPE_SELECTORES
+        ? elsUnicos.slice(0, TOPE_SELECTORES).join(" · ") + " · … y " + (elsUnicos.length - TOPE_SELECTORES) + " más"
+        : elsUnicos.join(" · "),
+      /* El recuento va también en la evidencia: el Word y el IRA leen ese texto,
+       * y «63 elementos» es parte del hallazgo, no un adorno de la hoja. */
+      evidencia: g.length > 1
+        ? p.evidencia + " [" + g.length + " elementos con esta misma medida en esta página]"
+        : p.evidencia
+    });
+  });
+  return out.sort(function (a, b) {
+    const c = cmpSC(a.criterio, b.criterio);
+    return c !== 0 ? c : b.instancias - a.instancias;
+  });
+}
+
+const COLS_AGRUPADAS = [
+  { key: "subcriterio", label: "Subcriterio EN (9.X.Y.Z)" },
+  { key: "subcriterioOAW", label: "Subcriterio OAW (9.X.Y.Z-L)" },
+  { key: "oawVia", label: "Asignado por" },
+  { key: "enEN", label: "En la EN vigente" },
+  { key: "criterio", label: "Criterio WCAG" },
+  { key: "nombre", label: "Nombre" }, { key: "nivel", label: "Nivel" }, { key: "gravedad", label: "Gravedad" },
+  { key: "ambito", label: "Ámbito" }, { key: "pagina", label: "Página" },
+  { key: "instancias", label: "Nº de elementos" },
+  { key: "elemento", label: "Elemento" },
+  { key: "elementosCsv", label: "Todos los elementos" },
+  { key: "selector", label: "Selector" },
+  { key: "selectoresCsv", label: "Todos los selectores" },
+  { key: "evidencia", label: "Evidencia" }
+];
+
 const COLS_BARRERAS = [
   { key: "subcriterio", label: "Subcriterio EN (9.X.Y.Z)" },
   { key: "subcriterioOAW", label: "Subcriterio OAW (9.X.Y.Z-L)" },
@@ -286,6 +385,14 @@ const COLS_SEGUIMIENTO = [
 export function oawExport(findings, ctx) {
   ctx = ctx || {};
   const b = barreras(findings, ctx);
+  /* Las dos formas, SIEMPRE, y en el mismo viaje.
+   *
+   * El informe por elemento es el que pide un IRA y el que leen la plantilla
+   * OAW y el informe de hallazgos; el agrupado es el que se lee. Elegir una y
+   * tirar la otra obligaría a volver a auditar el sitio —seis minutos y diez
+   * páginas— solo para cambiar de forma, y eso no es una decisión que deba
+   * tomar el motor: se entregan las dos y decide quien firma. */
+  const ag = barrerasAgrupadas(findings, ctx);
   const s = seguimiento(findings, { todosLosCriterios: ctx.todosLosCriterios !== false, muestra: ctx.muestra || null });
   // Solo los EVALUADOS: desde que el Seguimiento emite fila para los 55
   // criterios, listar aquí los seis que no están en la EN vigente aunque nadie
@@ -298,10 +405,15 @@ export function oawExport(findings, ctx) {
     .map(function (r) { return { criterio: r.criterio, elemento: r.elemento, motivo: r.oawMotivo }; });
   return {
     barreras: b,
+    barrerasAgrupadas: ag,
     seguimiento: s,
     fueraDeEN: fueraEN, // criterios WCAG 2.2 aún no en la EN vigente
     oaw: { asignacion: resumenAsignacion(b), sinSubcriterio: sinSubcriterio },
     noEvaluados: s.filter(function (r) { return r.veredicto == null; }).map(function (r) { return r.criterio; }),
-    csv: { barreras: toCsv(b, COLS_BARRERAS), seguimiento: toCsv(s, COLS_SEGUIMIENTO) }
+    csv: {
+      barreras: toCsv(b, COLS_BARRERAS),
+      barrerasAgrupadas: toCsv(ag, COLS_AGRUPADAS),
+      seguimiento: toCsv(s, COLS_SEGUIMIENTO)
+    }
   };
 }

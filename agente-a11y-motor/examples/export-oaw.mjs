@@ -24,11 +24,14 @@ const allFindings = pages.flatMap((p) => p.findings);
 const out = oawExport(allFindings);
 
 await writeFile("barreras.csv", out.csv.barreras, "utf8");
+// Y la misma lista agrupada por familia (una fila por barrera, no por elemento).
+await writeFile("barreras-agrupadas.csv", out.csv.barrerasAgrupadas, "utf8");
 await writeFile("seguimiento.csv", out.csv.seguimiento, "utf8");
 await writeFile("oaw-export.json", JSON.stringify({ barreras: out.barreras, seguimiento: out.seguimiento, fueraDeEN: out.fueraDeEN }, null, 2), "utf8");
 
 console.log("\n✓ Exportado:");
 console.log("  barreras.csv     — " + out.barreras.length + " barreras (una fila cada una)");
+console.log("  barreras-agrupadas.csv — " + out.barrerasAgrupadas.length + " fila(s), una por familia");
 console.log("  seguimiento.csv  — " + out.seguimiento.length + " subcriterios con resultado agregado");
 console.log("  oaw-export.json  — datos estructurados para tus skills OAW/IRA");
 if (out.fueraDeEN.length) console.log("  (fuera de la EN vigente: " + out.fueraDeEN.join(", ") + ")");

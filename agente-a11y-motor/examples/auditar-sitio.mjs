@@ -59,6 +59,8 @@ const sitio = await auditSite(sel.muestra.map((m) => ({ url: m.url })), {
 
 const out = oawExport(sitio.findings, { muestra: sitio.rollup });
 await writeFile("barreras.csv", out.csv.barreras, "utf8");
+// Y la misma lista agrupada por familia (una fila por barrera, no por elemento).
+await writeFile("barreras-agrupadas.csv", out.csv.barrerasAgrupadas, "utf8");
 await writeFile("seguimiento.csv", out.csv.seguimiento, "utf8");
 await writeFile("auditoria.json", JSON.stringify({
   muestra: { justificacion: sel.justificacion, paginas: sel.muestra, procedencia: sel.procedencia },
@@ -74,6 +76,7 @@ const coh = sitio.coherencia.filter((f) => f.verdict === "falla");
 if (coh.length) console.log("  coherencia entre páginas: falla " + coh.map((f) => f.c.n).join(", "));
 console.log("\n✓ Entregables:");
 console.log("  barreras.csv     — " + out.barreras.length + " filas (una por elemento afectado)");
+console.log("  barreras-agrupadas.csv — " + out.barrerasAgrupadas.length + " fila(s), una por familia");
 console.log("  seguimiento.csv  — " + out.seguimiento.length + " subcriterios con resultado agregado");
 console.log("  auditoria.json   — todo junto, con la muestra y su procedencia");
 console.log("");

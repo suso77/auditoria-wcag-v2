@@ -95,6 +95,10 @@ const sitio = await auditSite(muestra.map(function (u) { return { url: u }; }), 
 
 const out = oawExport(sitio.findings, { muestra: sitio.rollup });
 await writeFile(prefijo + "-barreras.csv", out.csv.barreras, "utf8");
+/* Y el mismo informe agrupado por familia: una fila por barrera en vez de
+ * una por elemento. Se escriben los dos porque son dos lecturas de lo
+ * mismo y volver a auditar el sitio para cambiar de forma cuesta minutos. */
+await writeFile(prefijo + "-barreras-agrupadas.csv", out.csv.barrerasAgrupadas, "utf8");
 await writeFile(prefijo + "-seguimiento.csv", out.csv.seguimiento, "utf8");
 if (sitio.cuaderno) await writeFile(prefijo + "-cuaderno.txt", cuadernoTexto(sitio.cuaderno), "utf8");
 
@@ -184,6 +188,7 @@ if (avisos.length) {
 
 console.log("\n✓ Entregables:");
 console.log("  " + prefijo + "-barreras.csv     — " + out.barreras.length + " fila(s), una por elemento afectado");
+console.log("  " + prefijo + "-barreras-agrupadas.csv — " + out.barrerasAgrupadas.length + " fila(s), una por familia (mismo criterio, misma medida, misma página)");
 console.log("  " + prefijo + "-seguimiento.csv  — " + out.seguimiento.length + " subcriterio(s) EN con resultado agregado");
 if (sitio.cuaderno) console.log("  " + prefijo + "-cuaderno.txt     — el expediente de los once criterios de juicio");
 console.log("  " + prefijo + ".json            — todo junto, por criterio y por página");

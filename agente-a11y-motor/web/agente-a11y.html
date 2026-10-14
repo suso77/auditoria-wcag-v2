@@ -2864,36 +2864,28 @@
     return "﻿" + lines.join("\r\n") + "\r\n";
   }
 
-  const COLS_BARRERAS = [
-    { key: "subcriterio", label: "Subcriterio EN (9.X.Y.Z)" },
-    { key: "subcriterioOAW", label: "Subcriterio OAW (9.X.Y.Z-L)" },
-    { key: "oawVia", label: "Asignado por" },
-    { key: "enEN", label: "En la EN vigente" },
-    { key: "criterio", label: "Criterio WCAG" },
-    { key: "nombre", label: "Nombre" }, { key: "nivel", label: "Nivel" }, { key: "gravedad", label: "Gravedad" },
-    { key: "ambito", label: "Ámbito" }, { key: "pagina", label: "Página" }, { key: "elemento", label: "Elemento" },
-    { key: "selector", label: "Selector" },
-    { key: "evidencia", label: "Evidencia" }
-  ];
-  const COLS_SEGUIMIENTO = [
-    { key: "subcriterio", label: "Subcriterio EN (9.X.Y.Z)" }, { key: "enEN", label: "En la EN vigente" },
-    { key: "criterio", label: "Criterio WCAG" },
-    { key: "nombre", label: "Nombre" }, { key: "nivel", label: "Nivel" }, { key: "resultado", label: "Resultado" },
-    // La cobertura, al lado del resultado: quien lee la hoja tiene que poder ver
-    // sobre cuántas páginas se está afirmando cada cosa sin salir de la fila.
-    { key: "cobertura", label: "Cobertura de la muestra" },
-    { key: "num_barreras", label: "Nº barreras" }
-  ];
-
   /**
-   * Exporta los hallazgos a la forma OAW/IRA.
-   * @param {Array} findings  hallazgos del agente (unificados)
-   * @param {{ url?:string, overrides?:object, muestra?:object }} [ctx]  `overrides`
-   *   fija el subcriterio OAW a mano: por criterio (`"1.3.1"`) o por elemento
-   *   (`"1.3.1|nav.principal"`), y gana sobre cualquier asignación automática.
-   *   `muestra` es el rollup (`rollupSample`): con él la hoja de Seguimiento
-   *   declara su cobertura y no exporta «Correcto» sobre una muestra incompleta.
+   * UNA FILA POR FAMILIA DE BARRERA, EN VEZ DE UNA POR ELEMENTO.
+   *
+   * Decisión suya, tomada con los números delante: en la auditoría real, 63
+   * enlaces `a.red-link` con el mismo color producían 63 filas con la misma
+   * medida, y otras 63 de axe con el mismo «Links must have discernible text».
+   * Son 63 instancias de UNA barrera, y el informe las contaba como 63 problemas
+   * distintos. Medido sobre esas 522 filas: agrupando quedan 202.
+   *
+   * LA IDENTIDAD DE UNA FAMILIA es criterio + página + la medida. La página entra
+   * porque un IRA se afirma por página y porque arreglarlo en una no lo arregla en
+   * las otras; la medida es el texto de la evidencia, que es justo lo que dice qué
+   * le pasa al elemento («ratio 3.38:1 — rgb(231 30 15) sobre rgb(28 36 55)»).
+   *
+   * Y LO QUE NO SE PUEDE PERDER AL AGRUPAR: los elementos. En el grupo de axe los
+   * 63 son distintos —cada uno con su `alt`— y fundirlos sin más borraría 62
+   * datos que hacen falta para arreglarlo. Así que la fila agrupada lleva el
+   * recuento, TODOS los selectores y TODOS los elementos, y el primero de cada
+   * uno repetido en las columnas de siempre para que lo que ya leía el CSV siga
+   * leyéndolo.
    */
+  const TOPE_SELECTORES = 10;
   // Una fila por ELEMENTO afectado, igual que src/report-oaw.js: un hallazgo
   // con 7 nodos son 7 barreras en el IRA, no una con siete nombres pegados.
   const COLS_CSV = [
