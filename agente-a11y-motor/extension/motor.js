@@ -2164,14 +2164,34 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   }
   function tienePalabra(t) { return /[\p{L}\p{N}]/u.test(String(t || "")); }
 
+  /* EL TOPE DE 600 ELEMENTOS COSTABA DIEZ MILISEGUNDOS Y ESCONDÍA MEDIO CRITERIO.
+   *
+   * En una auditoría real, esta cuenta salía en cada pasada: «se revisó el texto
+   * generado por CSS de 600 elemento(s) y quedaron 290 sin mirar por el tope», y
+   * con ella 1.4.3 no se podía declarar conforme en 155 mediciones. El tope era
+   * una precaución sin medir, así que se midió, con tres tamaños de página y dos
+   * pasadas cada uno:
+   *
+   *      elementos   con tope   sin tope   hallazgos con / sin
+   *            896    6–9 ms     9–11 ms        12 / 18
+   *          5 006    5–6 ms    14–18 ms        12 / 30
+   *         20 006   6–11 ms    15–20 ms        12 / 30
+   *
+   * Diez milisegundos, incluso con veinte mil elementos, contra esconder dos
+   * tercios de lo que hay. No vale la pena: el recorrido ya no se corta.
+   *
+   * El cupo que QUEDA es el de salida, y ese sí tiene sentido —treinta mil fichas
+   * de contraste no son un informe—, pero treinta era muy poco: en las tablas de
+   * arriba el recuento se queda clavado en 30 porque lo tapaba ese cupo, no el de
+   * elementos. Ahora se ajusta al límite de la capa (`measureLimit`, 400 por
+   * omisión) y, si se llena, se dice cuántos quedaron fuera, como siempre. */
   function contrasteGenerado(doc, win, limite) {
     const out = [];
-    const tope = limite || 600;
+    const cupoSalida = limite || 400;
     let vistos = 0, fuera = 0, medidos = 0;
     const todos = doc.querySelectorAll("*");
     for (let i = 0; i < todos.length; i++) {
       const el = todos[i];
-      if (vistos >= tope) { fuera++; continue; }
       if (!renderedM(el, win)) continue;
       vistos++;
       const lados = ["::before", "::after"];
@@ -2211,14 +2231,15 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
             " · APCA Lc " + lc + (lc >= lcMin ? " (≥ " + lcMin + ", ok en el borrador de WCAG 3)" : " (< " + lcMin + ", orientativo)") +
             " — " + rgbStr(fg) + " sobre " + rgbStr(bg)
         });
-        if (out.length >= 30) { fuera += Math.max(0, todos.length - i - 1); break; }
+        if (out.length >= cupoSalida) { fuera += Math.max(0, todos.length - i - 1); break; }
       }
-      if (out.length >= 30) break;
+      if (out.length >= cupoSalida) break;
     }
     if (fuera) out.push({ crit: "__meta", label: "Cobertura del texto generado", node: fuera + " elementos", verdict: "revisar",
       limita: ["1.4.3"],
-      detail: "se revisó el texto generado por CSS (`::before`/`::after`) de " + vistos + " elemento(s) y quedaron " + fuera +
-        " sin mirar por el tope: de esos no se sabe si pintan texto ni con qué contraste" });
+      detail: "se revisó el texto generado por CSS (`::before`/`::after`) de " + vistos + " elemento(s), se midieron " +
+        medidos + " y quedaron " + fuera + " elemento(s) sin mirar porque el informe llenó su cupo de " + cupoSalida +
+        " fichas: de esos no se sabe si pintan texto ni con qué contraste. Sube `measureLimit` para verlos" });
     return out;
   }
   const NATIVOS = ["a", "button", "input", "select", "textarea", "summary"];
@@ -3526,7 +3547,9 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     /* 1.3.2 sobre el render: el orden que se lee frente al que se ve. */
     ordenReordenado(doc, win, 300).forEach(function (o) { res.push(o); });
     /* 1.4.3 sobre el texto que pinta el CSS, que no es un nodo de texto. */
-    contrasteGenerado(doc, win, 600).forEach(function (o) { res.push(o); });
+    /* El cupo es el de la capa, no un número suelto: quien suba `measureLimit`
+     * para ver más controles ve también más texto generado. */
+    contrasteGenerado(doc, win, limit || 400).forEach(function (o) { res.push(o); });
     if (truncado) {
       res.push({ crit: "__meta", label: "Cobertura de los controles", node: all.length + "/" + candidatos.length, verdict: "revisar",
         // Todo lo que se dictamina control por control.

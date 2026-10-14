@@ -103,3 +103,83 @@ test("1.4.3 real: si el pseudoelemento pinta su propio fondo, se mide contra ese
   assert.equal(f.verdict, "pasa", "blanco sobre #0b4c8c pasa de sobra: " + f.detail);
   assert.match(f.detail, /sobre rgb\(11 76 140\)/, "medido contra el fondo del propio pseudoelemento: " + f.detail);
 });
+
+/**
+ * EL TOPE DE 600 ELEMENTOS, Y LA BARRERA QUE ESCONDÍA.
+ *
+ * En la auditoría real de un sitio, esta cuenta salía en cada pasada: «se
+ * revisó el texto generado por CSS de 600 elemento(s) y quedaron 290 sin mirar
+ * por el tope», y con ella 1.4.3 no se podía declarar conforme en 155
+ * mediciones. El tope era una precaución sin medir.
+ *
+ * Medido, con dos pasadas por tamaño:
+ *
+ *      elementos   con tope   sin tope   hallazgos con / sin
+ *            896    6–9 ms     9–11 ms        12 / 18
+ *          5 006    5–6 ms    14–18 ms        12 / 30
+ *         20 006   6–11 ms    15–20 ms        12 / 30
+ *
+ * Y el peor caso de verdad —no muchos elementos, sino muchos ACIERTOS, que es
+ * donde cada uno paga el fondo y la cuenta de contraste— son 479 ms con 20 000
+ * elementos y 400 hallazgos: medio segundo por página, una vez por página.
+ *
+ * La página de aquí es la prueba de que el tope escondía barreras: 700 bloques
+ * sin nada y, DESPUÉS, un texto generado invisible. Con el tope en 600 ese
+ * texto caía fuera y el criterio no lo veía.
+ */
+const RELLENO = (n) => Array.from({ length: n }, (_, i) => '<div class="relleno">Bloque ' + i + "</div>").join("");
+const TRAS_EL_TOPE = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Tras el tope</title><style>
+  body { margin:0; padding:8px; background:#fff; color:#111; font:16px/1.4 system-ui, sans-serif; }
+  .relleno { padding:1px; }
+  /* #fafafa sobre blanco: 1.04:1, invisible. Y va al final, detrás de 700 bloques. */
+  .aviso::after { content:" (abre en ventana nueva)"; color:#fafafa; }
+</style></head><body>
+  ${RELLENO(700)}
+  <p><a class="aviso" href="https://ejemplo.test/">Memoria anual</a></p>
+</body></html>`;
+
+test("1.4.3 real: el texto generado DETRÁS del elemento 600 ya no se queda sin mirar", { skip }, async () => {
+  const { chromium } = await import("playwright");
+  const b = await chromium.launch(launchOptions(sonda.launchOptions));
+  try {
+    const p = await b.newPage();
+    await p.setContent(TRAS_EL_TOPE, { waitUntil: "load" });
+    const res = await p.evaluate(new Function("lim", MEASURE_BODY), 400);
+
+    const generados = res.filter((r) => r.crit === "1.4.3" && /texto generado/.test(r.detail || ""));
+    const invisible = generados.find((r) => /abre en ventana nueva/.test(r.detail));
+    assert.ok(invisible, "el texto invisible del final tiene que medirse: " +
+      JSON.stringify(generados.map((g) => g.node)));
+    assert.equal(invisible.verdict, "falla", invisible.detail);
+    assert.match(invisible.detail, /1\.0\d:1/, "con su ratio medido: " + invisible.detail);
+
+    /* Y la nota de cobertura ya no aparece: no queda nada sin mirar. */
+    const nota = res.find((r) => r.crit === "__meta" && /texto generado/i.test(r.label || ""));
+    assert.equal(nota, undefined, "no debería quedar nota de cobertura: " + (nota && nota.detail));
+  } finally { await b.close(); }
+});
+
+test("1.4.3 real: si el informe llena su cupo, la nota lo dice con el número", { skip }, async () => {
+  /* Con el cupo a 3 y cuatro textos generados que fallan, uno se queda fuera —y
+   * eso tiene que decirse, que es la regla de oro: lo que no se ha mirado no
+   * puede leerse como que está bien. */
+  const cuatro = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Cupo</title><style>
+    body{margin:0;background:#fff;color:#111;font:16px system-ui}
+    .a::after{content:" uno";color:#fafafa}
+    .b::after{content:" dos";color:#fafafa}
+    .c::after{content:" tres";color:#fafafa}
+    .d::after{content:" cuatro";color:#fafafa}
+  </style></head><body><p class="a">A</p><p class="b">B</p><p class="c">C</p><p class="d">D</p></body></html>`;
+  const { chromium } = await import("playwright");
+  const b = await chromium.launch(launchOptions(sonda.launchOptions));
+  try {
+    const p = await b.newPage();
+    await p.setContent(cuatro, { waitUntil: "load" });
+    const res = await p.evaluate(new Function("lim", MEASURE_BODY), 3);
+    const nota = res.find((r) => r.crit === "__meta" && /texto generado/i.test(r.label || ""));
+    assert.ok(nota, "con el cupo lleno tiene que haber nota");
+    assert.match(nota.detail, /cupo de 3 fichas/, nota.detail);
+    assert.match(nota.detail, /Sube `measureLimit`/, nota.detail);
+    assert.deepEqual(nota.limita, ["1.4.3"], "y tiene que seguir limitando 1.4.3");
+  } finally { await b.close(); }
+});

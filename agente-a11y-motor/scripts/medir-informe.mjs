@@ -56,7 +56,12 @@ const mide = async function (f) {
   };
   /* Y cuántas FAMILIAS hay detrás de esas filas: mismo criterio, misma página,
    * misma medida. Es el número de barreras de verdad, frente al de instancias. */
-  const familia = function (b) { return [b.criterio, b.pagina, b.evidencia || ""].join("|"); };
+  /* OJO con la cola de desambiguación. Desde v0.56.0, una fila cuyo párrafo se
+   * repetía lleva añadido «[este elemento, de N …: <selector>]», y contar
+   * familias con esa cola dentro daba 411 donde el propio agente decía 202: una
+   * familia por elemento. Se quita antes de agrupar. */
+  const sinCola = function (t) { return String(t || "").replace(/\s*\[este elemento[^\]]*\]\s*$/, ""); };
+  const familia = function (b) { return [b.criterio, b.pagina, sinCola(b.evidencia)].join("|"); };
   return {
     filas: B.length,
     familias: new Set(B.map(familia)).size,

@@ -987,6 +987,28 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.58.0 — el tope de 600 pseudoelementos costaba diez milisegundos
+
+El último aviso grande que el agente daba sobre sí mismo. En cada pasada de la auditoría real salía esto: «se revisó el texto generado por CSS de 600 elemento(s) y quedaron **290 sin mirar** por el tope», y con esa nota 1.4.3 no se podía declarar conforme en **155 mediciones**. El tope era una precaución que nadie había medido, así que se midió — tres tamaños de página, dos pasadas cada uno:
+
+| elementos | con tope | sin tope | hallazgos con / sin |
+|---|---|---|---|
+| 896 | 6–9 ms | 9–11 ms | 12 / 18 |
+| 5 006 | 5–6 ms | 14–18 ms | 12 / 30 |
+| 20 006 | 6–11 ms | 15–20 ms | 12 / 30 |
+
+**Diez milisegundos, incluso con veinte mil elementos, contra esconder dos tercios de lo que hay.** No vale la pena, así que el recorrido ya no se corta.
+
+**Y el peor caso de verdad, medido aparte**, porque no es el número de elementos: es el de **aciertos**, que es donde cada uno paga resolver su fondo y la cuenta de contraste. Con 20 000 elementos y 400 hallazgos son **479 ms** — medio segundo por página, una vez por página. En una auditoría de diez páginas eso es un 1,4 % sobre los seis minutos que ya tarda, y a cambio el criterio deja de estar bloqueado.
+
+**El cupo que queda es el de SALIDA, y ese sí tiene sentido**: treinta mil fichas de contraste no son un informe. Pero estaba en treinta, y por eso en la tabla de arriba el recuento se queda clavado en 30 — lo tapaba ese cupo, no el de elementos. Ahora se ajusta al límite de la capa (`measureLimit`, 400 por omisión), de modo que quien lo suba para ver más controles ve también más texto generado; y si se llena, la nota lo dice con el número y con qué subir. La regla de oro intacta: lo que no se ha mirado no puede leerse como que está bien.
+
+**Lo que esto va a hacer en tu informe, dicho antes de que lo veas:** las dos notas de «Cobertura del texto generado» desaparecen, y **1.4.3 probablemente suba de 138 filas**, porque esos 290 elementos por mirar pueden traer barreras. Mirar más significa encontrar más, y eso es lo que se pedía.
+
+**Y el medidor, otra vez corregido.** Contaba 411 familias donde el agente decía 202: desde v0.56.0 una fila cuyo párrafo se repetía lleva añadida la cola «[este elemento, de N …]», y contarla dentro de la clave partía cada familia en tantas familias como elementos. Ahora se quita la cola antes de agrupar, y las dos cuentas coinciden: 202 y 202.
+
+**749 tests unitarios** y 171 de integración (de 169), en verde.
+
 ### v0.57.0 — una fila por barrera, no por elemento
 
 Decisión suya, tomada con los números delante. En la auditoría real había **63 enlaces `a.red-link` con el mismo contraste** en una misma página, y el informe los contaba como 63 problemas distintos; igual los 63 que caza axe con «Links must have discernible text» y los 63 sin nombre accesible. Son 63 instancias de **una** barrera. Medido sobre esas 522 filas: agrupando quedan **202**, y 142 de las 202 son familias de una sola instancia — o sea que lo que infla el informe son 60 familias.
