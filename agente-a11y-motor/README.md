@@ -64,7 +64,7 @@ const informe = analyze(understand(html));
 ## Tests
 
 ```bash
-npm test                    # suite pura (node --test), sin navegador — 723 tests
+npm test                    # suite pura (node --test), sin navegador — 725 tests
 npm run test:integracion    # integración con Chromium (Playwright) — 160 tests
 npm run bench               # banco de precisión accname contra corpus WPT
 npm run smoke               # humo del artifact generado, en Chromium real
@@ -984,6 +984,18 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 **En el cruce con axe, dos afirmaciones que no se podían sostener.** `crossCheck` fabricaba `{findings: []}` cuando el motor no llegaba a construir el modelo —texto suelto, un comentario, una cadena vacía—, y ese resultado entraba en la reconciliación como una comprobación limpia: «soloMotor: 0» era indistinguible de «el motor comprobó y no encontró nada». Y el «acuerdo» se construía solo porque coincidía el número de criterio: el motor acusando a `img.logo` y axe a otro `img` de la página salían como «acuerdo: 1». Casar los elementos exige la página abierta —lo hace la orquestación, no la reconciliación pura—, así que ahora se publica cuántos elementos trae cada fuente, que la coincidencia a nivel de elemento NO está comprobada, y que el motor no miró cuando no miró.
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
+
+### v0.53.2 — el 12 % de las barreras que el cotejo no veía
+
+Primera comparación de verdad: las pasadas **v5 y v6 del mismo sitio real**, 522 filas cada una, once versiones de motor entre medias. Y lo primero que hizo la comparación fue descubrir dos cosas de sí misma y una del motor.
+
+**El cotejo elemento a elemento estaba ciego sobre el 12 % de las barreras.** De las 522 filas, **62 venían sin `selector`** — todas de la capa de adaptación (1.4.4, 1.4.10, 1.4.12), que nombra el bloque recortado en el campo `elemento` y no calcula ruta. Con la clave «criterio | página | selector», las diez filas de una misma página se fundían en una: la herramienta dijo «desaparecidas 1» cuando 1.4.4 había perdido dos filas y 1.4.10 una. Ahora la identidad cae en `elemento` cuando no hay selector, y lo que **aún** no se pueda distinguir se cuenta y se dice en una nota de cobertura: cuántas filas se identificaron por `elemento`, cuántas no traían ni lo uno ni lo otro, y cuántas comparten identidad con otra. Sin esa nota, «nuevas 3 · desaparecidas 1» se lee como el recuento completo, que es la misma falta que absolver por no haber mirado.
+
+**Y «94 de 93 control(es) alcanzados».** Eso salió en el 2.1.2 del sitio, y leído así parece una cuenta mal hecha. No lo es: el censo de enfocables se toma *antes* de tabular, así que un control que se vuelve enfocable durante el camino —un menú que se despliega al recibir el foco su botón— se alcanza sin estar censado. Medido con una página de respuesta sabida (un botón que al enfocarse añade tres enlaces): **5 alcanzados de 2 censados**. El número no se toca, porque es verdad; se explica. Y pasa a decir algo que interesa: que la página cambia al tabularla.
+
+**Lo que la comparación dijo del motor**, ya con las dos cosas arregladas: 14 criterios fallan antes y después, y los **tres conformes de la v5 han desaparecido** —2.4.5, 3.1.1 y 3.2.4 pasan a `revisar` o `cumple-parcial`—, que es justo lo que buscaban los barridos de v0.49.0 y v0.50.0. Seis criterios se vuelven más severos y cuatro más indulgentes (2.1.2, 2.1.4, 2.5.4 y 2.5.7, los cuatro de `revisar`/`humano` a `cumple-parcial`): comprobados uno por uno, los cuatro llevan detrás una medición real sobre la página y dicen qué parte no cubren, así que son el efecto buscado y no una regresión. Y ninguno de los cuatro es conformidad: `cumple-parcial` no lo acepta `esConforme()`, y el seguimiento sigue diciendo «No se puede comprobar».
+
+**725 tests unitarios** (de 723) y 162 de integración (de 160), en verde.
 
 ### v0.53.1 — la herramienta que comparaba la nada y no se quejaba
 

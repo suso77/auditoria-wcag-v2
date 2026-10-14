@@ -82,9 +82,26 @@ export function analyzeTabTrace(trace) {
       "No se ha visto ninguna trampa, pero no verla sin haber recorrido el camino entero no es haber comprobado que no la hay."
     ]));
   } else {
+    /* «94 de 93 control(es) alcanzados.»
+     *
+     * Eso salía en un sitio real, y leído así parece una cuenta mal hecha. No lo
+     * es: el censo se toma ANTES de tabular y el recorrido alcanza lo que haya
+     * en ese momento, así que un control que se vuelve enfocable durante el
+     * camino —un menú que se despliega al recibir el foco su botón— se alcanza
+     * sin estar censado. Medido con una página de respuesta sabida (un botón que
+     * al enfocarse añade tres enlaces): 5 alcanzados de 2 censados.
+     *
+     * Así que el número no se toca, se explica — y además es información que
+     * interesa, porque dice que la página cambia al tabularla. */
+    const alcanzados = (trace.reached || []).length;
+    const aparecidos = alcanzados - focusables.length;
     out.push(F("2.1.2", "cumple-parcial", null, [
-      "Se ha recorrido la página con Tab —" + (trace.reached || []).length + " de " + focusables.length +
-      " control(es) alcanzados en " + (trace.tabs || 0) + " tabulación(es)— y el foco sale de todos ellos: no hay trampa en el recorrido de tabulación.",
+      "Se ha recorrido la página con Tab —" + alcanzados + (aparecidos > 0
+        ? " control(es) alcanzados, " + aparecidos + " más de los " + focusables.length +
+          " que estaban censados antes de empezar: alguno se ha vuelto enfocable durante el recorrido" +
+          " (un menú que se despliega al recibir el foco, por ejemplo)"
+        : " de " + focusables.length + " control(es) alcanzados") +
+      " en " + (trace.tabs || 0) + " tabulación(es)— y el foco sale de todos ellos: no hay trampa en el recorrido de tabulación.",
       "Queda lo que esta prueba no toca: dentro de un widget compuesto (pestañas, listbox, menú) se navega con las FLECHAS, y una trampa ahí no la ve el Tab. Si la página tiene alguno, compruébalo a mano."
     ]));
   }

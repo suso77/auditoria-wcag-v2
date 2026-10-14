@@ -109,12 +109,42 @@ const porCriterio = (j) => {
 /* Identidad de una barrera: criterio + página + selector. El selector es la
  * ruta canónica que el agente calcula, así que es estable entre pasadas del
  * mismo sitio; el texto de la evidencia no lo es (cambia al mejorar la
- * redacción), y por eso no entra en la clave. */
-const clave = (b) => [b.criterio || (b.c && b.c.n), b.pagina || b.url || "", b.selector || b.path || ""].join(" | ");
+ * redacción), y por eso no entra en la clave.
+ *
+ * Y HAY BARRERAS SIN SELECTOR. Esto salió comparando las pasadas v5 y v6 de un
+ * sitio real: 62 de 522 filas —el 12 %— venían sin `selector`, todas de la capa
+ * de adaptación (1.4.4, 1.4.10, 1.4.12), que nombra el bloque recortado en el
+ * campo `elemento` y no calcula ruta. Con la clave a secas, las diez filas de
+ * una misma página se fundían en una, y la comparación dijo «desaparecidas 1»
+ * cuando 1.4.4 había perdido dos filas y 1.4.10 una. Quedarse callado sobre el
+ * 12 % de las barreras es lo mismo que el informe que absuelve por no haber
+ * mirado: así que se usa `elemento` cuando no hay selector, y lo que AÚN no se
+ * pueda distinguir se cuenta y se dice. */
+const identidad = (b) => (b.selector || b.path || "").trim() || (b.elemento || "").trim();
+const clave = (b) => [b.criterio || (b.c && b.c.n), b.pagina || b.url || "", identidad(b)].join(" | ");
 const barrerasDe = (j) => {
   const m = new Map();
-  (j.barreras || []).forEach((b) => { if (!m.has(clave(b))) m.set(clave(b), b); });
-  return m;
+  let porElemento = 0, sinNada = 0, colisiones = 0;
+  (j.barreras || []).forEach((b) => {
+    if (!(b.selector || b.path || "").trim()) {
+      if ((b.elemento || "").trim()) porElemento++; else sinNada++;
+    }
+    const k = clave(b);
+    if (m.has(k)) colisiones++; else m.set(k, b);
+  });
+  return { mapa: m, porElemento: porElemento, sinNada: sinNada, colisiones: colisiones };
+};
+/* La nota de cobertura de la comparación elemento a elemento: sin ella, «nuevas
+ * 3 · desaparecidas 1» se lee como el recuento completo. */
+const notaIdentidad = function (a, b) {
+  const l = [];
+  const pe = a.porElemento + b.porElemento;
+  if (pe) l.push(pe + " fila(s) no traían selector y se han identificado por su campo `elemento`");
+  const sn = a.sinNada + b.sinNada;
+  if (sn) l.push(sn + " fila(s) no traían NI selector NI elemento: de esas no se puede decir si son la misma o otra");
+  const co = a.colisiones + b.colisiones;
+  if (co) l.push(co + " fila(s) comparten identidad con otra y se han contado UNA vez: un cambio dentro de ese grupo no se ve aquí");
+  return l;
 };
 
 const uno = await leer(ficheros[0]);
@@ -258,11 +288,17 @@ if (referencia) {
   }
 
   // Barreras concretas, por elemento.
-  const ba = barrerasDe(uno), bb = barrerasDe(dos);
+  const ia = barrerasDe(uno), ib = barrerasDe(dos);
+  const ba = ia.mapa, bb = ib.mapa;
   const nuevas = [...bb.keys()].filter((k) => !ba.has(k));
   const idas = [...ba.keys()].filter((k) => !bb.has(k));
   console.log("\n── BARRERAS, ELEMENTO A ELEMENTO ──");
   console.log("   antes " + ba.size + " · después " + bb.size + " · nuevas " + nuevas.length + " · desaparecidas " + idas.length);
+  const nota = notaIdentidad(ia, ib);
+  if (nota.length) {
+    console.log("   Lo que este cotejo NO distingue:");
+    nota.forEach((l) => console.log("     · " + l));
+  }
   const muestra = (ks, m, t) => {
     if (!ks.length) return;
     console.log("\n   " + t);

@@ -166,3 +166,41 @@ test("comparar contra referencia: un CSV del que no sale ni un criterio se recha
   assert.match(r.stderr, /pagina \| nota/, "se dicen las cabeceras que había, para ver cuál falta");
   assert.doesNotMatch(r.stdout, /SE LE ESCAPAN/, "«0 se le escapan» se leería como coincidencia total");
 });
+
+/**
+ * EL 12 % DE LAS BARRERAS QUE EL COTEJO NO VEÍA.
+ *
+ * Esto salió comparando dos pasadas reales del mismo sitio. De 522 filas, 62
+ * —el 12 %— venían sin `selector`: todas de la capa de adaptación (1.4.4,
+ * 1.4.10, 1.4.12), que nombra el bloque recortado en el campo `elemento` y no
+ * calcula ruta. Con la clave «criterio | página | selector», las diez filas de
+ * una misma página se fundían en una, y la comparación dijo «desaparecidas 1»
+ * cuando 1.4.4 había perdido dos filas y 1.4.10 una.
+ *
+ * Callarse el 12 % de las barreras es la misma falta que absolver por no haber
+ * mirado: «nuevas 3 · desaparecidas 1» se lee como el recuento completo.
+ */
+test("comparar: una barrera sin selector se identifica por su `elemento`", async () => {
+  const b = (sel, el) => ({ criterio: "1.4.4", pagina: "https://x.test/a", selector: sel, elemento: el });
+  const antes = await escribe("n.json", auditoria({ "1.4.4": { v: "falla", n: 2 } },
+    [b("", "div.list_item «204 px de alto ocultos»"), b("", "p.title «50 px de alto ocultos»")]));
+  const despues = await escribe("o.json", auditoria({ "1.4.4": { v: "falla", n: 2 } },
+    [b("", "div.list_item «204 px de alto ocultos»"), b("", "p.otro «12 px de alto ocultos»")]));
+  const r = await run([antes, despues]);
+  assert.match(r.stdout, /antes 2 · después 2/, "dos y dos, no una y una");
+  assert.match(r.stdout, /nuevas 1/);
+  assert.match(r.stdout, /desaparecidas 1/);
+  assert.match(r.stdout, /identificado por su campo `elemento`/, "y se dice cómo se las ha distinguido");
+});
+
+test("comparar: lo que sigue sin poder distinguirse se CUENTA y se dice", async () => {
+  /* Dos filas idénticas en criterio, página, selector y elemento: no hay por
+   * dónde separarlas. Lo que no se puede decir, se dice que no se puede. */
+  const b = { criterio: "1.4.10", pagina: "https://x.test/a", selector: "", elemento: "" };
+  const antes = await escribe("p.json", auditoria({ "1.4.10": { v: "falla", n: 2 } }, [b, b]));
+  const despues = await escribe("q.json", auditoria({ "1.4.10": { v: "falla", n: 2 } }, [b, b]));
+  const r = await run([antes, despues]);
+  assert.match(r.stdout, /Lo que este cotejo NO distingue/);
+  assert.match(r.stdout, /NI selector NI elemento/);
+  assert.match(r.stdout, /comparten identidad con otra/);
+});

@@ -212,3 +212,49 @@ test("dinámico real: una página sin cambios de contexto no inventa ninguno", {
       n + " no debería acusar nada: " + JSON.stringify(fs.map((f) => [f.verdict, f.evid[0].slice(0, 100)])));
   });
 });
+
+/**
+ * «94 DE 93 CONTROL(ES) ALCANZADOS.»
+ *
+ * Eso salía en la pasada de un sitio real, y leído así parece una cuenta mal
+ * hecha. No lo es: el censo de enfocables se toma ANTES de tabular, y el
+ * recorrido alcanza lo que haya en ese momento, así que un control que se
+ * vuelve enfocable durante el camino se alcanza sin estar censado.
+ *
+ * La página de aquí es de respuesta sabida: un botón que al RECIBIR EL FOCO
+ * añade tres enlaces. Censados 2, alcanzados 5. El número no se toca —es
+ * verdad—, se explica; y además dice algo que interesa, que la página cambia
+ * al tabularla.
+ */
+const MENU_QUE_APARECE = `
+<button id="b">Menú</button>
+<div id="m"></div>
+<a href="#fin">Final</a>
+<script>
+document.getElementById("b").addEventListener("focus", function () {
+  if (document.getElementById("m").children.length) return;
+  for (var i = 1; i <= 3; i++) {
+    var a = document.createElement("a");
+    a.href = "#x" + i; a.textContent = "Opción " + i;
+    document.getElementById("m").appendChild(a);
+  }
+});
+</script>`;
+
+test("2.1.2 real: si aparecen controles al tabular, se dice — no «5 de 2»", { skip }, async () => {
+  const out = await dynamicAnalyze({ html: MENU_QUE_APARECE }, { launchOptions, movimientoMs: 0, teclas: false });
+  const f = out.findings.find((x) => x.c.n === "2.1.2");
+  assert.ok(f, "2.1.2 tiene que pronunciarse");
+  const t = f.evid.join(" ");
+  assert.match(t, /más de los 2 que estaban censados/, "se explica, en vez de dar un «de» imposible");
+  assert.match(t, /enfocable durante el recorrido/);
+  assert.doesNotMatch(t, /5 de 2/, "eso era lo que parecía un error de cuenta");
+});
+
+test("2.1.2 real: sin controles que aparezcan, la frase sigue siendo la de siempre", { skip }, async () => {
+  const out = await dynamicAnalyze({ html: '<button>Uno</button><a href="#x">Dos</a>' },
+    { launchOptions, movimientoMs: 0, teclas: false });
+  const f = out.findings.find((x) => x.c.n === "2.1.2");
+  assert.ok(f);
+  assert.match(f.evid.join(" "), /de 2 control\(es\) alcanzados/);
+});
