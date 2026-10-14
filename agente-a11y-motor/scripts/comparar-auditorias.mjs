@@ -53,7 +53,54 @@ if (!ficheros.length) {
 const RANGO = { falla: 5, revisar: 4, humano: 3, "cumple-parcial": 2, pasa: 1, cumple: 0, "no-aplica": -1 };
 const rango = (v) => (RANGO[v] === undefined ? 4 : RANGO[v]);   // desconocido → se trata como `revisar`
 
-const leer = async (f) => JSON.parse(await readFile(f, "utf8"));
+/* LEER, Y NEGARSE A COMPARAR NADA.
+ *
+ * Esto salió del primer uso de verdad: la orden que tenía que generar el
+ * segundo informe falló, pero la redirección del intérprete ya había creado el
+ * fichero, así que quedó un `.json` de cero bytes — y la comparación se rompió
+ * con un «Unexpected end of JSON input» y una pila de llamadas, que no le dice
+ * a nadie qué ha pasado.
+ *
+ * Y lo peor no era eso. Con un JSON válido pero que no es una auditoría del
+ * agente, la herramienta imprimía el informe entero: «0 más severo, 0 más
+ * indulgente, 0 barreras», que se lee como «no ha cambiado nada» cuando lo que
+ * pasa es que no se ha leído nada. Es la regla de oro del proyecto aplicada a
+ * la propia herramienta: el silencio se lee como conformidad, así que una
+ * comparación que no puede hacerse tiene que decirlo y salir, no salir en
+ * blanco. */
+const salir = (...lineas) => { lineas.forEach((l) => console.error(l)); process.exit(2); };
+
+const leer = async function (f) {
+  let txt;
+  try {
+    txt = await readFile(f, "utf8");
+  } catch (e) {
+    if (e.code === "ENOENT") salir("✕ No existe el fichero: " + f);
+    if (e.code === "EISDIR") salir("✕ Eso es una carpeta, no un informe: " + f);
+    salir("✕ No puedo leer " + f + ": " + e.message);
+  }
+  if (!txt.trim()) {
+    salir("✕ El fichero está VACÍO (0 bytes útiles): " + f,
+      "  Suele pasar cuando la orden que tenía que generarlo falló y la",
+      "  redirección `> " + f + "` creó el fichero igualmente. Mira el error de",
+      "  esa orden y vuelve a generarlo antes de comparar.");
+  }
+  let j;
+  try {
+    j = JSON.parse(txt);
+  } catch (e) {
+    salir("✕ " + f + " no es JSON válido: " + e.message,
+      "  Empieza así: " + JSON.stringify(txt.slice(0, 60)));
+  }
+  if (!j || typeof j !== "object" || !Array.isArray(j.seguimiento)) {
+    salir("✕ " + f + " no parece un informe del agente: no trae la lista `seguimiento`.",
+      "  Aquí van las salidas `--json` de `examples/auditar-muestra.mjs` o de",
+      "  `auditar-sitio.mjs`, que llevan `seguimiento` (un veredicto por",
+      "  subcriterio) y `barreras`. Comparar otra cosa daría un informe lleno de",
+      "  ceros, y un informe lleno de ceros se lee como «no ha cambiado nada».");
+  }
+  return j;
+};
 const porCriterio = (j) => {
   const out = {};
   (j.seguimiento || []).forEach((s) => { out[s.criterio] = { veredicto: s.veredicto, barreras: s.num_barreras || 0 }; });
@@ -74,8 +121,18 @@ const uno = await leer(ficheros[0]);
 
 if (referencia) {
   // ── MODO REFERENCIA ────────────────────────────────────────────────────────
-  const csv = await readFile(referencia, "utf8");
+  let csv;
+  try {
+    csv = await readFile(referencia, "utf8");
+  } catch (e) {
+    if (e.code === "ENOENT") salir("✕ No existe el CSV de referencia: " + referencia);
+    salir("✕ No puedo leer la referencia " + referencia + ": " + e.message);
+  }
   const lineas = csv.split(/\r?\n/).filter(Boolean);
+  if (lineas.length < 2) {
+    salir("✕ La referencia " + referencia + " no tiene filas: " + lineas.length + " línea(s).",
+      "  Hace falta una cabecera y al menos una barrera.");
+  }
   const sep = (lineas[0].match(/;/g) || []).length >= (lineas[0].match(/,/g) || []).length ? ";" : ",";
   const cab = lineas[0].replace(/^﻿/, "").split(sep).map((c) => c.replace(/^"|"$/g, "").trim().toLowerCase());
   /* La columna del criterio, POR ORDEN DE PREFERENCIA.
@@ -101,6 +158,17 @@ if (referencia) {
     const m = /\b9\.\d\.\d\.\d+\b/.exec(bruto) || RE_SC.exec(bruto) || RE_SC.exec(l);
     if (m) { const n = normaliza(m[0]); refCrits[n] = (refCrits[n] || 0) + 1; }
   });
+  /* Si de la columna elegida no sale ni un criterio, el informe diría «0
+   * criterios con barrera · 0 se le escapan», que es la peor salida posible:
+   * parece que el agente coincide con la persona en todo. */
+  if (!Object.keys(refCrits).length) {
+    salir("✕ En " + referencia + " no he sacado ningún criterio WCAG de la columna «" +
+      (cab[col] || "?") + "» (" + (lineas.length - 1) + " fila(s) leídas).",
+      "  Hace falta una columna con el número del criterio («1.4.3») o del",
+      "  subcriterio de la EN («9.1.4.3»). Las cabeceras que encontré: " + cab.join(" | "),
+      "  Sin eso no comparo nada: diría «0 se le escapan», y eso se leería como",
+      "  que el agente coincide con la persona en todo.");
+  }
   const mios = porCriterio(uno);
   const DENUNCIA = { falla: 1 };
   const SOSPECHA = { revisar: 1, humano: 1, "cumple-parcial": 1 };

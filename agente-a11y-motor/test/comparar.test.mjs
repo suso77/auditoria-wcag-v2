@@ -114,3 +114,55 @@ test("comparar: sin argumentos, explica cómo se usa y sale con 2", async () => 
   assert.equal(r.code, 2);
   assert.match(r.stderr, /--referencia/);
 });
+
+/**
+ * Y LO QUE NO SE PUEDE COMPARAR SE DICE, NO SALE EN BLANCO.
+ *
+ * Cuatro casos salidos del primer uso real. La orden que tenía que generar el
+ * segundo informe falló, pero la redirección del intérprete ya había creado el
+ * fichero: quedó un `.json` de cero bytes y la herramienta se rompió con un
+ * «Unexpected end of JSON input» y una pila de llamadas.
+ *
+ * Lo grave era el caso de al lado: con un JSON válido que no es una auditoría,
+ * imprimía el informe entero —«0 más severo, 0 más indulgente, 0 barreras»—,
+ * que se lee como «no ha cambiado nada» cuando lo que pasa es que no se ha
+ * leído nada. Es la regla de oro del proyecto aplicada a la herramienta: el
+ * silencio se lee como conformidad.
+ */
+test("comparar: un fichero vacío se dice, y además por qué suele quedar vacío", async () => {
+  const vacio = await escribe("vacio.json", "");
+  const bueno = await escribe("k.json", auditoria({ "1.1.1": { v: "falla", n: 1 } }));
+  const r = await run([vacio, bueno]);
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /VACÍO/);
+  assert.match(r.stderr, /redirección/, "y se apunta a la causa, que es la orden que falló antes");
+  assert.doesNotMatch(r.stdout, /MÁS INDULGENTE/, "no se imprime ningún informe");
+});
+
+test("comparar: un fichero que no existe se dice con su ruta, sin pila de llamadas", async () => {
+  const bueno = await escribe("l.json", auditoria({ "1.1.1": { v: "falla", n: 1 } }));
+  const r = await run([join(dir, "no-esta.json"), bueno]);
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /No existe el fichero.*no-esta\.json/);
+  assert.doesNotMatch(r.stderr, /at JSON\.parse|internal\/fs/, "nada de volcados de Node");
+});
+
+test("comparar: un JSON que no es una auditoría se RECHAZA, no se compara con ceros", async () => {
+  const otro = await escribe("otro.json", '{"hola":1}');
+  const r = await run([otro, otro]);
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /no parece un informe del agente/);
+  assert.match(r.stderr, /seguimiento/);
+  assert.doesNotMatch(r.stdout, /BARRERAS|MÁS SEVERO/,
+    "un informe de ceros se leería como «no ha cambiado nada», y eso es lo contrario de lo que pasa");
+});
+
+test("comparar contra referencia: un CSV del que no sale ni un criterio se rechaza", async () => {
+  const malo = await escribe("malo.csv", "Pagina;Nota\nhttps://x.test/;hola\n");
+  const audit = await escribe("m.json", auditoria({ "1.4.3": { v: "falla", n: 3 } }));
+  const r = await run([audit, "--referencia", malo]);
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /ningún criterio WCAG/);
+  assert.match(r.stderr, /pagina \| nota/, "se dicen las cabeceras que había, para ver cuál falta");
+  assert.doesNotMatch(r.stdout, /SE LE ESCAPAN/, "«0 se le escapan» se leería como coincidencia total");
+});

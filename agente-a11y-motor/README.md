@@ -64,7 +64,7 @@ const informe = analyze(understand(html));
 ## Tests
 
 ```bash
-npm test                    # suite pura (node --test), sin navegador — 719 tests
+npm test                    # suite pura (node --test), sin navegador — 723 tests
 npm run test:integracion    # integración con Chromium (Playwright) — 160 tests
 npm run bench               # banco de precisión accname contra corpus WPT
 npm run smoke               # humo del artifact generado, en Chromium real
@@ -984,6 +984,16 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 **En el cruce con axe, dos afirmaciones que no se podían sostener.** `crossCheck` fabricaba `{findings: []}` cuando el motor no llegaba a construir el modelo —texto suelto, un comentario, una cadena vacía—, y ese resultado entraba en la reconciliación como una comprobación limpia: «soloMotor: 0» era indistinguible de «el motor comprobó y no encontró nada». Y el «acuerdo» se construía solo porque coincidía el número de criterio: el motor acusando a `img.logo` y axe a otro `img` de la página salían como «acuerdo: 1». Casar los elementos exige la página abierta —lo hace la orquestación, no la reconciliación pura—, así que ahora se publica cuántos elementos trae cada fuente, que la coincidencia a nivel de elemento NO está comprobada, y que el motor no miró cuando no miró.
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
+
+### v0.53.1 — la herramienta que comparaba la nada y no se quejaba
+
+La v0.53.0 se estrenó con datos reales y a la primera salió algo que no estaba en ningún test: la orden que tenía que generar el segundo informe falló, pero la redirección del intérprete ya había creado el fichero, así que quedó un `.json` de **cero bytes** — y la comparación se rompió con un «Unexpected end of JSON input» y una pila de llamadas de Node, que no le dice a nadie qué ha pasado.
+
+Y al ir a arreglarlo apareció lo de verdad grave, que es el mismo error del proyecto entero aplicado a la propia herramienta. Con un JSON **válido pero que no es una auditoría del agente**, la comparación imprimía el informe completo: «0 más severo, 0 más indulgente, 0 barreras». Eso se lee como *no ha cambiado nada*, cuando lo que pasa es que **no se ha leído nada**. En un informe el silencio se lee como conformidad, y en una comparación un montón de ceros se lee como coincidencia: la herramienta estaba absolviendo por no haber mirado, exactamente lo que lleva once versiones persiguiendo en el motor.
+
+Así que ahora se niega a comparar nada, y lo dice: el fichero que no existe, con su ruta y sin volcado; el fichero vacío, **apuntando a la causa** —la orden anterior falló y la redirección creó el fichero igualmente—; el JSON que no trae la lista `seguimiento`, diciendo qué salidas sí valen; y, en modo referencia, el CSV del que no sale ni un criterio, listando las cabeceras que encontró para ver cuál falta. Los cuatro salen con código 2 y **sin imprimir una línea de informe**.
+
+**723 tests unitarios** (de 719) y 160 de integración, en verde.
 
 ### v0.53.0 — la herramienta para medir el agente contra una verdad conocida
 
