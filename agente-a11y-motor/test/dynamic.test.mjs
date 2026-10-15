@@ -309,7 +309,7 @@ test("2.2.2 observado: si la observación NO corrió o falló, no se dice nada",
  * criterios que no miraba ninguna capa, ni para bien ni para mal.
  */
 test("2.1.4 pulsado: una tecla suelta que actúa con el foco en el cuerpo queda a revisar", () => {
-  const f = analyzeCharKeyShortcuts({ probadas: ["/", "s", "f"], activas: [{ tecla: "s", cambios: ["mueve el foco a «input#q»", "cambia qué se ve (+3 elemento(s) visibles)"] }] });
+  const f = analyzeCharKeyShortcuts({ probadas: ["/", "s", "f"], limpias: ["/", "f"], activas: [{ tecla: "s", cambios: ["mueve el foco a «input#q»", "cambia qué se ve (+3 elemento(s) visibles)"] }] });
   assert.equal(f.length, 1);
   assert.equal(f[0].c.n, "2.1.4");
   assert.equal(f[0].verdict, "revisar");
@@ -324,16 +324,84 @@ test("2.1.4 pulsado: sin ninguna tecla activa es cumple-parcial, nunca cumple", 
   /* `cumple` sería afirmar que no hay atajos de un carácter habiendo probado diez
    * teclas de las que hay. `cumple-parcial` dice la verdad: lo probado está bien y el
    * resto no se ha mirado — y `esConforme()` ya lo excluye de la conformidad. */
-  const f = analyzeCharKeyShortcuts({ probadas: ["/", "?", "s"], activas: [] });
+  const f = analyzeCharKeyShortcuts({ probadas: ["/", "?", "s"], activas: [], limpias: ["/", "?", "s"], ruido: [] });
   assert.equal(f[0].verdict, "cumple-parcial");
   assert.equal(esConforme(f[0].verdict), false);
   assert.match(f[0].evid[0], /no todas/);
   assert.match(f[0].evid[0], /no cierra el criterio por sí solo/);
+  // Y dice que lo comprobó, que es lo que distingue esto de no haber podido medir.
+  assert.match(f[0].evid[0], /foco COMPROBADO/);
+  assert.match(f[0].evid[0], /no se mueve sola/);
 });
 
 test("2.1.4 pulsado: si la fase no corrió, no se dice nada", () => {
   assert.deepEqual(analyzeCharKeyShortcuts(null), []);
   assert.deepEqual(analyzeCharKeyShortcuts({ probadas: [], activas: [] }), []);
+});
+
+/* ── 2.1.4: la sonda no puede absolver cuando no pudo medir (v0.60.0) ────── */
+
+/**
+ * Los dos errores que se midieron con fixtures reales antes de tocar nada, los dos
+ * deterministas en tres pasadas:
+ *
+ *   · una página que crece sola cada 300 ms, SIN un solo manejador de teclado, hacía
+ *     que se acusara a tres o cuatro teclas de ser atajos de página;
+ *   · un atajo de página real detrás de un modal que se reenfoca solo salía
+ *     `cumple-parcial`, con el informe afirmando «con el foco en el cuerpo» sin
+ *     haberlo comprobado.
+ *
+ * La regla que sale de ahí: una señal que se mueve sola no sirve para atribuir, y una
+ * tecla pulsada con el foco en otro sitio no dice nada del ámbito del atajo. Si no
+ * queda ninguna medida limpia, es `revisar` — que es pedir que lo mire alguien.
+ */
+test("2.1.4: si la página se mueve sola, las teclas descartadas NO se acusan", () => {
+  const f = analyzeCharKeyShortcuts({
+    probadas: ["/", "s", "f", "j"], activas: [], limpias: [],
+    descartadas: [{ tecla: "/", senales: ["pintura"] }, { tecla: "s", senales: ["pintura"] }],
+    fueraDelCuerpo: [], ruido: ["pintura"]
+  });
+  assert.equal(f[0].verdict, "revisar");
+  assert.equal(esConforme(f[0].verdict), false);
+  assert.match(f[0].evid[0], /NO se ha podido comprobar/);
+  assert.match(f[0].evid[1], /inventarse un atajo/);
+  // Y lo que NO puede pasar: que esas teclas aparezcan como atajos encontrados.
+  assert.ok(!/tecla\(s\) suelta\(s\) actúan/.test(f[0].evid.join(" ")));
+  assert.equal(f[0].nodes, undefined);
+});
+
+test("2.1.4: con ruido en una señal, un cambio en OTRA señal sí se atribuye", () => {
+  /* El descarte es por señal, no por página: que repinte sola no invalida un atajo
+   * que navega. Si no, una portada con carrusel taparía todos sus atajos. */
+  const f = analyzeCharKeyShortcuts({
+    probadas: ["/", "s"], limpias: [], ruido: ["pintura"],
+    activas: [{ tecla: "/", cambios: ["navega a otra página"] }],
+    descartadas: [{ tecla: "s", senales: ["pintura"] }], fueraDelCuerpo: []
+  });
+  assert.equal(f[0].verdict, "revisar");
+  assert.match(f[0].evid[0], /«\/» navega a otra página/);
+  assert.match(f[0].evid[1], /La página se mueve sola/);
+  assert.match(f[0].evid[1], /«s»/);   // dicha como descartada, no como atajo
+});
+
+test("2.1.4: si el foco no estaba en el cuerpo, no se absuelve y se dice quién lo tenía", () => {
+  const f = analyzeCharKeyShortcuts({
+    probadas: ["/", "s"], activas: [], limpias: [], descartadas: [], ruido: [],
+    fueraDelCuerpo: [{ tecla: "/", quien: "input#x", cambios: [] }, { tecla: "s", quien: "input#x", cambios: [] }]
+  });
+  assert.equal(f[0].verdict, "revisar");
+  assert.equal(esConforme(f[0].verdict), false);
+  assert.match(f[0].evid[0], /el foco no estaba en el cuerpo del documento al pulsar 2 de las 2/);
+  assert.match(f[0].evid[1], /«input#x»/);
+  assert.match(f[0].evid[1], /se come la tecla/);
+});
+
+test("2.1.4: una sonda sin la cuenta de teclas limpias no absuelve (por omisión, fallo seguro)", () => {
+  /* Una traza de una versión anterior, o una fase que se cortó, no trae `limpias`.
+   * El valor por omisión de «no sé» tiene que ser `revisar`, no `cumple-parcial`. */
+  const f = analyzeCharKeyShortcuts({ probadas: ["/", "s"], activas: [] });
+  assert.equal(f[0].verdict, "revisar");
+  assert.match(f[0].evid[0], /ninguna tecla llegó a probarse en condiciones limpias/);
 });
 
 /* ── 4.1.3 fuera del formulario: el texto que aparece al interactuar ─────── */

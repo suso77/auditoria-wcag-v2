@@ -987,6 +987,36 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.60.0 — la sonda que no medía las condiciones de su propia medida
+
+El segundo de los dos criterios que se movían entre pasadas del mismo sitio. El primero fue el carrusel de 2.2.2, en v0.59.0; este es **2.1.4, atajos de teclado de un carácter**, y venía del mismo sitio: la sonda pulsa una tecla, mira si la página cambia y le atribuye el cambio a la tecla. Nunca comprobaba ninguna de las dos cosas que hacen que esa atribución valga algo.
+
+Se midió antes de tocar nada, con dos fixtures, tres pasadas cada uno. Los dos resultados fueron **deterministas**, que es lo incómodo: no era un fallo intermitente, era un fallo estable que la auditoría real solo dejaba ver a veces.
+
+```
+una página que crece sola cada 300 ms, SIN un solo manejador de teclado
+  v0.59.0 →  revisar · «3 tecla(s) suelta(s) actúan … «/», «s», «f»»
+  v0.60.0 →  revisar · «NO se ha podido comprobar … el mismo cambio ocurre sin tocar nada»
+
+un atajo de página REAL detrás de un modal que se reenfoca solo
+  v0.59.0 →  cumple-parcial · «con el foco en el cuerpo del documento, ninguna tecla hace nada»
+  v0.60.0 →  revisar · «se pulsaron con el foco en «input#x» y no en el cuerpo»
+```
+
+**El primero es un falso positivo entero**: tres atajos de teclado inventados en una página que no escucha el teclado. El cambio era el de la propia página, y caía dentro de los 260 ms de la ventana. **El segundo es su cara B**: el `blur()` que pone el foco en el cuerpo lo deshace el modal en el `setTimeout` siguiente, antes de que llegue la tecla, así que lo que se medía era otra cosa — y el informe afirmaba «con el foco en el cuerpo del documento» sin haberlo comprobado jamás.
+
+**El arreglo es medir el control.** Cada tecla lleva emparejada una **ventana en blanco**: los mismos 260 ms, el mismo foco, sin pulsar nada. Lo que se mueve ahí se mueve solo, y un cambio en una señal con ruido no se le atribuye a ninguna tecla. El descarte es **por señal** —url, red, foco, desplazamiento, pintura—, no por página: que una portada repinte sola no puede tapar un atajo que navega. Y el foco se comprueba **en el instante de pulsar**, no al pedirlo.
+
+El testigo va emparejado y no una vez al principio porque eso también se midió: con el fixture que crece cada 300 ms, la primera ventana en blanco no vio nada y la segunda y la tercera sí. Un testigo al arrancar se le escapa, y un carrusel que tarda en arrancar se le escapa seguro.
+
+**De ahí las cuatro cuentas** que la traza publica: teclas que actúan (foco comprobado, sin ruido), descartadas por ruido, pulsadas con el foco en otro sitio, y limpias sin cambio. **Solo las últimas sostienen una absolución**, y basta que haya ruido o foco secuestrado para que no la sostengan. Entonces es `revisar`, que es pedir que lo mire alguien — no decir que está bien. Una sonda que llega sin la cuenta de teclas limpias tampoco absuelve: el valor por omisión de «no sé» es `revisar`.
+
+**Lo que cuesta, medido:** la fase de teclas pasa de 2,7 s a 5,4 s por página, porque hay el doble de ventanas. En una auditoría de diez páginas son **27 segundos sobre los seis minutos** que ya tarda, un 7 %. Es el precio de no inventarse atajos, y la palanca para bajarlo es probar menos teclas (`teclas: [...]`), no quitar el testigo.
+
+Y los dos casos que ya estaban bien no se mueven: un atajo real en una página quieta sigue saliendo a `revisar` con la tecla nombrada, y una página quieta sin atajos sigue en `cumple-parcial`.
+
+**753 tests unitarios** (de 749) y **175 de integración** (de 173), en verde.
+
 ### v0.59.0 — la misma página, dos veredictos opuestos
 
 Esto no salió de leer código: salió de que **mi predicción falló**. Dije que al quitar el tope de los pseudoelementos 1.4.3 subiría de 138 filas, y se quedó clavado en 138 — los 290 elementos que no se miraban no tenían ni una barrera de contraste. Lo que sí se movió fueron **tres filas de 2.2.2 que no tenían nada que ver con el cambio**, y ahí estaba lo importante.

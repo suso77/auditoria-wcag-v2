@@ -115,6 +115,61 @@ test("dinámico real: un atajo que exige Ctrl no se acusa", { skip }, async () =
   assert.equal(out.trace.teclas.activas, 0);
 });
 
+/* ── 2.1.4: la sonda mide también sus propias condiciones (v0.60.0) ──────── */
+
+/**
+ * Estos dos fixtures son los que midieron el defecto antes de arreglarlo, y lo que
+ * dieron con v0.59.0, tres pasadas cada uno, sin una sola variación:
+ *
+ *   CRECE_SOLA  → `revisar` acusando a 3 y 4 teclas de ser atajos de página,
+ *                 cuando el fixture no tiene NI UN manejador de teclado;
+ *   ATAJO_TRAMPA→ `cumple-parcial`, absolviendo un atajo de página que sí existe.
+ *
+ * Son los dos extremos del mismo agujero: la sonda no medía las condiciones de su
+ * propia medida. Con el testigo emparejado y el foco comprobado, el primero deja de
+ * acusar y el segundo deja de absolver, y los dos casos que ya estaban bien
+ * —atajo real en página quieta, y página quieta sin atajo— no se mueven.
+ */
+const CRECE_SOLA = `<main><h1>Portada</h1><ul id="l"><li>fila</li></ul></main>
+<script>var n=1,l=document.getElementById('l');
+ setInterval(function(){ n++;
+   if(n%4===0){ l.innerHTML='<li>fila</li>'; }
+   else { var i=document.createElement('li'); i.textContent='fila nueva numero '+n+' con bastante texto'; l.appendChild(i); }
+ },300);</script>`;
+
+const ATAJO_TRAMPA = `<main><h1>Con atajo</h1>
+<div role="dialog"><input id="x" autofocus><button>Aceptar</button></div><p id="p">nada</p></main>
+<script>var x=document.getElementById('x');
+ x.addEventListener('blur', function(){ setTimeout(function(){ x.focus(); }, 0); });
+ document.addEventListener('keydown', function(e){
+   var t=e.target||{}, n=(t.tagName||'').toUpperCase();
+   if(n==='INPUT'||n==='TEXTAREA'||n==='SELECT'||t.isContentEditable) return;
+   if(e.key==='/' && !e.ctrlKey && !e.altKey && !e.metaKey){ document.getElementById('p').textContent='BUSCADOR ABIERTO '.repeat(12); }
+ });</script>`;
+
+test("dinámico real: una página que crece sola NO hace que se acuse a sus teclas", { skip }, async () => {
+  const out = await dynamicAnalyze({ html: CRECE_SOLA }, { launchOptions, forms: "off", movimientoMs: 0, teclas: ["/", "s", "f", "j"] });
+  const t = out.trace.teclas;
+  // El testigo tiene que haber visto el movimiento propio de la página.
+  assert.deepEqual(t.ruido, ["pintura"], JSON.stringify(t));
+  assert.equal(t.activas, 0, "ninguna tecla puede salir como atajo: el fixture no escucha el teclado");
+  assert.ok(t.descartadas > 0, JSON.stringify(t));
+  const f = out.findings.filter((x) => x.c.n === "2.1.4");
+  assert.equal(f[0].verdict, "revisar");
+  assert.match(f[0].evid[0], /NO se ha podido comprobar/);
+  assert.match(f[0].evid[1], /inventarse un atajo/);
+});
+
+test("dinámico real: un atajo de página detrás de una trampa de foco NO se absuelve", { skip }, async () => {
+  const out = await dynamicAnalyze({ html: ATAJO_TRAMPA }, { launchOptions, forms: "off", movimientoMs: 0, teclas: ["/", "s", "f", "j"] });
+  const t = out.trace.teclas;
+  assert.equal(t.fueraDelCuerpo, 4, JSON.stringify(t));
+  assert.equal(t.limpias, 0);
+  const f = out.findings.filter((x) => x.c.n === "2.1.4");
+  assert.equal(f[0].verdict, "revisar", JSON.stringify(f[0] && f[0].evid));
+  assert.match(f[0].evid[1], /«input#x»/);
+});
+
 test("dinámico real: con `teclas: false` la fase no corre y no se dice nada de 2.1.4", { skip }, async () => {
   const out = await dynamicAnalyze({ html: CON_ATAJO }, { launchOptions, forms: "off", movimientoMs: 0, teclas: false });
   assert.deepEqual(out.findings.filter((x) => x.c.n === "2.1.4"), []);

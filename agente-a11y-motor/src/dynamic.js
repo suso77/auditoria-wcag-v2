@@ -683,6 +683,33 @@ export function analyzeAutoMovement(obs) {
  * poder reasignarlo— viven en las preferencias del sitio y no se pueden comprobar
  * desde fuera, así que el veredicto es `revisar` y no `falla`: queda dicho qué tecla
  * hace qué, que es lo que una persona necesita para ir a buscar el interruptor.
+ *
+ * — v0.60.0: LA SONDA NO PUEDE ABSOLVER SOLA ——————————————————————————————————
+ *
+ * Esta era la segunda de las dos cosas que se movían entre pasadas del mismo sitio
+ * (la primera, el carrusel de 2.2.2, se arregló en v0.59.0). Y al medirla con
+ * fixtures salieron los dos errores, los dos deterministas:
+ *
+ *   · una página que crece sola cada 300 ms, SIN un solo manejador de teclado, hacía
+ *     que se acusara a tres o cuatro teclas de ser atajos de página. Un falso
+ *     positivo entero, y además inestable: dependía de si el cambio caía dentro de
+ *     los 260 ms de la ventana;
+ *   · un atajo de página REAL —el típico guardado con «si el target es un campo, no
+ *     hagas nada»— detrás de un modal que se vuelve a enfocar solo salía
+ *     `cumple-parcial`, porque la tecla se la comía el campo de texto. Y el informe
+ *     afirmaba «con el foco en el cuerpo del documento» sin haberlo comprobado.
+ *
+ * Las dos salen del mismo agujero: la sonda no medía las condiciones de su propia
+ * medida. Ahora sí, y de las dos maneras. Cada tecla lleva emparejada una VENTANA EN
+ * BLANCO —los mismos 260 ms sin pulsar nada— que dice qué señales se mueven por su
+ * cuenta; un cambio en una señal con ruido no se le atribuye a la tecla. Y el foco se
+ * comprueba en el instante de pulsar, no al pedirlo.
+ *
+ * De ahí las cuatro cuentas: teclas que actúan (con el foco comprobado y sin ruido),
+ * teclas descartadas por ruido, teclas pulsadas con el foco en otro sitio, y teclas
+ * limpias sin cambio. Solo las últimas sostienen una absolución, y basta que haya
+ * ruido o foco secuestrado para que no la sostengan: entonces es `revisar`, que es
+ * pedir que lo mire alguien, no decir que está bien.
  */
 export function analyzeCharKeyShortcuts(res) {
   if (!res || !Array.isArray(res.probadas) || !res.probadas.length) return [];
@@ -690,16 +717,51 @@ export function analyzeCharKeyShortcuts(res) {
   const cola = " Se han probado " + res.probadas.length + " tecla(s) (" + probadas +
     "), no todas: un atajo con otra tecla no se habría visto, así que esto no cierra el criterio por sí solo.";
   const activas = res.activas || [];
-  if (!activas.length) {
-    return [F("2.1.4", "cumple-parcial", null, [
-      "Con el foco en el cuerpo del documento, ninguna de las teclas sueltas probadas hace nada: ni navega, ni mueve el foco, ni cambia lo que se ve, ni desplaza la página." + cola
+  const descartadas = res.descartadas || [];
+  const fuera = res.fueraDelCuerpo || [];
+  const limpias = res.limpias || [];
+  const ruido = res.ruido || [];
+
+  const COMO = { url: "la dirección", red: "las peticiones de red", foco: "el foco",
+    scroll: "el desplazamiento", pintura: "lo que se ve en pantalla" };
+  const comoEsElRuido = ruido.map(function (s) { return COMO[s] || s; }).join(" y ");
+  const notaRuido = ruido.length
+    ? " La página se mueve sola: en las ventanas de control, sin pulsar ninguna tecla, ya cambia " + comoEsElRuido + "." +
+      (descartadas.length
+        ? " Por eso " + descartadas.length + " tecla(s) que parecían hacer algo (" +
+          descartadas.map(function (d) { return "«" + d.tecla + "»"; }).join(", ") + ") NO se cuentan: el mismo cambio ocurre sin tocar nada, y atribuírselo a la tecla sería inventarse un atajo."
+        : "")
+    : "";
+  const notaFoco = fuera.length
+    ? " Y " + fuera.length + " tecla(s) (" + fuera.map(function (f) { return "«" + f.tecla + "»"; }).join(", ") +
+      ") se pulsaron con el foco en «" + fuera[0].quien + "» y no en el cuerpo del documento: ahí el campo se come la tecla, así que no dicen nada del ámbito del atajo."
+    : "";
+
+  if (activas.length) {
+    return [F("2.1.4", "revisar", null, [
+      activas.length + " tecla(s) suelta(s) actúan con el foco COMPROBADO en el cuerpo del documento, sin exigir Ctrl, Alt, Cmd ni Mayúsculas, y con un cambio que no ocurre sin pulsarlas: " +
+      activas.slice(0, 6).map(function (a) { return "«" + a.tecla + "» " + a.cambios.join(" y "); }).join(" · ") + ".",
+      "Eso descarta una de las tres salidas que da 2.1.4: el atajo no está limitado al foco de un control, actúa en toda la página. Quedan las otras dos —que se pueda desactivar o reasignar—, y eso vive en las preferencias del sitio: compruébalo ahí. Si no hay ni interruptor ni reasignación, es una falla de nivel A." + cola + notaRuido + notaFoco
+    ], activas.slice(0, 8).map(function (a) { return { locator: "tecla «" + a.tecla + "»", name: a.cambios.join("; ") }; }))];
+  }
+
+  /* Ninguna tecla actúa de forma atribuible. Eso solo vale como «no hay atajos de un
+   * carácter» si la medida se pudo hacer en condiciones; si no, se dice que no se pudo. */
+  if (ruido.length || fuera.length || !limpias.length) {
+    const porque = [];
+    if (ruido.length) porque.push("la página cambia " + comoEsElRuido + " por su cuenta, así que un cambio al pulsar no se le puede atribuir a la tecla");
+    if (fuera.length) porque.push("el foco no estaba en el cuerpo del documento al pulsar " + fuera.length + " de las " + res.probadas.length + " teclas");
+    if (!limpias.length) porque.push("ninguna tecla llegó a probarse en condiciones limpias");
+    return [F("2.1.4", "revisar", null, [
+      "NO se ha podido comprobar si la página tiene atajos de un solo carácter: " + porque.join("; ") + ".",
+      "Y no haber podido medirlo no es haberlo medido bien: por eso esto no sale como conforme. Compruébalo a mano —pulsa «/», «s» o «f» con el foco fuera de cualquier campo y mira si pasa algo— o repite la pasada sobre un estado quieto de la página." + cola + notaRuido + notaFoco
     ])];
   }
-  return [F("2.1.4", "revisar", null, [
-    activas.length + " tecla(s) suelta(s) actúan con el foco en el CUERPO del documento, sin exigir Ctrl, Alt, Cmd ni Mayúsculas: " +
-    activas.slice(0, 6).map(function (a) { return "«" + a.tecla + "» " + a.cambios.join(" y "); }).join(" · ") + ".",
-    "Eso descarta una de las tres salidas que da 2.1.4: el atajo no está limitado al foco de un control, actúa en toda la página. Quedan las otras dos —que se pueda desactivar o reasignar—, y eso vive en las preferencias del sitio: compruébalo ahí. Si no hay ni interruptor ni reasignación, es una falla de nivel A." + cola
-  ], activas.slice(0, 8).map(function (a) { return { locator: "tecla «" + a.tecla + "»", name: a.cambios.join("; ") }; }))];
+
+  return [F("2.1.4", "cumple-parcial", null, [
+    "Con el foco COMPROBADO en el cuerpo del documento, ninguna de las " + limpias.length +
+    " tecla(s) sueltas probadas hace nada: ni navega, ni mueve el foco, ni cambia lo que se ve, ni desplaza la página. Y las ventanas de control confirman que la página no se mueve sola, así que la ausencia de cambio significa lo que parece." + cola
+  ])];
 }
 
 /**

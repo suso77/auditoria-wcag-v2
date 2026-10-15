@@ -189,7 +189,12 @@ function __huellaTeclado(){
   var n=0;
   Array.prototype.forEach.call(document.querySelectorAll('body *'), function(el){ if(__visible(el)) n++; });
   var a=document.activeElement;
+  /* enCuerpo: el foco está DE VERDAD fuera de cualquier control en el instante en que
+     se va a pulsar. Es la condición que el criterio necesita, y hasta v0.59.0 se daba
+     por buena sin comprobarla: un modal que se vuelve a enfocar solo deshace el blur
+     antes de que llegue la tecla, y entonces lo que se mide es otra cosa. */
   return { url: location.href, foco: a?__loc(a):null, y: Math.round(window.scrollY||0),
+    enCuerpo: (!a || a===document.body || a===document.documentElement),
     visibles: n, texto: (document.body?(document.body.innerText||''):'').replace(/\\s+/g,' ').length };
 }
 /* El foco al cuerpo, sin tocar el marcado: basta con quitárselo a quien lo tenga.
@@ -923,30 +928,71 @@ export async function dynamicAnalyze(target, opts) {
     if (opts.teclas !== false) {
       teclado = await fase("teclas de un carácter", async function () {
         armar();
-        const activas = [], probadas = [];
-        for (const tecla of TECLAS) {
+        const VENTANA = opts.teclaMs || 260;
+        /* Una ventana de medida, con o sin pulsar.
+         *
+         * SIN pulsar es el testigo: lo que la página hace sola en los mismos 260 ms.
+         * Hasta v0.59.0 no había testigo, y eso producía los dos errores que se
+         * midieron en v0.60.0 con fixtures: una página que crece sola hacía que se
+         * acusara a cuatro teclas que nadie escucha, y un modal que se reenfoca solo
+         * hacía absolver un atajo de página REAL. */
+        async function ventana(tecla) {
           await evalIn(page, "return __focoAlCuerpo();");
           const antes = await evalIn(page, "return __huellaTeclado();");
           const blqAntes = bloqueadas.length;
-          await page.keyboard.press(tecla);
-          await page.waitForTimeout(260);
+          if (tecla != null) await page.keyboard.press(tecla);
+          await page.waitForTimeout(VENTANA);
           const despues = await evalIn(page, "return __huellaTeclado();");
-          probadas.push(tecla);
+          /* Cada cambio va etiquetado con su SEÑAL, porque el descarte es por señal:
+           * que la página repinte sola no invalida un atajo que navega. */
           const cambios = [];
-          if (antes.url !== despues.url) cambios.push("navega a otra página");
-          if (bloqueadas.length > blqAntes) cambios.push("lanza una petición con efecto (abortada por el cortafuegos)");
-          if (antes.foco !== despues.foco) cambios.push("mueve el foco a «" + (despues.foco || "?") + "»");
-          if (Math.abs(antes.y - despues.y) > 8) cambios.push("desplaza la página " + Math.round(despues.y - antes.y) + " px");
-          if (antes.visibles !== despues.visibles) cambios.push("cambia qué se ve (" + (despues.visibles - antes.visibles > 0 ? "+" : "") + (despues.visibles - antes.visibles) + " elemento(s) visibles)");
-          else if (Math.abs(antes.texto - despues.texto) > 20) cambios.push("cambia el texto de la página");
-          if (cambios.length) {
-            activas.push({ tecla: tecla, cambios: cambios });
+          if (antes.url !== despues.url) cambios.push({ senal: "url", frase: "navega a otra página" });
+          if (bloqueadas.length > blqAntes) cambios.push({ senal: "red", frase: "lanza una petición con efecto (abortada por el cortafuegos)" });
+          if (antes.foco !== despues.foco) cambios.push({ senal: "foco", frase: "mueve el foco a «" + (despues.foco || "?") + "»" });
+          if (Math.abs(antes.y - despues.y) > 8) cambios.push({ senal: "scroll", frase: "desplaza la página " + Math.round(despues.y - antes.y) + " px" });
+          if (antes.visibles !== despues.visibles) cambios.push({ senal: "pintura", frase: "cambia qué se ve (" + (despues.visibles - antes.visibles > 0 ? "+" : "") + (despues.visibles - antes.visibles) + " elemento(s) visibles)" });
+          else if (Math.abs(antes.texto - despues.texto) > 20) cambios.push({ senal: "pintura", frase: "cambia el texto de la página" });
+          return { antes: antes, cambios: cambios };
+        }
+
+        const probadas = [], activas = [], descartadas = [], fueraDelCuerpo = [], limpiasSinCambio = [];
+        const ruido = [], testigos = [];
+        function anotaRuido(cambios) {
+          for (const c of cambios) if (ruido.indexOf(c.senal) < 0) ruido.push(c.senal);
+        }
+        for (const tecla of TECLAS) {
+          /* El testigo va EMPAREJADO con la tecla, justo antes, no una vez al principio:
+           * medido con un fixture que crece sola cada 300 ms, la primera ventana en
+           * blanco no vio nada y la segunda y la tercera sí. Un solo testigo al arrancar
+           * se le escapa — y un carrusel que tarda en arrancar se le escapa seguro. */
+          const t = await ventana(null);
+          testigos.push({ tecla: tecla, senales: t.cambios.map(function (c) { return c.senal; }) });
+          anotaRuido(t.cambios);
+
+          const v = await ventana(tecla);
+          probadas.push(tecla);
+          /* El descarte es la UNIÓN de todos los testigos de la fase, no solo el de esta
+           * tecla: quitar acusaciones nunca puede inventar una barrera, y dejarlas
+           * pasar sí. */
+          const limpias = v.cambios.filter(function (c) { return ruido.indexOf(c.senal) < 0; });
+          const frases = limpias.map(function (c) { return c.frase; });
+          if (!v.antes.enCuerpo) {
+            fueraDelCuerpo.push({ tecla: tecla, quien: v.antes.foco || "?", cambios: v.cambios.map(function (c) { return c.frase; }) });
+          } else if (frases.length) {
+            activas.push({ tecla: tecla, cambios: frases });
+          } else if (v.cambios.length) {
+            descartadas.push({ tecla: tecla, senales: v.cambios.map(function (c) { return c.senal; }) });
+          } else {
+            limpiasSinCambio.push(tecla);
+          }
+          if (v.cambios.length) {
             // Se intenta dejar la página como estaba antes de seguir.
             try { await page.keyboard.press("Escape"); await page.waitForTimeout(120); } catch (e) {}
-            try { await page.evaluate(function (y) { window.scrollTo(0, y); }, antes.y); } catch (e) {}
+            try { await page.evaluate(function (y) { window.scrollTo(0, y); }, v.antes.y); } catch (e) {}
           }
         }
-        return { probadas: probadas, activas: activas };
+        return { probadas: probadas, activas: activas, descartadas: descartadas,
+          fueraDelCuerpo: fueraDelCuerpo, limpias: limpiasSinCambio, ruido: ruido, testigos: testigos };
       }, null);
     }
 
@@ -1207,7 +1253,9 @@ export async function dynamicAnalyze(target, opts) {
         disclosures: discEvents.length, disclosuresSinClic: discEvents.filter(function (e) { return e.clicked === false; }).length,
         tabs: tabEvents.length, formulario: formInfo,
         movimiento: movimiento ? { ms: movimiento.ms, movidos: (movimiento.movidos || []).length, controlesDePausa: (movimiento.controles || []).length } : null,
-        teclas: teclado ? { probadas: teclado.probadas.length, activas: teclado.activas.length } : null,
+        teclas: teclado ? { probadas: teclado.probadas.length, activas: teclado.activas.length,
+          descartadas: (teclado.descartadas || []).length, fueraDelCuerpo: (teclado.fueraDelCuerpo || []).length,
+          limpias: (teclado.limpias || []).length, ruido: teclado.ruido || [] } : null,
         mensajesDeEstado: estadoEventos.length,
         expandibles: estadoCenso.expandibles, regionesDeEstado: estadoCenso.regiones
       },
