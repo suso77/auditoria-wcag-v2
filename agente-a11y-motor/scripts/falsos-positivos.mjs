@@ -59,6 +59,8 @@ if (!ficheros.length) {
   salir("Uso:",
     "  node scripts/falsos-positivos.mjs <barreras.csv> --muestra 30 [--semilla 1] [--salida plantilla.csv]",
     "  node scripts/falsos-positivos.mjs <barreras.csv> --bloque 3.3.2   (ese bloque entero)",
+    "  node scripts/falsos-positivos.mjs <barreras.csv> --todo            (el informe entero:",
+    "                                                     para un sitio que deber\u00eda cumplir)",
     "  node scripts/falsos-positivos.mjs <barreras.csv> --juicios plantilla-rellena.csv",
     "",
     "El CSV es el «-barreras.csv» o el «-barreras-agrupadas.csv» que escribe el agente.");
@@ -78,8 +80,17 @@ async function leeCsv(ruta) {
     salir("✕ No puedo leer " + ruta + ": " + e.message);
   }
   const lineas = txt.split(/\r?\n/).filter((l) => l.trim());
-  if (lineas.length < 2) {
-    salir("✕ " + ruta + " no tiene filas (" + lineas.length + " línea(s) con contenido).",
+  /* UN FICHERO SOLO CON CABECERA NO ES UN ERROR.
+   *
+   * Es el caso que importa justo en la prueba que más barata sale: auditar un
+   * sitio del que se espera conformidad. Si el agente no acusa nada, el
+   * `-barreras.csv` sale con la cabecera y ninguna fila — y eso es el MEJOR
+   * resultado posible, no un fichero roto. Se vio al probarlo con un sitio local
+   * de dos páginas: «✕ no tiene filas», código 1, y la prueba muerta en el primer
+   * minuto. Sin cabecera sí es un error (eso es el «> fichero.csv» que no escribió
+   * nada), y eso se sigue parando. */
+  if (!lineas.length) {
+    salir("✕ " + ruta + " está vacío: ni cabecera.",
       "  Si lo generaste con «> fichero.csv», comprueba que el comando escribió algo.");
   }
   const sep = (lineas[0].match(/;/g) || []).length >= (lineas[0].match(/,/g) || []).length ? ";" : ",";
@@ -165,6 +176,25 @@ const pc = (x) => (x * 100).toFixed(1).replace(".", ",") + " %";
 const csv = await leeCsv(ficheros[0]);
 const col = columnas(csv);
 const bloques = porCriterio(csv, col);
+/* Cero filas con la cabecera puesta: el informe no acusa nada. Es un resultado y
+ * se dice como tal — pero diciendo también lo que NO demuestra, que es la mitad
+ * importante: no acusar nada en un sitio limpio no prueba que sabría acusar en uno
+ * sucio. Eso lo mide el otro lado del banco. */
+if (!csv.filas.length) {
+  console.log("El informe NO ACUSA NADA: cero barreras.\n");
+  console.log("Si esto es un sitio del que esperabas conformidad, es el mejor resultado posible:");
+  console.log("cero falsos positivos en cero oportunidades de equivocarse.");
+  console.log("");
+  console.log("Y lo que NO demuestra, que es la otra mitad: no acusar en un sitio limpio no dice");
+  console.log("nada sobre si el agente sabría encontrar barreras donde las hay. Eso se mide por el");
+  console.log("otro lado, con un sitio de barreras conocidas y `comparar-auditorias.mjs");
+  console.log("--referencia`, que es el que dice qué SE LE ESCAPA.");
+  console.log("");
+  console.log("Comprueba también que la pasada midió de verdad: en el seguimiento, cuántos de los");
+  console.log("55 criterios salen con veredicto y cuántos quedan en «revisar» por no haber podido");
+  console.log("medir. Un informe sin barreras porque no se midió nada no es un sitio conforme.");
+  process.exit(0);
+}
 if (!bloques.size) {
   salir("✕ De la columna «" + (csv.cab[col.crit] || "?") + "» de " + csv.ruta +
     " no he sacado ningún criterio WCAG (" + csv.filas.length + " fila(s) leídas).",
@@ -185,29 +215,70 @@ const MINIMO_BLOQUE = Number(opcion("--minimo-bloque") || 10);
  * alturas se juzgan las diez y se acabó. Y tiene una ventaja que la muestra no
  * puede dar: un bloque juzgado ENTERO no tiene error de muestreo. Su precisión no
  * es una estimación con intervalo, es el dato. */
+const CAB_PLANTILLA = ["Criterio WCAG", "Página", "Selector", "Evidencia", "Juicio"];
+const escCsv = (s) => { const t = String(s == null ? "" : s); return /[;"\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+const plantillaDe = (entradas) => [CAB_PLANTILLA.join(";")].concat(entradas.map((e) => [
+  e.crit,
+  col.pag !== -1 ? e.fila[col.pag] : "",
+  col.sel !== -1 ? e.fila[col.sel] : "",
+  col.evid !== -1 ? e.fila[col.evid] : "",
+  ""
+].map(escCsv).join(";")));
+
 if (opcion("--bloque")) {
   const k = opcion("--bloque").trim();
   if (!bloques.has(k)) {
-    salir("✕ En " + csv.ruta + " no hay ninguna barrera del criterio «" + k + "».",
+    salir("\u2715 En " + csv.ruta + " no hay ninguna barrera del criterio \u00ab" + k + "\u00bb.",
       "  Los que hay: " + Array.from(bloques.keys()).sort((a, b) => a.localeCompare(b, "es", { numeric: true })).join(", "));
   }
   const filas = bloques.get(k);
-  const CAB = ["Criterio WCAG", "Página", "Selector", "Evidencia", "Juicio"];
-  const esc = (s) => { const t = String(s == null ? "" : s); return /[;"\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
-  const lineas = [CAB.join(";")].concat(filas.map((x) => [
-    k,
-    col.pag !== -1 ? x.fila[col.pag] : "",
-    col.sel !== -1 ? x.fila[col.sel] : "",
-    col.evid !== -1 ? x.fila[col.evid] : "",
-    ""
-  ].map(esc).join(";")));
+  const lineas = plantillaDe(filas.map((x) => ({ crit: k, fila: x.fila })));
   const destino = opcion("--salida") || csv.ruta.replace(/\.csv$/i, "") + "-bloque-" + k + ".csv";
-  await writeFile(destino, "﻿" + lineas.join("\n") + "\n", "utf8");
+  await writeFile(destino, "\ufeff" + lineas.join("\n") + "\n", "utf8");
   console.log("BLOQUE " + k + " COMPLETO: " + filas.length + " barrera(s), sin muestrear.");
-  console.log("Juzgadas todas, ese bloque no tiene error de muestreo: su precisión será el dato, no una estimación.");
+  console.log("Juzgadas todas, ese bloque no tiene error de muestreo: su precisi\u00f3n ser\u00e1 el dato, no una estimaci\u00f3n.");
   console.log("\nEscrito en " + destino);
-  console.log("Rellena la columna «Juicio» con: si · no · duda");
-  console.log("Para la cifra global hacen falta también los demás bloques: --muestra N aparte.");
+  console.log("Rellena la columna \u00abJuicio\u00bb con: si \u00b7 no \u00b7 duda");
+  console.log("Para la cifra global hacen falta tambi\u00e9n los dem\u00e1s bloques: --muestra N aparte.");
+  process.exit(0);
+}
+
+/* \u2500\u2500 MODO 1c: el informe ENTERO, para un sitio que deber\u00eda cumplir \u2500\u2500\u2500\u2500
+ *
+ * Este es el modo que de verdad mide falsos positivos, y es m\u00e1s barato que
+ * cualquier muestra. La raz\u00f3n: en un sitio del que se espera conformidad no hay
+ * que decidir qu\u00e9 se juzga \u2014 se juzga TODO lo que el agente acuse, porque en una
+ * p\u00e1gina conforme una acusaci\u00f3n no deber\u00eda existir.
+ *
+ * Y el resultado sirve en las dos direcciones, as\u00ed que el informe no prejuzga
+ * ninguna:
+ *
+ *   \u00b7 si la acusaci\u00f3n es falsa, es un falso positivo y hay un defecto que buscar;
+ *   \u00b7 si es verdadera, es una barrera que al sitio se le escap\u00f3.
+ *
+ * Las dos valen, y a las dos se llega mirando la misma lista. Lo que NO se puede
+ * hacer es dar por falsa una acusaci\u00f3n porque el sitio \u00abdeber\u00eda cumplir\u00bb: eso
+ * ser\u00eda medir la precisi\u00f3n suponiendo la respuesta. Por eso la plantilla sale
+ * vac\u00eda igual que las otras.
+ *
+ * Censo completo, as\u00ed que la cifra que salga no lleva intervalo: es el dato. */
+if (args.indexOf("--todo") !== -1) {
+  const todas = [];
+  for (const [k, filas] of bloques) for (const x of filas) todas.push({ crit: k, fila: x.fila });
+  todas.sort((a, b) => a.crit.localeCompare(b.crit, "es", { numeric: true }));
+  const lineas = plantillaDe(todas);
+  const destino = opcion("--salida") || csv.ruta.replace(/\.csv$/i, "") + "-todo.csv";
+  await writeFile(destino, "\ufeff" + lineas.join("\n") + "\n", "utf8");
+  console.log("INFORME COMPLETO: " + todas.length + " barrera(s), sin muestrear, en " + bloques.size + " criterio(s).");
+  const ordenTodo = Array.from(bloques.entries()).sort((a, b) => b[1].length - a[1].length);
+  for (const [k, filas] of ordenTodo) console.log("  " + k.padEnd(7) + String(filas.length).padStart(4));
+  console.log("\nEscrito en " + destino);
+  console.log("Rellena la columna \u00abJuicio\u00bb con: si (la barrera es real) \u00b7 no (falso positivo) \u00b7 duda");
+  console.log("\nSi esto es un sitio del que esperas conformidad, cada fila es UNA DE DOS cosas, y");
+  console.log("las dos importan: un falso positivo del agente, o una barrera que al sitio se le");
+  console.log("escap\u00f3. No des ninguna por falsa de antemano \u2014 eso ser\u00eda medir la precisi\u00f3n");
+  console.log("suponiendo la respuesta.");
+  console.log("\nJuzgado entero, el resultado no lleva intervalo de confianza: es el dato.");
   process.exit(0);
 }
 

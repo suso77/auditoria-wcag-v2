@@ -989,6 +989,31 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.62.0 — el banco que de verdad mide falsos positivos: un sitio que cumple
+
+Toda la calibración de este agente se ha hecho contra sitios **llenos de barreras**, donde una acusación suele acertar. Eso mide lo que encuentra y no mide lo que se inventa. El banco que falta es el contrario, y es más barato que cualquier muestreo: **en un sitio del que se espera conformidad, una acusación no debería existir**, así que no hay que decidir qué se revisa — se revisa todo lo que acuse, y no hay que adjudicar para saber qué juzgar.
+
+De ahí `--todo`, que saca el informe entero como censo en vez de una muestra. Y el informe no prejuzga nada, porque el resultado sirve en las dos direcciones y las dos importan: si la acusación es falsa, hay un defecto que buscar; si es verdadera, es una barrera que al sitio se le escapó. Dar una fila por falsa porque el sitio «debería cumplir» sería medir la precisión suponiendo la respuesta, así que la plantilla sale vacía igual que las otras. Censo completo: la cifra que salga no lleva intervalo, es el dato.
+
+**Y al probarlo contra un sitio local de dos páginas salió el fallo que habría matado la prueba en el primer minuto.** El agente no le vio nada, el `-barreras.csv` salió con la cabecera y ninguna fila, y la herramienta respondió «✕ no tiene filas», código 1. Un informe sin barreras es un **resultado**, y en esta prueba es el mejor posible; el que sí es un error es el fichero sin ni cabecera, que es el `> fichero.csv` que no escribió nada. Ahora se distinguen, y el caso de cero barreras dice además las dos cosas que hay que decir:
+
+```
+El informe NO ACUSA NADA: cero barreras.
+… cero falsos positivos en cero oportunidades de equivocarse.
+
+Y lo que NO demuestra: no acusar en un sitio limpio no dice nada sobre si el
+agente sabría encontrar barreras donde las hay. Eso se mide por el otro lado…
+
+Comprueba también que la pasada midió de verdad: un informe sin barreras porque
+no se midió nada no es un sitio conforme.
+```
+
+Esa última frase es la trampa de este banco, y por eso va impresa: un sitio que sale limpio porque la medición se cayó se lee exactamente igual que un sitio conforme.
+
+**Y para auditar cualquier web hacía falta otra cosa más prosaica:** `auditar-sitio.mjs` escribía siempre los mismos cinco nombres de fichero (`barreras.csv`, `auditoria.json`…), así que auditar un segundo sitio desde la misma carpeta se comía la auditoría del primero sin avisar. Ahora lleva `--salida PREFIJO`, y por omisión usa el host del sitio.
+
+**776 tests unitarios** (de 770) y 175 de integración, en verde.
+
 ### v0.61.1 — la guardia contra perder tests se llevó por delante el commit
 
 Dos fallos del primer uso real de v0.61.0, los dos míos y los dos visibles en pantalla.

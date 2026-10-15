@@ -19,10 +19,16 @@ const args = process.argv.slice(2);
 const flag = (n, def) => { const i = args.indexOf("--" + n); return i !== -1 ? args[i + 1] : def; };
 const inicio = args.find((a) => /^https?:\/\//.test(a));
 if (!inicio) {
-  console.error("Uso: node examples/auditar-sitio.mjs [--muestra N] [--semilla S] [--max N] [--solo-muestra] [--dinamico] <url>");
+  console.error("Uso: node examples/auditar-sitio.mjs [--muestra N] [--semilla S] [--max N] [--salida PREFIJO] [--solo-muestra] [--dinamico] <url>");
   process.exit(2);
 }
 const soloMuestra = args.includes("--solo-muestra");
+/* Prefijo de salida. Sin esto los cinco ficheros se llaman igual siempre
+ * (barreras.csv, auditoria.json...), y auditar un segundo sitio desde la misma
+ * carpeta se come la auditoria del primero sin avisar. Por omision se usa el
+ * host, que es lo que distingue una auditoria de otra. */
+const prefijo = flag("salida", new URL(inicio).host.replace(/^www\./, "").replace(/[^a-z0-9.-]/gi, "-"));
+const F = (n) => prefijo + "-" + n;
 const dinamico = args.includes("--dinamico");
 
 console.error("\nRastreando " + inicio + " …");
@@ -42,11 +48,11 @@ sel.muestra.forEach((m) => {
 });
 (sel.avisos || []).forEach((a) => console.log("\n  ⚠ " + a));
 
-await writeFile("muestra.json", JSON.stringify({
+await writeFile(F("muestra.json"), JSON.stringify({
   procedencia: sel.procedencia, justificacion: sel.justificacion,
   muestra: sel.muestra, cobertura: sel.cobertura, rastreo: sel.rastreo, avisos: sel.avisos
 }, null, 2), "utf8");
-console.log("\n✓ muestra.json — la muestra y su justificación, para el IRA");
+console.log("\n✓ " + F("muestra.json") + " — la muestra y su justificación, para el IRA");
 
 if (soloMuestra) process.exit(0);
 
@@ -58,11 +64,11 @@ const sitio = await auditSite(sel.muestra.map((m) => ({ url: m.url })), {
 });
 
 const out = oawExport(sitio.findings, { muestra: sitio.rollup });
-await writeFile("barreras.csv", out.csv.barreras, "utf8");
+await writeFile(F("barreras.csv"), out.csv.barreras, "utf8");
 // Y la misma lista agrupada por familia (una fila por barrera, no por elemento).
-await writeFile("barreras-agrupadas.csv", out.csv.barrerasAgrupadas, "utf8");
-await writeFile("seguimiento.csv", out.csv.seguimiento, "utf8");
-await writeFile("auditoria.json", JSON.stringify({
+await writeFile(F("barreras-agrupadas.csv"), out.csv.barrerasAgrupadas, "utf8");
+await writeFile(F("seguimiento.csv"), out.csv.seguimiento, "utf8");
+await writeFile(F("auditoria.json"), JSON.stringify({
   muestra: { justificacion: sel.justificacion, paginas: sel.muestra, procedencia: sel.procedencia },
   procedencia: sitio.procedencia,
   coherencia: sitio.coherencia,
@@ -75,8 +81,8 @@ console.log("  " + sitio.rollup.resumen.fallan + " criterios fallan · " + sitio
 const coh = sitio.coherencia.filter((f) => f.verdict === "falla");
 if (coh.length) console.log("  coherencia entre páginas: falla " + coh.map((f) => f.c.n).join(", "));
 console.log("\n✓ Entregables:");
-console.log("  barreras.csv     — " + out.barreras.length + " filas (una por elemento afectado)");
-console.log("  barreras-agrupadas.csv — " + out.barrerasAgrupadas.length + " fila(s), una por familia");
-console.log("  seguimiento.csv  — " + out.seguimiento.length + " subcriterios con resultado agregado");
-console.log("  auditoria.json   — todo junto, con la muestra y su procedencia");
+console.log("  " + F("barreras.csv") + " — " + out.barreras.length + " filas (una por elemento afectado)");
+console.log("  " + F("barreras-agrupadas.csv") + " — " + out.barrerasAgrupadas.length + " fila(s), una por familia");
+console.log("  " + F("seguimiento.csv") + " — " + out.seguimiento.length + " subcriterios con resultado agregado");
+console.log("  " + F("auditoria.json") + " — todo junto, con la muestra y su procedencia");
 console.log("");

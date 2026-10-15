@@ -207,15 +207,25 @@ test("precisión: sin columna de criterio se para y dice por qué", async () => 
   assert.match(r.stderr, /una cifra global sin bloques no dice nada/);
 });
 
-test("precisión: un CSV vacío o sin filas se para, no da 0 falsos positivos", async () => {
+test("precisión: un CSV vacío se para; uno con cabecera y sin filas se explica", async () => {
+  /* Este test defendía antes que las dos cosas se pararan, y estaba de más en una
+   * de las dos: un `-barreras.csv` con la cabecera y ninguna fila es el informe
+   * de un sitio al que el agente no le ve nada, que es un resultado y además el
+   * mejor posible. Lo que hay que impedir —y es lo que sigue aquí— es que de
+   * cualquiera de los dos salga una CIFRA de precisión: cero barreras no es
+   * «100 % de precisión», es cero oportunidades de equivocarse. */
   const vacio = await escribe("vacio.csv", "");
   let r = await run([vacio, "--muestra", "2"]);
   assert.equal(r.code, 1);
-  assert.match(r.stderr, /no tiene filas/);
+  assert.match(r.stderr, /está vacío: ni cabecera/);
+
   const soloCab = await escribe("cab.csv", "Criterio WCAG;Selector\n");
   r = await run([soloCab, "--muestra", "2"]);
-  assert.equal(r.code, 1);
-  assert.match(r.stderr, /no tiene filas/);
+  assert.equal(r.code, 0);
+  assert.match(r.stdout, /NO ACUSA NADA/);
+  // Lo que ninguno de los dos puede producir: una precisión.
+  assert.doesNotMatch(r.stdout, /PRECISIÓN/);
+  assert.doesNotMatch(r.stdout, /100,0 %/);
 });
 
 test("precisión: la evidencia con punto y coma dentro no desplaza las columnas", async () => {
@@ -275,4 +285,98 @@ test("--bloque con un criterio que no está lo dice y lista los que hay", async 
   assert.equal(r.code, 1);
   assert.match(r.stderr, /no hay ninguna barrera del criterio «9\.9\.9»/);
   assert.match(r.stderr, /Los que hay: 1\.4\.1/);
+});
+
+/* ── --todo: el informe entero, para un sitio que debería cumplir ────────── */
+
+/**
+ * Este es el modo que de verdad mide falsos positivos, y es más barato que
+ * cualquier muestra: en un sitio del que se espera conformidad no hay que decidir
+ * qué se juzga, se juzga todo lo que el agente acuse. Y el resultado vale en las
+ * dos direcciones —falso positivo del agente, o barrera que al sitio se le
+ * escapó—, así que la plantilla NO puede venir prejuzgada.
+ */
+test("--todo saca todas las barreras del informe, sin muestrear", async () => {
+  const f = await escribe("todo.csv", informe({ "1.4.1": 7, "4.1.2": 3, "1.1.1": 1 }));
+  const r = await run([f, "--todo", "--salida", join(dir, "t.csv")]);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /INFORME COMPLETO: 11 barrera\(s\)/);
+  const t = await readFile(join(dir, "t.csv"), "utf8");
+  const filas = t.split(/\r?\n/).filter((x) => x.trim()).slice(1);
+  assert.equal(filas.length, 11);
+  // Y la columna Juicio sale VACÍA: dar por falsa una acusación porque el sitio
+  // «debería cumplir» sería medir la precisión suponiendo la respuesta.
+  for (const l of filas) assert.equal(l.split(";").pop(), "", l);
+  assert.match(r.stdout, /No des ninguna por falsa de antemano/);
+  assert.match(r.stdout, /no lleva intervalo de confianza: es el dato/);
+});
+
+test("--todo acepta el fichero delante o detrás de la bandera", async () => {
+  /* `--todo` es una bandera sin valor. Estaba en la lista de opciones CON valor,
+   * así que el token siguiente se descartaba y `--todo informe.csv` se quedaba
+   * sin fichero — es decir, el orden natural al escribirlo a mano fallaba. */
+  const f = await escribe("orden.csv", informe({ "1.4.1": 4 }));
+  const a = await run([f, "--todo", "--salida", join(dir, "o1.csv")]);
+  const b = await run(["--todo", f, "--salida", join(dir, "o2.csv")]);
+  assert.equal(a.code, 0, a.stderr);
+  assert.equal(b.code, 0, b.stderr);
+  assert.match(b.stdout, /INFORME COMPLETO: 4 barrera\(s\)/);
+  assert.equal(await readFile(join(dir, "o1.csv"), "utf8"), await readFile(join(dir, "o2.csv"), "utf8"));
+});
+
+test("--todo juzgado entero da la cifra exacta de cada bloque, sin intervalo", async () => {
+  const f = await escribe("todo2.csv", informe({ "1.4.1": 6, "4.1.2": 4 }));
+  await run([f, "--todo", "--salida", join(dir, "t2.csv")]);
+  const plantilla = await readFile(join(dir, "t2.csv"), "utf8");
+  // Un falso positivo en 4.1.2 de cuatro: 75,0 % exacto para ese bloque.
+  const ls = plantilla.split(/\r?\n/).filter((x) => x.trim());
+  const out = [ls[0]]; let primero41 = true;
+  for (let i = 1; i < ls.length; i++) {
+    const c = ls[i].split(";")[0];
+    if (c === "4.1.2" && primero41) { out.push(ls[i] + "no"); primero41 = false; }
+    else out.push(ls[i] + "si");
+  }
+  const j = await escribe("tj2.csv", out.join("\n") + "\n");
+  const r = await run([f, "--juicios", j]);
+  assert.match(r.stdout, /4\.1\.2.*75,0 % EXACTA \(bloque completo, sin intervalo\)/);
+  assert.match(r.stdout, /1\.4\.1.*100,0 % EXACTA/);
+  // Censo de TODO el informe: 1 falso de 10, y la cifra global ponderada.
+  assert.match(r.stdout, /10 barrera\(s\) decidida\(s\): 9 real\(es\), 1 falso/);
+});
+
+/* ── Un informe sin barreras es un RESULTADO, no un fichero roto ─────────── */
+
+/**
+ * El caso que iba a matar la prueba más barata que hay —auditar un sitio del que
+ * se espera conformidad— en el primer minuto. Si el agente no acusa nada, el
+ * `-barreras.csv` sale con la cabecera y ninguna fila, y eso es el mejor
+ * resultado posible. Salía «✕ no tiene filas», código 1. Se vio al probarlo con
+ * un sitio local de dos páginas.
+ */
+test("cero barreras con la cabecera puesta es el mejor resultado, no un error", async () => {
+  const f = await escribe("limpio.csv", "Criterio WCAG;Página;Selector;Evidencia\n");
+  const r = await run([f, "--todo"]);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /NO ACUSA NADA: cero barreras/);
+  assert.match(r.stdout, /mejor resultado posible/);
+  // Y la mitad honesta: no acusar en un sitio limpio no dice nada del recall.
+  assert.match(r.stdout, /no dice\s*\n?nada sobre si el agente sabría encontrar barreras/);
+  assert.match(r.stdout, /--referencia/);
+  assert.match(r.stdout, /no es un sitio conforme/);
+});
+
+test("un fichero sin ni cabecera sí se para", async () => {
+  const f = await escribe("nada.csv", "");
+  const r = await run([f, "--todo"]);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /está vacío: ni cabecera/);
+});
+
+test("cero barreras también se dice al pedir muestra o bloque", async () => {
+  const f = await escribe("limpio2.csv", "Criterio WCAG;Página;Selector;Evidencia\n");
+  for (const args of [["--muestra", "10"], ["--bloque", "1.4.1"], ["--juicios", f]]) {
+    const r = await run([f].concat(args));
+    assert.equal(r.code, 0, JSON.stringify(args) + " → " + r.stderr);
+    assert.match(r.stdout, /NO ACUSA NADA/, JSON.stringify(args));
+  }
 });
