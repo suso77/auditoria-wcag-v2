@@ -987,6 +987,26 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.59.0 — la misma página, dos veredictos opuestos
+
+Esto no salió de leer código: salió de que **mi predicción falló**. Dije que al quitar el tope de los pseudoelementos 1.4.3 subiría de 138 filas, y se quedó clavado en 138 — los 290 elementos que no se miraban no tenían ni una barrera de contraste. Lo que sí se movió fueron **tres filas de 2.2.2 que no tenían nada que ver con el cambio**, y ahí estaba lo importante.
+
+Cotejando las dos pasadas con `comparar-auditorias.mjs`, la misma página de monumentos, con la misma ventana de 8 segundos:
+
+```
+pasada 8:  cumple-parcial — «observada 8,0 s: ningún elemento cambia por su cuenta»
+pasada 9:  falla grave    — «3 elemento(s) cambian solos: div.swiper-slide
+                             (20 cambios entre el segundo 2,4 y el 7,7) …»
+```
+
+**El carrusel es el mismo. Lo que cambió es cuándo arrancó**: Swiper espera a que carguen las imágenes, así que con la red más lenta no empieza dentro de la ventana. El veredicto de un criterio de nivel A dependía del tiempo de carga — y la dirección del error era la peligrosa: `cumple-parcial`, que es casi una absolución, sobre una página cuyo carrusel sí gira solo.
+
+**No se arregla observando más tiempo**, porque siempre habrá un carrusel más lento. Lo que sí se puede es dejar de absolver: ahora la observación censa los carruseles declarados en el marcado (`.swiper`, `.slick-slider`, `.owl-carousel`, `.splide`, `[data-carousel]`…) **haya habido movimiento o no**, y si la página trae uno y no se le ha visto moverse, el veredicto baja a `revisar` diciendo qué se encontró y por qué no basta no haberlo visto. Una página quieta **sin** carrusel sigue en `cumple-parcial`: lo que dispara el aviso es la contradicción, no el silencio.
+
+No haber visto moverse un carrusel no es que no se mueva.
+
+**749 tests unitarios y 173 de integración** (de 171), en verde.
+
 ### v0.58.0 — el tope de 600 pseudoelementos costaba diez milisegundos
 
 El último aviso grande que el agente daba sobre sí mismo. En cada pasada de la auditoría real salía esto: «se revisó el texto generado por CSS de 600 elemento(s) y quedaron **290 sin mirar** por el tope», y con esa nota 1.4.3 no se podía declarar conforme en **155 mediciones**. El tope era una precaución que nadie había medido, así que se midió — tres tamaños de página, dos pasadas cada uno:

@@ -231,14 +231,36 @@ function __observarMovimiento(ms){
       });
       obs.observe(document.body, { subtree:true, childList:true, attributes:true,
         attributeFilter:['class','style','hidden','aria-hidden','src','transform','aria-selected','aria-current','data-active'] });
-    } catch(e) { resolve({ error:String((e&&e.message)||e), movidos:[], ms:0, controles:[] }); return; }
+    } catch(e) { resolve({ error:String((e&&e.message)||e), movidos:[], ms:0, controles:[], carruseles:[] }); return; }
     setTimeout(function(){
       try { obs.disconnect(); } catch(e) {}
       var movidos = [];
       for (var k in vistos) if (Object.prototype.hasOwnProperty.call(vistos,k)) movidos.push(vistos[k]);
       movidos = movidos.filter(function(x){ return x.n >= 2 && (x.ultimo - x.primero) >= 2500; });
       movidos.sort(function(a,b){ return (b.ultimo-b.primero) - (a.ultimo-a.primero) || b.n - a.n; });
-      resolve({ movidos: movidos.slice(0,8), ms: Date.now()-t0, controles: __controlesDePausa() });
+      /* Y EL CENSO DE CARRUSELES, mirado haya habido movimiento o no.
+       *
+       * Esto salió de dos pasadas de la MISMA página con veredictos opuestos:
+       * una página de monumentos dio «cumple-parcial · observada 8,0 s: ningún
+       * elemento cambia por su cuenta» en una pasada y «falla» grave en la
+       * siguiente, con tres elementos de Swiper cambiando entre el segundo 2,4 y
+       * el 7,7. El carrusel es el mismo; lo que cambió es cuándo arrancó —
+       * Swiper espera a que carguen las imágenes, y con la red lenta no empieza
+       * dentro de la ventana. O sea: el veredicto de un criterio de nivel A
+       * dependía del tiempo de carga.
+       *
+       * Si la página TRAE un carrusel y no se le ha visto moverse, eso no es
+       * «no se mueve»: es «no arrancó mientras mirábamos». Se cuenta aquí para
+       * poder decirlo. */
+      var CARRUSEL = ['.swiper', '.swiper-wrapper', '.slick-slider', '.owl-carousel', '.flickity-enabled',
+        '.glide', '.splide', '.carousel', '[data-carousel]', '[data-slider]', '[data-swiper]'];
+      var libs = [];
+      CARRUSEL.forEach(function(sel){
+        var n = 0;
+        try { n = document.querySelectorAll(sel).length; } catch (e) { return; }
+        if (n) libs.push({ sel: sel, n: n });
+      });
+      resolve({ movidos: movidos.slice(0,8), ms: Date.now()-t0, controles: __controlesDePausa(), carruseles: libs });
     }, ms);
   });
 }

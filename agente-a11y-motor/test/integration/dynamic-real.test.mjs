@@ -258,3 +258,59 @@ test("2.1.2 real: sin controles que aparezcan, la frase sigue siendo la de siemp
   assert.ok(f);
   assert.match(f.evid.join(" "), /de 2 control\(es\) alcanzados/);
 });
+
+/**
+ * LA MISMA PÁGINA, DOS VEREDICTOS OPUESTOS.
+ *
+ * Esto no salió de leer código: salió de comparar dos pasadas seguidas del
+ * mismo sitio. Una página de monumentos dio, con la misma ventana de 8 s:
+ *
+ *   pasada 8:  cumple-parcial — «observada 8,0 s: ningún elemento cambia por su cuenta»
+ *   pasada 9:  falla grave    — «3 elemento(s) cambian solos: div.swiper-slide
+ *                               (20 cambios entre el segundo 2,4 y el 7,7) …»
+ *
+ * El carrusel es el mismo. Lo que cambió es CUÁNDO ARRANCÓ: Swiper espera a que
+ * carguen las imágenes, así que con la red más lenta no empieza dentro de la
+ * ventana. El veredicto de un criterio de nivel A dependía del tiempo de carga,
+ * y la dirección del error era la peligrosa: `cumple-parcial` sobre una página
+ * cuyo carrusel sí gira solo.
+ *
+ * No se puede arreglar observando más tiempo —siempre habrá un carrusel más
+ * lento—, pero sí se puede dejar de absolver: si la página TRAE un carrusel y no
+ * se le ha visto moverse, eso no es «no se mueve», es «no arrancó mientras
+ * mirábamos».
+ */
+const CARRUSEL_TARDIO = `
+<style>.swiper{overflow:hidden}.swiper-slide{display:none}.swiper-slide.activa{display:block}</style>
+<div class="swiper"><div class="swiper-wrapper">
+ <div class="swiper-slide activa">Uno</div><div class="swiper-slide">Dos</div>
+</div></div>
+<script>
+setTimeout(function () {
+  var i = 0, s = document.querySelectorAll(".swiper-slide");
+  setInterval(function () { s[i].classList.remove("activa"); i = (i + 1) % s.length; s[i].classList.add("activa"); }, 900);
+}, 9000);
+</script>`;
+
+test("2.2.2 real: un carrusel que no arranca en la ventana NO se absuelve", { skip }, async () => {
+  const out = await dynamicAnalyze({ html: CARRUSEL_TARDIO },
+    { launchOptions, movimientoMs: 3000, teclas: false });
+  const f = out.findings.find((x) => x.c.n === "2.2.2");
+  assert.ok(f, "2.2.2 tiene que pronunciarse");
+  assert.equal(f.verdict, "revisar", "no `cumple-parcial`: " + f.evid.join(" | "));
+  const t = f.evid.join(" ");
+  assert.match(t, /trae un carrusel/, t.slice(0, 200));
+  assert.match(t, /\.swiper/, "y dice qué encontró: " + t.slice(0, 200));
+  assert.match(t, /no arranca dentro de la ventana/, "explicando por qué no basta no haberlo visto");
+});
+
+test("2.2.2 real: una página quieta SIN carrusel sigue en cumple-parcial", { skip }, async () => {
+  /* El arreglo no puede convertir toda página quieta en un «revisar»: lo que lo
+   * dispara es que haya un carrusel declarado y no se le haya visto nada. */
+  const out = await dynamicAnalyze({ html: "<p>Quieta.</p><button>Botón</button>" },
+    { launchOptions, movimientoMs: 3000, teclas: false });
+  const f = out.findings.find((x) => x.c.n === "2.2.2");
+  assert.ok(f);
+  assert.equal(f.verdict, "cumple-parcial", f.evid.join(" | "));
+  assert.match(f.evid.join(" "), /no hay ningún carrusel declarado/);
+});

@@ -596,8 +596,30 @@ export function analyzeAutoMovement(obs) {
    * fuera por haber mirado solo esa ventana. */
   if (!obs.movidos.length) {
     const seg0 = ((obs.ms || 0) / 1000).toFixed(1);
+    const libs = obs.carruseles || [];
+    /* NO HABER VISTO MOVERSE UN CARRUSEL NO ES QUE NO SE MUEVA.
+     *
+     * Esto lo destapó comparar dos pasadas de la misma página: `teatro_real.html`
+     * dio `cumple-parcial` —«observada 8,0 s: ningún elemento cambia por su
+     * cuenta»— en una pasada y `falla` grave en la siguiente, con tres elementos
+     * de Swiper cambiando entre el segundo 2,4 y el 7,7. El carrusel es el
+     * mismo: lo que cambió es cuándo arrancó, porque Swiper espera a que carguen
+     * las imágenes. El veredicto de un criterio de nivel A dependía del tiempo
+     * de carga.
+     *
+     * Así que si la página TRAE un carrusel y no se le ha visto moverse, el
+     * veredicto baja a `revisar` y se dice qué se encontró. `cumple-parcial`
+     * ahí es casi una absolución, y absolver por no haber mirado bastante es
+     * exactamente lo que este proyecto persigue. */
+    if (libs.length) {
+      const comoEs = libs.map(function (x) { return x.sel + " ×" + x.n; }).join(", ");
+      return [F("2.2.2", "revisar", null, [
+        "Observada la página " + seg0 + " s SIN tocar nada y NO se le ha visto mover nada por su cuenta — pero la página trae un carrusel: " + comoEs + ".",
+        "Un carrusel que no arranca dentro de la ventana de observación no es un carrusel quieto: Swiper y compañía esperan a que carguen las imágenes, así que con la red lenta empiezan más tarde. Medido sobre un sitio real, la MISMA página dio «nada se mueve» en una pasada y tres elementos moviéndose entre el segundo 2,4 y el 7,7 en la siguiente. Compruébalo a mano, o repite la pasada con `movimientoMs` más alto."
+      ])];
+    }
     return [F("2.2.2", "cumple-parcial", null, [
-      "Observada la página " + seg0 + " s SIN tocar nada: ningún elemento cambia por su cuenta de forma repetida.",
+      "Observada la página " + seg0 + " s SIN tocar nada: ningún elemento cambia por su cuenta de forma repetida, y no hay ningún carrusel declarado en el marcado.",
       "Queda fuera lo que tarde más de " + seg0 + " s en empezar a moverse, lo que solo se mueva al interactuar, lo que se mueva dentro de un marco o un vídeo —que no emiten cambios en este documento— y el movimiento pintado en un <canvas>. Por eso es `cumple-parcial` y no `cumple`."
     ])];
   }
