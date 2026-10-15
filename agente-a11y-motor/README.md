@@ -230,6 +230,8 @@ node bench/run.mjs --json
 
 Resultado actual: **100 % (45/45) en ámbito**. Los casos que un motor sin CSS/layout no puede resolver —contenido generado por `::before/::after`, `text-transform`, o el matiz de `visibility:hidden` en un descendiente de un objetivo `aria-labelledby` visible— se marcan `skip` con su motivo y se informan aparte como **limitaciones conocidas**, no como aprobados. El banco corre también como test de regresión (`test/accname-bench.test.mjs`), así que ningún cambio puede bajar la precisión sin que salte.
 
+Esto mide **el cálculo** contra una respuesta sabida, y es lo que `test/precision.test.mjs` fija caso a caso. Lo que no mide es cuántas de las barreras que el agente firma en un sitio real están mal; eso es otra cosa y tiene otra herramienta, `scripts/falsos-positivos.mjs` (v0.61.0, más abajo).
+
 > El banco ya pagó: destapó que el recorte de espacios eliminaba `nbsp` y otros espacios Unicode (el braille en blanco), que el accname debe preservar. Corregido.
 
 ## Análisis sobre render real (página viva)
@@ -986,6 +988,64 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 **En el cruce con axe, dos afirmaciones que no se podían sostener.** `crossCheck` fabricaba `{findings: []}` cuando el motor no llegaba a construir el modelo —texto suelto, un comentario, una cadena vacía—, y ese resultado entraba en la reconciliación como una comprobación limpia: «soloMotor: 0» era indistinguible de «el motor comprobó y no encontró nada». Y el «acuerdo» se construía solo porque coincidía el número de criterio: el motor acusando a `img.logo` y axe a otro `img` de la página salían como «acuerdo: 1». Casar los elementos exige la página abierta —lo hace la orquestación, no la reconciliación pura—, así que ahora se publica cuántos elementos trae cada fuente, que la coincidencia a nivel de elemento NO está comprobada, y que el motor no miró cuando no miró.
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
+
+### v0.61.1 — la guardia contra perder tests se llevó por delante el commit
+
+Dos fallos del primer uso real de v0.61.0, los dos míos y los dos visibles en pantalla.
+
+**El instalador no llegó a commitear y no dijo por qué.** La guardia que acababa de añadir —negarse a commitear si la suite trae menos tests de los que debe— leía el recuento con `grep -hE '^# tests '`. Pero el log de `node --test` en su máquina empieza las líneas con `ℹ`, no con `#`, y eso lo sabía el propio instalador tres líneas más arriba, donde la línea que SÍ se imprime usa `'^(ℹ|#) (tests|pass|fail|skipped)'`. Con el prefijo equivocado, `grep` no encuentra nada y sale con código 1; dentro de `CUENTA="$(...)"` y con `set -euo pipefail`, eso **mata el script en silencio**, después de haber dejado los ficheros en su sitio. Resultado: la versión instalada, los tests en verde, y ningún commit. Una guardia contra la pérdida silenciosa que se perdía ella sola, en silencio.
+
+Ahora el recuento se saca con `sed -n 's/^[^0-9]*tests \([0-9]\{1,\}\).*/\1/p'`, que acepta los dos formatos, sale con 0 aunque no encuentre nada, y lleva `|| true` detrás. Comprobado con los dos prefijos y con un log sin la línea.
+
+**Y el consejo de la muestra decía el número que acababas de pedir.** Con `--muestra 39`, los bloques que se quedaban cortos eran 1.4.13 (11 barreras) y 3.3.2 (10), y el aviso respondía «si quieres precisión por bloque: --muestra 39». La cuenta salía del bloque MAYOR, y es justo al revés: **cuanto más pequeño es el bloque, más muestra total hace falta** para que le toquen cinco filas. Para 1.4.13 serían 108 de 203; para 3.3.2, 117. A esas alturas la respuesta ya no es muestrear:
+
+```
+· 1.4.13: son 11 barreras en total. Para que le tocaran 5 filas haría falta una
+  muestra de 108 (de 203), así que para este bloque sale más barato juzgarlo
+  entero: --bloque 1.4.13.
+```
+
+De ahí sale `--bloque <criterio>`, que saca ese bloque completo sin muestrear. Y tiene algo que una muestra no puede dar: un bloque juzgado entero **no tiene error de muestreo**, así que su precisión no es una estimación con intervalo, es el dato — y la tabla lo dice con esas palabras («83,3 % EXACTA (bloque completo, sin intervalo)»), porque poner un intervalo sobre un censo haría dudar de una cifra que no admite duda.
+
+**770 tests unitarios** (de 767) y 175 de integración, en verde.
+
+### v0.61.0 — «nada de falsos positivos» sin un número detrás es una intención
+
+Para ordenar lo que de verdad amenaza la fiabilidad, primero hubo que mirar qué firma el agente en un sitio real. En visitspain son **203 familias de barreras en 15 criterios**, repartidas muy desigual:
+
+```
+1.4.1   44      4.1.2   24      1.4.12   4
+1.4.3   43      1.4.13  11      2.4.4    2
+1.4.10  26      3.3.2   10      1.3.1    2
+1.4.4   25      2.4.11   7      … y 4 más de una
+```
+
+**El bloque más grande se revisó a mano y aguanta.** Las 44 de 1.4.1 son el caso canónico del criterio —enlace dentro de texto corrido distinguido solo por el color— y las 44 citan un contraste medido contra el texto que las rodea: 19 a 1,58:1, once a 1,00:1, ocho a 1,61:1 y seis a 2,85:1. **Ninguna llega a 3:1**, que es el umbral por debajo del cual la técnica F73 falla sin más. Y las once de 1,00:1 —mismo color que el texto, o sea que ni el color distingue— usan la redacción correcta, la que dice «sin NINGÚN distintivo». Se buscaba una contradicción ahí y no está.
+
+**Lo que no aguanta es no tener un número.** La auditoría de ese sitio tiene 203 familias y la fracción que está mal es desconocida. Todo lo que se ha arreglado en este agente se encontró igual —sospechar de una afirmación, construir una página de respuesta sabida, ejecutar— y eso encuentra defectos de uno en uno, muy bien, pero no responde a «¿cuántas de las 203 están mal?». Y «no se sabe» no es «ninguna»: es el mismo silencio que la regla de oro persigue en los informes, aplicado al propio agente.
+
+`scripts/falsos-positivos.mjs` es el instrumento. Dos pasos: saca una muestra y mide lo que se juzgó.
+
+```
+node scripts/falsos-positivos.mjs visitspain9-barreras-agrupadas.csv --muestra 39
+node scripts/falsos-positivos.mjs visitspain9-barreras-agrupadas.csv --juicios muestra.csv
+```
+
+**La muestra es aleatoria, estratificada y con semilla fija.** Las tres cosas importan por el mismo motivo: elegir a mano las barreras que se revisan es la forma más fácil de medir un 100 % de precisión, porque se revisan las fáciles. El sesgo de selección no se corrige después. Y la semilla fija hace que la adjudicación de ayer cuadre con la plantilla de hoy.
+
+**Y sobre todo: no dice «0 % de falsos positivos».** Con 30 filas juzgadas y ningún fallo, la precisión medida es del 100 % y el techo real de falsos positivos está en el **11,4 %** (Wilson al 95 %, que es el intervalo que se porta bien cuando los aciertos son todos — el normal daría ancho cero, que es mentira). Lo dice con esas palabras: «ningún falso positivo en la muestra NO es ningún falso positivo; para bajar el techo hace falta más muestra, no más confianza».
+
+Tres negativas más, cada una porque produce una cifra tranquilizadora y falsa:
+
+**No da cifra global si los bloques grandes no se han juzgado.** 1.4.1 y 1.4.3 son 87 de las 203 familias: una media calculada sin mirar ni una fila de esos dos no mide el agente, mide la suerte. Y distingue por qué faltan —«ya tienen filas en la muestra, rellénalas» frente a «no entraron, saca más»—, porque el consejo contrario al que hace falta es peor que ninguno.
+
+**La cifra global se pondera por el tamaño del bloque.** La muestra lleva un mínimo de una fila por bloque, así que los pequeños salen sobrerrepresentados: 1.1.1 tiene UNA barrera de 203 —el 0,5 % del informe— y aporta una fila de 30, un 3,3 % de la cifra bruta. Un falso positivo ahí movería la precisión seis veces más de lo que le toca.
+
+**Una duda no es un acierto**, queda fuera del cálculo, y si las dudas pasan de una cuarta parte se avisa de que el intervalo es optimista. Con cero juicios se para en vez de salir al 100 %, y una fila de juicios que no casa con ninguna barrera se nombra en vez de contarse.
+
+**Y avisa de lo que la muestra no va a poder decir, antes de que nadie pierda la tarde.** Con 15 bloques, una muestra de 30 deja solo 15 filas para repartir y 1.4.1 —el 22 % del informe— se queda con tres: un intervalo tan ancho que no concluye nada de ese bloque. Lo dice y propone el tamaño que sí sirve (39 para este informe).
+
+**767 tests unitarios** (de 753) y 175 de integración, en verde.
 
 ### v0.60.0 — la sonda que no medía las condiciones de su propia medida
 
