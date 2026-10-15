@@ -366,3 +366,92 @@ test("el `content` de un pseudoelemento se lee solo cuando es texto de verdad", 
   assert.equal(icono.length, 1);
   assert.equal(/[\p{L}\p{N}]/u.test(icono), false, "un carácter de uso privado no es una palabra");
 });
+
+/* ── El idioma de ocultación visual, visto sin CSS (v0.63.0) ──────────────────
+ *
+ * Salió del primer banco contra un sitio del que se esperaba conformidad —el del
+ * propio autor del agente—, donde el motor firmó 46 acusaciones. Dos de los tres
+ * defectos que se encontraron viven aquí.
+ */
+
+/** Evidencia del primer hallazgo de un criterio, sin etiquetas. */
+function evidenciaDe(html, crit) {
+  const m = understand(html);
+  if (!m) return "";
+  const f = analyze(m).findings.filter((x) => x.c.n === crit)[0];
+  return f ? String((f.evid || [])[0] || "").replace(/<[^>]+>/g, "") : "";
+}
+
+test("4.1.2: el aviso de `title` solo aplica a componentes de interfaz", () => {
+  /* Medido: cuatro de las nueve acusaciones de 4.1.2 en un sitio conforme eran
+   * `span` con `title` y rol genérico —migas de pan recortadas con `max-width`—.
+   * 4.1.2 habla de componentes de interfaz; un `span` sin rol ni interacción no
+   * lo es, y decir que «su nombre depende de title» afirma que tiene un nombre
+   * que exponer. */
+  assert.equal(veredictos('<span class="trunc" title="Accesibilidad">Accesibilidad</span>')["4.1.2"], undefined);
+  // El botón de icono con `title` sigue saliendo: ahí sí es el nombre del control.
+  assert.equal(veredictos('<button title="Guardar"><svg></svg></button>')["4.1.2"], "falla");
+  // Y un elemento genérico que SÍ es un control (tiene tabindex) también.
+  assert.ok(veredictos('<span tabindex="0" title="Guardar">—</span>')["4.1.2"]);
+});
+
+test("2.5.3: el texto oculto a la vista no cuenta como texto visible", () => {
+  /* Medido: el texto «visible» de un enlace salía como
+   * «LinkedIn Profesional(se abre en nueva pestaña)», con un `span.sr-only`
+   * dentro, y esa cadena es la que decide el veredicto de 2.5.3. */
+  const ev = evidenciaDe(
+    '<a href="#" aria-label="Perfil de LinkedIn de Jesús Fernández Abeledo">LinkedIn Profesional' +
+    '<span class="sr-only">(se abre en nueva pestaña)</span></a>', "2.5.3");
+  assert.match(ev, /El texto visible es «LinkedIn Profesional»/);
+  assert.doesNotMatch(ev, /se abre en nueva pestaña»? y el nombre/);
+  // Y se DICE lo que se ha descontado y con qué señal: la clase es una convención.
+  assert.match(ev, /se ha descontado del texto visible/);
+  assert.match(ev, /convención de ocultación visual/);
+});
+
+test("2.5.3: si el descuento CAMBIA el veredicto, se dan las dos lecturas", () => {
+  /* El descuento se apoya en parte en el nombre de la clase, que es una
+   * convención y no un hecho. Cuando de eso depende el veredicto, el agente no
+   * decide: da las dos lecturas y lo deja en `revisar`. Mismo patrón que la
+   * sombra del texto en 1.4.3. */
+  const html = '<a href="#" aria-label="Descargar informe">Descargar informe' +
+    '<span class="sr-only">(PDF, 2 MB, se abre en nueva pestaña)</span></a>';
+  assert.equal(veredictos(html)["2.5.3"], "revisar");
+  const ev = evidenciaDe(html, "2.5.3");
+  assert.match(ev, /Contándolo, el texto visible es «Descargar informe\(PDF/);
+  assert.match(ev, /sin contarlo, «Descargar informe»/);
+  assert.match(ev, /es una convención y no un hecho/);
+});
+
+test("2.5.3: sin nada oculto, el caso de siempre no se mueve", () => {
+  assert.equal(veredictos('<button aria-label="Cerrar ventana">Aceptar</button>')["2.5.3"], "falla");
+  const ev = evidenciaDe('<button aria-label="Cerrar ventana">Aceptar</button>', "2.5.3");
+  assert.match(ev, /El texto visible es «Aceptar»/);
+  assert.doesNotMatch(ev, /descontado/);
+});
+
+test("2.5.3: con el idioma en el atributo `style`, el agente decide y no se esconde", () => {
+  /* La fuerza de la señal decide quién decide. El idioma escrito en `style` es un
+   * hecho leído del marcado, así que aquí no hay nada que delegar: si descontado
+   * el texto oculto el nombre sí contiene lo visible, no hay barrera y se dice.
+   * Quedarse en `revisar` sería esconderse detrás de una duda que no existe.
+   *
+   * Esto lo encontré escribiendo el test: el mensaje de las dos lecturas decía
+   * «parte de esto se apoya en el nombre de la clase» sobre un descuento en el que
+   * no había ninguna clase. */
+  const html = '<a href="#" aria-label="Ir al inicio">Inicio' +
+    '<span style="position:absolute;width:1px;height:1px;overflow:hidden">(portada)</span></a>';
+  assert.equal(veredictos(html)["2.5.3"], "cumple-parcial");   // la parte automatizable, cumplida
+  const ev = evidenciaDe(html, "2.5.3");
+  assert.doesNotMatch(ev, /depende de si cuenta como visible/);
+  assert.doesNotMatch(ev, /convención/);
+
+  // Y cuando el descuento NO salva el veredicto, se afirma con la lectura limpia.
+  const falla = '<a href="#" aria-label="Portada del sitio">Inicio' +
+    '<span style="position:absolute;width:1px;height:1px;overflow:hidden">(portada)</span></a>';
+  assert.equal(veredictos(falla)["2.5.3"], "falla");
+  const ev2 = evidenciaDe(falla, "2.5.3");
+  assert.match(ev2, /El texto visible es «Inicio»/);
+  assert.match(ev2, /estilo en línea/);
+  assert.doesNotMatch(ev2, /convención/);
+});

@@ -304,6 +304,61 @@ function textoVisibleHijos(el) {
   });
   return out;
 }
+/* EL IDIOMA DE OCULTACIÓN VISUAL, VISTO SIN CSS.
+ *
+ * `isHiddenEl` solo ve el atributo `hidden` y el estilo en línea, y el idioma de
+ * `.sr-only` vive en una hoja de estilos: esta capa corre sobre linkedom y no
+ * resuelve CSS. Resultado medido contra un sitio real conforme: el texto «visible»
+ * de un enlace salía como «LinkedIn Profesional(se abre en nueva pestaña)», con el
+ * paréntesis que NADIE ve metido dentro — y de esa comparación sale el veredicto
+ * de 2.5.3. La evidencia citaba como visible algo que no lo es.
+ *
+ * Aquí se distinguen dos clases de señal, y no valen lo mismo:
+ *   · el estilo EN LÍNEA con el idioma (clip a cero, caja de 1px con overflow,
+ *     puesto fuera de pantalla) es un hecho leído del marcado;
+ *   · el NOMBRE DE LA CLASE es una convención. `sr-only` lo usan Bootstrap y
+ *     Tailwind, `screen-reader-text` WordPress, `show-for-sr` Foundation… pero
+ *     nada impide que una clase así se llame de otra forma, ni que una llamada
+ *     así no haga eso.
+ *
+ * Por eso esto NO decide solo: el criterio 2.5.3 se juzga con las DOS lecturas, y
+ * cuando no coinciden el veredicto es `revisar` con las dos escritas. Es el mismo
+ * patrón que ya se usa con la sombra del texto en 1.4.3: cuando la medida depende
+ * de una decisión que no es del agente, se dan los dos números y decide la persona.
+ */
+const CLASES_OCULTAS = ["sr-only", "visually-hidden", "visuallyhidden", "screen-reader-text",
+  "screen-reader-only", "show-for-sr", "is-sr-only", "a11y-hidden", "assistive-text", "sr-text"];
+function pareceOcultoVisualmente(node) {
+  if (!node || !node.getAttribute) return null;
+  const st = String(node.getAttribute("style") || "").replace(/\s+/g, "").toLowerCase();
+  /* `duro` = leído del marcado, no conjeturado. Importa porque decide el
+   * veredicto: con un hecho el agente puede afirmar; con una convención de
+   * nombres, no. */
+  if (st) {
+    if (/clip:rect\(0/.test(st) || /clip-path:inset\((50|100)%\)/.test(st)) return { porQue: "estilo en línea: recortado con clip", duro: true };
+    if (/width:1px/.test(st) && /height:1px/.test(st) && /overflow:hidden/.test(st)) return { porQue: "estilo en línea: caja de 1 px con overflow oculto", duro: true };
+    if (/left:-\d{4,}px/.test(st) || /top:-\d{4,}px/.test(st)) return { porQue: "estilo en línea: fuera de la pantalla", duro: true };
+  }
+  const cls = String(node.getAttribute("class") || "").toLowerCase().split(/\s+/).filter(Boolean);
+  for (const c of cls) if (CLASES_OCULTAS.indexOf(c) !== -1) return { porQue: "clase «" + c + "» (convención de ocultación visual)", duro: false };
+  return null;
+}
+/* El texto de los hijos descontando los que parecen ocultos a la vista, y cuántos
+ * se han descontado: hace falta para poder DECIRLO en la evidencia. */
+function textoVisibleHijosSinOcultos(el, cuenta) {
+  let out = "";
+  (el.childNodes || []).forEach(function (n) {
+    if (n.nodeType === 3) { out += n.nodeValue; return; }
+    if (n.nodeType !== 1) return;
+    if (n.getAttribute && n.getAttribute("aria-hidden") === "true") return;
+    if (isHiddenEl(n)) return;
+    if (pareceIcono(n)) return;
+    const senal = pareceOcultoVisualmente(n);
+    if (senal) { cuenta.push({ locator: n.tagName.toLowerCase(), porQue: senal.porQue, duro: senal.duro, texto: accCollapse(textoVisibleHijos(n)) }); return; }
+    out += textoVisibleHijosSinOcultos(n, cuenta);
+  });
+  return out;
+}
 function textoDeEtiqueta(el, tag) {
   if (tag === "input") {
     const t = String(el.getAttribute("type") || "").toLowerCase();
@@ -312,6 +367,11 @@ function textoDeEtiqueta(el, tag) {
     return (t === "submit" || t === "reset" || t === "button") ? accCollapse(el.getAttribute("value") || "") : "";
   }
   return accCollapse(textoVisibleHijos(el));
+}
+function etiquetaSinOcultos(el, tag) {
+  if (tag === "input") return { texto: textoDeEtiqueta(el, tag), descontados: [] };
+  const cuenta = [];
+  return { texto: accCollapse(textoVisibleHijosSinOcultos(el, cuenta)), descontados: cuenta };
 }
 /* Normalizar para comparar: fuera mayúsculas y TODO lo que no sea letra o
  * número —signos, símbolos, emoji y los glifos de uso privado de las fuentes de
@@ -998,7 +1058,21 @@ function nodeObservations(model) {
   if (model.isFormControl && !model.name.name && model.role !== "button") {
     obs.push({ html: "Campo de formulario <strong>sin etiqueta ni instrucciones</strong>: no hay <code>&lt;label&gt;</code>, <code>aria-label</code> ni <code>aria-labelledby</code>.", crit: "3.3.2", sev: "grave", type: "label-missing" });
   }
-  if (model.name.insufficient && model.name.source.indexOf("title") !== -1) {
+  /* 4.1.2 habla de COMPONENTES DE INTERFAZ, y esta regla no lo comprobaba.
+   *
+   * Medido contra un sitio real conforme: cuatro de las nueve acusaciones de 4.1.2
+   * eran `span` con `title` y rol genérico —texto de migas recortado con
+   * `max-width` y el texto completo en el tooltip—. Un `span` sin rol ni
+   * interacción no es un componente de interfaz, así que 4.1.2 no le aplica, y
+   * decir que «su nombre depende de title» afirma que tiene un nombre que exponer.
+   *
+   * El caso de debajo sí existe —texto que se corta y solo está entero en el
+   * tooltip—, pero no es 4.1.2: es pérdida de información (1.4.4 / 1.4.10) y
+   * contenido al pasar el puntero (1.4.13), y las dos cosas necesitan CSS, que
+   * esta capa no tiene. Queda como limitación conocida, no como acusación en el
+   * criterio equivocado. */
+  if (model.name.insufficient && model.name.source.indexOf("title") !== -1 &&
+      (model.interactive || model.focusable || isPrimary)) {
     obs.push({ html: "El nombre depende de <code>title</code>, poco fiable en móvil y con soporte desigual entre lectores.", crit: "4.1.2", sev: "moderada", type: "title-name" });
   }
   // OJO al valor: `tabindex="-1"` es la técnica estándar para que un contenedor
@@ -1021,13 +1095,56 @@ function nodeObservations(model) {
    * que es para quien existe el criterio. */
   if (isPrimary && model.etiquetaVisible && /aria-label/.test(model.name.source || "")) {
     const cmp = etiquetaEnNombre(model.etiquetaVisible, model.name.name);
-    if (cmp && !cmp.ok) {
-      obs.push(cmp.soloAcentos
-        ? { html: "El nombre accesible («" + esc(model.name.name) + "») contiene el texto visible («" + esc(model.etiquetaVisible) +
-              "») salvo por tildes o signos. Quien dicta por voz dice lo que ve: comprueba si su reconocedor lo casa.",
+    /* LAS DOS LECTURAS, cuando hay texto descontado por parecer oculto a la vista.
+     *
+     * Medido contra un sitio real conforme: el texto «visible» de un enlace salía
+     * como «LinkedIn Profesional(se abre en nueva pestaña)», con un `span.sr-only`
+     * dentro. Esa cadena es la que se compara con el nombre accesible, así que un
+     * paréntesis que nadie ve decidía el veredicto de 2.5.3.
+     *
+     * Descontarlo sin más tampoco vale: el descuento se apoya en parte en el
+     * NOMBRE DE LA CLASE, que es una convención y no un hecho. Así que se juzga con
+     * las dos lecturas y, si no coinciden, el veredicto es `revisar` con las dos
+     * escritas — mismo patrón que la sombra del texto en 1.4.3. Si coinciden, se
+     * cita la lectura sin lo oculto, que es la honesta, y se dice qué se descontó. */
+    const limpia = model.etiquetaSinOcultos || { texto: model.etiquetaVisible, descontados: [] };
+    const hayDescuento = limpia.descontados.length > 0 && limpia.texto !== model.etiquetaVisible;
+    const cmpLimpia = hayDescuento ? etiquetaEnNombre(limpia.texto, model.name.name) : cmp;
+    const comoSeDescuenta = limpia.descontados.map(function (d) {
+      return "«" + esc(d.texto) + "» (" + esc(d.porQue) + ")";
+    }).join(", ");
+
+    /* Y la fuerza de la señal decide quién decide.
+     *
+     * Con el idioma escrito en el atributo `style` esto es un hecho leído del
+     * marcado: el agente puede afirmar, y quedarse en `revisar` sería esconderse.
+     * Con el nombre de la clase es una convención, y entonces el veredicto depende
+     * de algo que el agente no ha comprobado. Lo encontré escribiendo el test del
+     * caso en línea: el mensaje decía «parte de esto se apoya en el nombre de la
+     * clase» sobre un descuento en el que no había ninguna clase. */
+    const soloBlandas = limpia.descontados.length > 0 && limpia.descontados.every(function (d) { return !d.duro; });
+    if (hayDescuento && soloBlandas && !!(cmp && !cmp.ok) !== !!(cmpLimpia && !cmpLimpia.ok)) {
+      /* Las dos lecturas no dicen lo mismo: el veredicto depende de si ese texto se
+       * ve o no, y eso lo decide quien mira la página, no el agente. */
+      obs.push({
+        html: "El veredicto de 2.5.3 depende de si cuenta como visible un texto que parece estar oculto a la vista. " +
+          "Contándolo, el texto visible es «" + esc(model.etiquetaVisible) + "»; sin contarlo, «" + esc(limpia.texto) + "». " +
+          "El nombre accesible es «" + esc(model.name.name) + "», que " +
+          ((cmpLimpia && cmpLimpia.ok) ? "<strong>sí</strong> contiene la segunda lectura y <strong>no</strong> la primera" : "contiene la primera y no la segunda") + ". " +
+          "Se ha descontado " + comoSeDescuenta + ", y parte de eso se apoya en el nombre de la clase, " +
+          "que es una convención y no un hecho: compruébalo mirando la página.",
+        crit: "2.5.3", sev: "moderada", type: "etiqueta-en-nombre-dudoso", nivel: "revisar" });
+    } else if (cmpLimpia && !cmpLimpia.ok) {
+      const cola = hayDescuento
+        ? " (se ha descontado del texto visible " + comoSeDescuenta + ": no se ve, así que quien dicta no lo dice" +
+          (soloBlandas ? ", y eso se apoya en el nombre de la clase, que es una convención: compruébalo" : "") + ")"
+        : "";
+      obs.push(cmpLimpia.soloAcentos
+        ? { html: "El nombre accesible («" + esc(model.name.name) + "») contiene el texto visible («" + esc(limpia.texto) +
+              "») salvo por tildes o signos" + cola + ". Quien dicta por voz dice lo que ve: comprueba si su reconocedor lo casa.",
             crit: "2.5.3", sev: "moderada", type: "etiqueta-en-nombre-acentos", nivel: "revisar" }
-        : { html: "El texto visible es «" + esc(model.etiquetaVisible) + "» y el nombre accesible es «" + esc(model.name.name) +
-              "», que <strong>no lo contiene</strong>: quien maneja el equipo hablando dice lo que ve y el reconocimiento de voz no encuentra el control (fallo F96).",
+        : { html: "El texto visible es «" + esc(limpia.texto) + "» y el nombre accesible es «" + esc(model.name.name) +
+              "», que <strong>no lo contiene</strong>" + cola + ": quien maneja el equipo hablando dice lo que ve y el reconocimiento de voz no encuentra el control (fallo F96).",
             crit: "2.5.3", sev: "grave", type: "etiqueta-en-nombre" });
     }
   }
@@ -1272,6 +1389,9 @@ function makeNode(el, doc, depth, presentacionHeredada) {
     // Para 2.5.3: el texto que se LEE con los ojos, sin iconos ni `alt`, y sin
     // recortar — `visibleText` va truncado a 40 y no sirve para comparar.
     etiquetaVisible: textoDeEtiqueta(el, tag),
+    // La misma etiqueta descontando lo que parece oculto a la vista, para las dos
+    // lecturas de 2.5.3 (ver `etiquetaSinOcultos`).
+    etiquetaSinOcultos: etiquetaSinOcultos(el, tag),
     children: []
   };
   model.say = announcement(model);

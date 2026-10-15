@@ -62,6 +62,34 @@ function __opacidadAcum(el){
   return o;
 }
 function __pintado(el){ if(!el.getClientRects||!el.getClientRects().length) return false; var cs=getComputedStyle(el); if(cs.visibility==='hidden'||cs.display==='none') return false; return __opacidadAcum(el) > 0; }
+/* OCULTO A LA VISTA PERO LEÍDO: el idioma de .sr-only y del enlace de salto.
+   Es la clase de elemento que existe para que un lector de pantalla lo anuncie y
+   nadie lo vea: caja de 1x1 con overflow:hidden, recortado con clip a cero, o
+   puesto fuera de la pantalla con left:-9999px. Tailwind .sr-only es exactamente
+   lo primero.
+   Esto NO es contenido visible, así que no puede perderse al reflujo ni al
+   cambiar el espaciado — y medido contra un sitio real conforme, no distinguirlo
+   producía ONCE falsas barreras de 1.4.10 de cuarenta y seis acusaciones: el
+   agente denunciaba los propios recursos de accesibilidad del sitio por
+   «recortar 179 px con overflow:hidden», que es literalmente lo que hace el
+   idioma. Once de cuarenta y seis es la cuarta parte del informe.
+   Se decide con CSS calculado y geometría REAL, no por el nombre de la clase:
+   «sr-only» es una convención, no una garantía, y un informe con efectos legales
+   no se apoya en una convención de nombres.
+   Y no puede esconder una barrera de verdad: una pérdida de información por
+   reflujo es texto VISIBLE que se corta, y eso vive en una caja de tamaño
+   normal, nunca en una de un píxel ni fuera de la pantalla.
+   (Sin comillas invertidas en este comentario: vive dentro de una plantilla.) */
+function __ocultoALaVista(el){
+  var cs=getComputedStyle(el), r=el.getBoundingClientRect();
+  if (r.width <= 4 || r.height <= 4) return 'caja de ' + Math.round(r.width) + 'x' + Math.round(r.height) + ' px';
+  var cl=String(cs.clip||'').replace(/\\s+/g,'');
+  if (/^rect\\((0(px)?,){3}0(px)?\\)$/.test(cl) || /^rect\\((1px,){3}1px\\)$/.test(cl)) return 'recortado con clip a cero';
+  var cp=String(cs.clipPath||'').replace(/\\s+/g,'');
+  if (/^inset\\((50|100)%\\)$/.test(cp)) return 'recortado con clip-path';
+  if (r.right <= 0 || r.bottom <= 0) return 'fuera de la pantalla';
+  return null;
+}
 /* Qué medir. Dos familias, y las dos hacen falta:
    1. Los elementos que pintan texto propio: son los que crecen al cambiar el
       espaciado o el tamaño.
@@ -97,6 +125,9 @@ function __caja(el){
   return { uid:__uid(el), locator:__loc(el),
     sh:el.scrollHeight, ch:el.clientHeight, sw:el.scrollWidth, cw:el.clientWidth,
     ocultoY:ocultoY, ocultoX:ocultoX,
+    /* El idioma de .sr-only tambien llega aqui, y por 1.4.4 y 1.4.12: salia como
+       bloque que YA venia recortado, con los px de un texto que nadie ve. */
+    ocultoVista: !!__ocultoALaVista(el),
     recortado: (ocultoY && el.scrollHeight>el.clientHeight+2) || (ocultoX && el.scrollWidth>el.clientWidth+2),
     top:Math.round(r.top), bottom:Math.round(r.bottom), left:Math.round(r.left), right:Math.round(r.right) };
 }
@@ -207,10 +238,17 @@ function diffCajas(antes, despues) {
     return (d.ocultoY && exY > 2 ? exY + " px de alto ocultos" : "") +
       (d.ocultoX && exX > 2 ? (d.ocultoY && exY > 2 ? "; " : "") + exX + " px de ancho ocultos" : "");
   }
+  let descontados = 0;
   (despues || []).forEach(function (d) {
     const a = A[d.uid];
     if (!a) return;
     if (!d.recortado) return;
+    /* Oculto a la vista: no es contenido que se vea, así que ni lo recorta el
+     * cambio ni «ya venía recortado». Medido contra un sitio real conforme, esto
+     * metía `a.skip-link`, `span.sr-only` y `caption.sr-only` en la lista de
+     * bloques recortados de 1.4.4 y 1.4.12, con los píxeles de un texto que nadie
+     * ve nunca. */
+    if (d.ocultoVista) { descontados++; return; }
     // Solo cuenta como falla del cambio lo que EMPEORA con él.
     if (!a.recortado) { recortados.push({ locator: d.locator, uid: d.uid, detalle: detalle(d) }); return; }
     // Lo que ya venía recortado no lo causa el cambio, pero es pérdida de
@@ -223,6 +261,7 @@ function diffCajas(antes, despues) {
     const p = porTop[i - 1], q = porTop[i];
     if (p.uid === q.uid) continue;
     if (q.uid.indexOf(p.uid) === 0 || p.uid.indexOf(q.uid) === 0) continue; // anidados: no es solape
+    if (p.ocultoVista || q.ocultoVista) continue;   // un elemento que no se ve no se solapa con nada
     const solapaAhora = q.top < p.bottom - 2 && q.left < p.right - 2 && q.right > p.left + 2;
     if (!solapaAhora) continue;
     const pa = (antes || []).find(function (c) { return c.uid === p.uid; });
@@ -230,7 +269,7 @@ function diffCajas(antes, despues) {
     if (pa && qa && qa.top < pa.bottom - 2 && qa.left < pa.right - 2 && qa.right > pa.left + 2) continue; // ya se pisaban antes
     solapados.push({ locator: q.locator, uid: q.uid, detalle: "se solapa con " + p.locator });
   }
-  return { recortados: recortados, solapados: solapados.slice(0, 20), previos: previos };
+  return { recortados: recortados, solapados: solapados.slice(0, 20), previos: previos, descontados: descontados };
 }
 
 /**
@@ -356,11 +395,12 @@ export async function viewportAnalyze(target, opts) {
       return await evalIn(page, `
         var de=document.documentElement;
         var cw=de.clientWidth, sw=Math.max(de.scrollWidth, document.body?document.body.scrollWidth:0);
-        var offenders=[];
+        var offenders=[], descontados=0;
         if (sw > cw+2) {
           var all=document.body?document.body.querySelectorAll('*'):[];
           for (var i=0;i<all.length && offenders.length<25;i++){
             var el=all[i]; if(!__pintado(el)) continue;
+            if (__ocultoALaVista(el)) { descontados++; continue; }
             var r=el.getBoundingClientRect();
             if (r.width<=0) continue;
             if (r.right <= cw+2) continue;
@@ -389,6 +429,11 @@ export async function viewportAnalyze(target, opts) {
         var cand=document.body?document.body.querySelectorAll('*'):[];
         for (var j=0;j<cand.length && recortados.length<25;j++){
           var e2=cand[j]; if(!__pintado(e2)) continue;
+          /* El idioma de ocultacion visual, fuera: no es contenido que se vea, asi
+             que no puede perderse. Se cuenta cuantos se descuentan, porque un
+             descuento silencioso tampoco informa. */
+          var porQue=__ocultoALaVista(e2);
+          if (porQue) { descontados++; continue; }
           var cs2=getComputedStyle(e2);
           var ox=cs2.overflowX, oy=cs2.overflowY;
           var esconde = (ox==='hidden'||ox==='clip');
@@ -422,7 +467,7 @@ export async function viewportAnalyze(target, opts) {
           recortados.push({ locator:__loc(e2), uid:__uid(e2), px:Math.round(exceso), overflow:ox,
             alcanzable: alcanzable, conFoco: conFoco, muestra: txt.slice(-60) });
         }
-        return { w:cw, h:de.clientHeight, scrollWidth:sw, clientWidth:cw, offenders:offenders, recortados:recortados };`);
+        return { w:cw, h:de.clientHeight, scrollWidth:sw, clientWidth:cw, offenders:offenders, recortados:recortados, descontados:descontados };`);
     }, null);
 
     // ── 1.4.4 Redimensionar el texto al 200 % ──

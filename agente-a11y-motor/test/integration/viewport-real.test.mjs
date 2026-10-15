@@ -45,6 +45,28 @@ const CASOS = {
   // Solo tabla ancha: candidata a la excepción de uso esencial.
   "/tabla": BASE(`<main><table><tr>${"<td>columna larga de datos</td>".repeat(8)}</tr></table></main>`,
     "main{padding:1em}table{border-collapse:collapse}td{white-space:nowrap;padding:4px}"),
+  /* EL IDIOMA DE OCULTACIÓN VISUAL, con un recorte de verdad al lado.
+     Salió del primer banco contra un sitio del que se esperaba conformidad: de las
+     46 acusaciones, ONCE eran de 1.4.10 contra `span.sr-only`, `caption.sr-only` y
+     `a.skip-link` — el agente denunciaba los propios recursos de accesibilidad del
+     sitio por «recortar 179 px con overflow:hidden», que es literalmente lo que
+     hace el idioma. La cuarta parte del informe.
+     La tarjeta de abajo recorta texto VISIBLE y tiene que seguir saliendo: el
+     descuento no puede valer para tapar una pérdida real. */
+  "/sr-only": BASE(
+    `<a class="skip-link" href="#main">Saltar al contenido principal</a>
+     <main id="main"><h1>Página</h1><p>Texto que cabe de sobra.</p>
+     <a href="#" aria-label="LinkedIn">LinkedIn<span class="sr-only">(se abre en nueva pestaña)</span></a>
+     <table><caption class="sr-only">Inventario de cookies utilizadas en este sitio web</caption><tbody><tr><td>a</td></tr></tbody></table>
+     <div class="tarjeta"><p>${TEXTO}</p></div></main>`,
+    ".sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border-width:0}" +
+    ".skip-link{position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden}" +
+    ".skip-link:focus{left:0;top:0;width:auto;height:auto}" +
+    ".tarjeta{height:40px;overflow:hidden;width:260px}"),
+  // El mismo idioma escrito con clip-path, que es la forma moderna.
+  "/sr-only-clippath": BASE(
+    `<main><h1>P</h1><p>Texto normal.</p><span class="vh">${TEXTO}</span></main>`,
+    ".vh{position:absolute;clip-path:inset(50%);height:1px;width:1px;overflow:hidden;white-space:nowrap}"),
   // title usado como tooltip.
   "/title": BASE(`<main><h1>T</h1><p><a href="#x" title="Información adicional que solo se ve al pasar el ratón">Enlace</a></p></main>`),
   /* Desbordamiento ESCONDIDO: no hay barra, `scrollWidth` del documento no crece,
@@ -390,4 +412,31 @@ test("adaptación: 1.4.10 también trae ruta en lo que recorta", { skip }, async
     assert.match(String(n.path || ""), /^html > body >/, "con su ruta: " + JSON.stringify(n));
     assert.ok(n.evid && n.evid.length && /px/.test(n.evid[0]), "y con su propia frase: " + JSON.stringify(n.evid));
   });
+});
+
+/* ── El idioma de ocultación visual no es contenido recortado (v0.63.0) ──── */
+
+test("1.4.10 real: .sr-only y el enlace de salto NO son contenido recortado", { skip }, async () => {
+  /* Las once falsas acusaciones del primer banco contra un sitio conforme. El
+   * idioma —caja de 1×1 con overflow:hidden, clip a cero, fuera de pantalla—
+   * existe para que lo lean los lectores y no se vea: no hay información visible
+   * que pueda perderse al reflujo. */
+  const out = await viewportAnalyze({ url: base + "/sr-only" }, {});
+  const f = (out.findings || []).filter((x) => x.c.n === "1.4.10");
+  const nombrados = f.flatMap((x) => (x.nodes || []).map((n) => n.locator || "")).join(" ");
+  assert.doesNotMatch(nombrados, /sr-only|skip-link/, JSON.stringify(f.map((x) => [x.verdict, (x.evid || [])[0]])));
+  // Y tampoco en 1.4.4 / 1.4.12, donde salían como «ya venían recortados».
+  const otros = (out.findings || []).filter((x) => ["1.4.4", "1.4.12"].indexOf(x.c.n) !== -1);
+  const nombrados2 = otros.flatMap((x) => (x.nodes || []).map((n) => n.locator || "")).join(" ");
+  assert.doesNotMatch(nombrados2, /sr-only|skip-link/, nombrados2);
+  // LO QUE NO PASA: la tarjeta que recorta texto VISIBLE sigue saliendo.
+  assert.match(nombrados2, /tarjeta/, "el descuento no puede tapar una pérdida real: " + nombrados2);
+});
+
+test("1.4.10 real: el mismo idioma con clip-path tampoco se acusa", { skip }, async () => {
+  const out = await viewportAnalyze({ url: base + "/sr-only-clippath" }, {});
+  const todos = (out.findings || [])
+    .filter((x) => ["1.4.10", "1.4.4", "1.4.12"].indexOf(x.c.n) !== -1)
+    .flatMap((x) => (x.nodes || []).map((n) => n.locator || "")).join(" ");
+  assert.doesNotMatch(todos, /\.vh/, todos);
 });

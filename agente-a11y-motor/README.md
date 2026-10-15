@@ -989,6 +989,29 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.63.0 — el agente denunciaba los recursos de accesibilidad del sitio
+
+El banco del sitio que cumple se estrenó contra `jesusaccesible.com`, el sitio del propio autor del agente, remediado por él. **46 acusaciones en 7 criterios**, y revisadas una por una salieron tres defectos. Quince de las cuarenta y seis eran falsas: **la precisión medida fue del 67 %**, la primera cifra de precisión que este proyecto tiene.
+
+```
+1.4.10   11      4.1.2    9      2.4.11   5      2.4.7   1
+2.5.3    10      1.3.1    6      1.4.3    4
+```
+
+**Las once de 1.4.10 eran todas falsas, y son el caso más incómodo posible: el agente denunciaba los recursos de accesibilidad del sitio.** Una por una eran `span.sr-only`, `caption.sr-only` y `a.skip-link`, acusadas de «recortar 179 px con `overflow:hidden` sin forma de desplazarlo». Eso es, literalmente, lo que hace el idioma de ocultación visual: caja de 1×1 con `overflow:hidden` y `clip` a cero, o puesta fuera de la pantalla, para que un lector lo anuncie y nadie lo vea. No es contenido visible, así que no puede perderse al reflujo — y once de cuarenta y seis es la cuarta parte del informe.
+
+Ahora la capa de adaptación reconoce el idioma, y lo hace **con CSS calculado y geometría real, no por el nombre de la clase**: `sr-only` es una convención, no una garantía, y un informe con efectos legales no se apoya en una convención de nombres. Tampoco puede esconder nada: una pérdida de información por reflujo es texto *visible* que se corta, y eso vive en una caja de tamaño normal. El test lo fija con las dos cosas en la misma página — el idioma, que no debe salir, y una tarjeta que recorta texto visible, que sí.
+
+**Cuatro de las nueve de 4.1.2 eran `span` con `title` y rol genérico** — migas de pan recortadas con `max-width`, con el texto completo en el tooltip. 4.1.2 habla de *componentes de interfaz*; un `span` sin rol ni interacción no lo es, y decir que «su nombre depende de `title`» afirma que tiene un nombre que exponer. La regla no comprobaba la interactividad. El caso de debajo existe —texto que se corta y solo está entero en el tooltip— pero es 1.4.4/1.4.10 y 1.4.13, no 4.1.2: queda como limitación conocida y no como acusación en el criterio equivocado.
+
+**Y el texto «visible» de 2.5.3 incluía lo que nadie ve.** En las cinco filas del enlace de LinkedIn, el texto visible salía como «LinkedIn Profesional(se abre en nueva pestaña)», con el `span.sr-only` dentro — y esa cadena es la que se compara con el nombre accesible para decidir el veredicto. El motor estático corre sobre linkedom y no resuelve CSS, así que el idioma en una hoja de estilos le es invisible. Aquí los veredictos no cambian, pero la evidencia citaba como visible algo que no lo es, y eso en un informe es una afirmación falsa.
+
+El arreglo distingue **dos clases de señal, que no valen lo mismo**: el idioma escrito en el atributo `style` es un hecho leído del marcado; el nombre de la clase es una convención. Con el hecho, el agente afirma. Con la convención, si de ella depende el veredicto, se dan **las dos lecturas** y queda en `revisar` — el mismo patrón que la sombra del texto en 1.4.3. Esa distinción apareció escribiendo el test: el mensaje decía «parte de esto se apoya en el nombre de la clase» sobre un descuento en el que no había ninguna clase.
+
+**Lo que esto va a hacer en ese informe, dicho antes de verlo:** 46 familias bajan a **31**, 1.4.10 desaparece del informe y 4.1.2 pasa de 9 a 5. Las otras 31 me parecen reales —el `aria-controls` que apunta a `mobile-menu`, que no existe en el DOM hasta abrir el menú (6 de 1.3.1 + 5 de 4.1.2), un contraste de 2,63:1 sobre blanco, el contorno de foco blanco sobre blanco— y las cinco de 2.4.11 del encabezado adhesivo necesitan tu ojo.
+
+**781 tests unitarios** (de 776) y **177 de integración** (de 175), en verde. El ancla del sitio de prueba no se mueve: 7 criterios con barrera.
+
 ### v0.62.0 — el banco que de verdad mide falsos positivos: un sitio que cumple
 
 Toda la calibración de este agente se ha hecho contra sitios **llenos de barreras**, donde una acusación suele acertar. Eso mide lo que encuentra y no mide lo que se inventa. El banco que falta es el contrario, y es más barato que cualquier muestreo: **en un sitio del que se espera conformidad, una acusación no debería existir**, así que no hay que decidir qué se revisa — se revisa todo lo que acuse, y no hay que adjudicar para saber qué juzgar.
