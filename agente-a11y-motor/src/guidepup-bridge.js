@@ -139,7 +139,7 @@ export function compareAnnouncement(predicted, spoken, lector) {
  */
 export async function verifyWithScreenReader(opts) {
   const vo = opts.voiceOver;
-  const steps = opts.steps == null ? 12 : opts.steps;
+  const steps = opts.steps == null ? 400 : opts.steps;   // TECHO, no objetivo
   const sleep = opts.sleep || function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
   const sleepMs = opts.sleepMs == null ? 250 : opts.sleepMs;
 
@@ -166,12 +166,52 @@ export async function verifyWithScreenReader(opts) {
     return true;
   };
 
+  /* EL RECORRIDO SE PARA CUANDO ACABA LA PÁGINA, NO A LOS QUINCE PASOS.
+   *
+   * `steps` era un NÚMERO FIJO de pasos —12 aquí, 14 en el verificador, 15 en los
+   * adaptadores— y eso no es «leer la página»: es leer sus primeros quince
+   * elementos. Reportado desde una sesión real: «se conecta pero no lee la página
+   * entera». En una página de verdad hay decenas de elementos; con quince pasos,
+   * de un 4.1.2 con 24 familias se verificarían las primeras y el resto saldría
+   * `no-encontrado`, que en este puente significa «sin verificar» — es decir, el
+   * informe tendría filas sin confirmar por un tope, no por la página.
+   *
+   * Ahora `steps` es un TECHO (400 por omisión) y lo que para el recorrido es que
+   * el cursor deje de avanzar. La señal es que el lector repita LITERALMENTE la
+   * misma frase varias veces seguidas, que es lo que hace VoiceOver cuando ya está
+   * en el último elemento y se le pide el siguiente. Se mira la repetición
+   * CONSECUTIVA y no el duplicado global, porque dos elementos distintos pueden
+   * sonar igual —dos botones sin nombre dicen «botón» los dos— y eso no es haber
+   * llegado al final. Y no se busca ninguna frase de «fin de página»: eso depende
+   * del idioma del sistema, y aquí el sistema está en español.
+   *
+   * Si se acaba el techo, la lectura está INCOMPLETA y hay que decirlo: una
+   * verificación a medias no puede leerse como una verificación. */
+  const transcripcion = [];
+  const tope = opts.repeticionesParaParar == null ? 3 : opts.repeticionesParaParar;
+  let repes = 0, anterior = null, dados = 0, motivoFin = null;
   for (let i = 0; i < steps; i++) {
     await vo.next();
     if (sleepMs) await sleep(sleepMs);
-    anotar(await vo.lastSpokenPhrase(), i);
-    if (opts.stopWhenRepeated && phrases.length && seen.size <= i) break;
+    const frase = await vo.lastSpokenPhrase();
+    dados = i + 1;
+    /* La TRANSCRIPCIÓN va aquí, en bruto y sin deduplicar.
+     *
+     * Lo que se guardaba como «transcripción en bruto» era la lista ya
+     * deduplicada, o sea ni en bruto ni una transcripción: una frase repetida
+     * —que es justo lo que delata que el recorrido se quedó quieto— desaparecía,
+     * y el orden mezclaba el bucle con el registro del lector. Una transcripción
+     * es lo que dijo, en el orden en que lo dijo, con las repeticiones. */
+    transcripcion.push({ paso: i, spoken: frase == null ? "" : String(frase) });
+    anotar(frase, i);
+    if (frase && anterior != null && normalize(frase) === normalize(anterior)) repes++;
+    else repes = 0;
+    anterior = frase;
+    if (repes >= tope) { motivoFin = "el recorrido dejó de avanzar: la misma frase " + (tope + 1) + " veces seguidas"; break; }
+    if (opts.stopWhenRepeated && phrases.length && seen.size <= i) { motivoFin = "stopWhenRepeated"; break; }
   }
+  if (!motivoFin) motivoFin = "se agotó el techo de " + steps + " pasos SIN llegar al final de la página";
+  const completo = motivoFin.indexOf("dejó de avanzar") !== -1 || motivoFin === "stopWhenRepeated";
 
   /* Y al final, el REGISTRO COMPLETO del lector.
    *
@@ -188,8 +228,22 @@ export async function verifyWithScreenReader(opts) {
   if (typeof vo.spokenPhraseLog === "function") {
     try {
       const registro = await vo.spokenPhraseLog();
-      (registro || []).forEach(function (spoken, i) { anotar(spoken, steps + i); });
+      (registro || []).forEach(function (spoken, i) {
+        anotar(spoken, dados + i);
+        transcripcion.push({ paso: dados + i, spoken: spoken == null ? "" : String(spoken), deRegistro: true });
+      });
     } catch (e) { /* sin registro, nos quedamos con lo del bucle */ }
+  }
+  /* El detalle del recorrido, para quien lo pida. Se devuelve por parámetro de
+   * salida y no cambiando el valor de retorno, porque `phrases` lo consumen el
+   * puente, los dos adaptadores y los tests: lo que hacía falta era AÑADIR la
+   * transcripción, no mover nada de sitio. */
+  if (opts.detalle) {
+    opts.detalle.transcripcion = transcripcion;
+    opts.detalle.pasos = dados;
+    opts.detalle.techo = steps;
+    opts.detalle.completo = completo;
+    opts.detalle.motivoFin = motivoFin;
   }
   return phrases;
 }
@@ -285,6 +339,70 @@ function alignPredictedToSpoken(predicted, phrases, lector) {
  *   resuelve desde la carpeta de ESTE paquete, y quien lo tiene instalado suele
  *   ser otro proyecto del equipo. Sin esto había que duplicar la dependencia.
  */
+/**
+ * APAGAR VOICEOVER DE VERDAD, Y COMPROBARLO.
+ *
+ * Reportado desde una sesión real: «se conecta pero no se apaga». El puente ya
+ * llamaba a `voiceOver.stop()` dentro de un `finally`, así que el defecto no era
+ * que faltara: era que nadie comprobaba el resultado. El `catch` estaba vacío
+ * —`catch (e) { /* noop *\/ }`— de modo que si `stop()` fallaba, o si devolvía sin
+ * cerrar nada, VoiceOver se quedaba hablando en la máquina de la persona y el
+ * programa terminaba diciendo que todo había ido bien. Es el mismo defecto que
+ * este proyecto persigue en los informes, aplicado a un proceso: el silencio
+ * pareciéndose al éxito.
+ *
+ * Ahora hay una escalera de tres peldaños y se comprueba entre peldaño y peldaño:
+ *   1. `voiceOver.stop()`, que es la vía del API;
+ *   2. `tell application "VoiceOver" to quit`, la de AppleScript;
+ *   3. `killall VoiceOver`, la bruta.
+ * Y si después del tercero sigue vivo, se DICE, con la tecla para apagarlo a mano
+ * (Cmd+F5). Nunca se devuelve «apagado» sin haberlo mirado.
+ *
+ * NO VERIFICADO EN MÁQUINA: esto solo corre en macOS con VoiceOver, y el
+ * contenedor donde se escribió no tiene ninguno de los dos. Lo que sí está
+ * probado aquí, con un ejecutor simulado, es la escalera: que pasa al peldaño
+ * siguiente solo si sigue vivo, que no miente cuando no puede comprobarlo, y que
+ * un fallo de `stop()` ya no se traga.
+ *
+ * @param {object} vo  el objeto voiceOver de Guidepup
+ * @param {(cmd:string)=>Promise<{stdout:string}>} ejec  ejecutor de comandos
+ */
+export async function apagarLector(vo, ejec) {
+  const pasos = [];
+  const sigueVivo = async function () {
+    try {
+      const r = await ejec("pgrep -x VoiceOver || true");
+      return String((r && r.stdout) || "").trim().length > 0;
+    } catch (e) { return null; }   // no se sabe, y eso NO es «apagado»
+  };
+
+  try { await vo.stop(); pasos.push({ via: "guidepup.stop()", ok: true }); }
+  catch (e) { pasos.push({ via: "guidepup.stop()", ok: false, error: (e && e.message) || String(e) }); }
+
+  let vivo = await sigueVivo();
+  if (vivo === true) {
+    try {
+      await ejec("osascript -e 'tell application \"VoiceOver\" to quit'");
+      pasos.push({ via: "osascript quit", ok: true });
+    } catch (e) { pasos.push({ via: "osascript quit", ok: false, error: (e && e.message) || String(e) }); }
+    vivo = await sigueVivo();
+  }
+  if (vivo === true) {
+    try { await ejec("killall VoiceOver"); pasos.push({ via: "killall", ok: true }); }
+    catch (e) { pasos.push({ via: "killall", ok: false, error: (e && e.message) || String(e) }); }
+    vivo = await sigueVivo();
+  }
+  return {
+    vivo: vivo,
+    pasos: pasos,
+    aviso: vivo === true
+      ? "VoiceOver SIGUE ENCENDIDO: no he podido apagarlo. Apágalo a mano con Cmd+F5."
+      : vivo === null
+        ? "No he podido comprobar si VoiceOver quedó apagado (no pude consultar los procesos). Si sigue hablando, Cmd+F5."
+        : null
+  };
+}
+
 export async function captureWithGuidepup(html, opts) {
   opts = opts || {};
   const { voiceOver } = opts.guidepup || await import("@guidepup/guidepup");
@@ -321,10 +439,18 @@ export async function captureWithGuidepup(html, opts) {
      * divergencia del léxico. */
     try { await execAsync('osascript -e \'tell application "' + app + '" to activate\''); } catch (e) { /* si no se puede, se sigue: la sesión se declarará nula si no capturó nada */ }
     await new Promise(function (r) { setTimeout(r, opts.loadMs == null ? 3000 : opts.loadMs); });
-    const phrases = await verifyWithScreenReader({ voiceOver: voiceOver, steps: opts.steps == null ? 15 : opts.steps });
+    const detalle = opts.detalle || {};
+    const phrases = await verifyWithScreenReader({
+      voiceOver: voiceOver,
+      // TECHO, no objetivo: el recorrido se para al llegar al final de la página.
+      steps: opts.steps == null ? 400 : opts.steps,
+      detalle: detalle
+    });
     return phrases;
   } finally {
-    try { await voiceOver.stop(); } catch (e) { /* noop */ }
+    const apagado = await apagarLector(voiceOver, execAsync);
+    if (opts.detalle) opts.detalle.apagado = apagado;
+    if (apagado.aviso) console.error("\n⚠ " + apagado.aviso);
     if (!opts.keepOpen) { try { await fs.unlink(file); } catch (e) { /* noop */ } }
   }
 }
@@ -459,10 +585,14 @@ export async function captureWithNvda(html, opts) {
 
     // Y un respiro algo mayor entre pasos, por la misma razón: si dos anuncios
     // se pisan, NVDA los junta en una sola entrada.
+    const detalle = opts.detalle || {};
     const phrases = await verifyWithScreenReader({
       voiceOver: nvda,
-      steps: opts.steps == null ? 15 : opts.steps,
-      sleepMs: opts.sleepMs == null ? 500 : opts.sleepMs
+      // TECHO, no objetivo: el mismo arreglo que en VoiceOver. Quince pasos fijos
+      // no son «leer la página», son leer sus primeros quince elementos.
+      steps: opts.steps == null ? 400 : opts.steps,
+      sleepMs: opts.sleepMs == null ? 500 : opts.sleepMs,
+      detalle: detalle
     });
 
     /* Si no se capturó nada, volcar lo que NVDA tenga en su registro.
@@ -482,7 +612,17 @@ export async function captureWithNvda(html, opts) {
     }
     return phrases;
   } finally {
-    try { await nvda.stop(); } catch (e) { /* noop */ }
+    /* El apagado también se comprueba aquí, y por el mismo motivo: un `catch`
+     * vacío convierte «no se pudo cerrar el lector» en «todo bien». En Windows la
+     * escalera no es la misma (no hay `pgrep` ni AppleScript), así que de momento
+     * se dice lo que pasó con `stop()` y no se finge saber más. */
+    try { await nvda.stop(); if (opts.detalle) opts.detalle.apagado = { vivo: null, pasos: [{ via: "guidepup.stop()", ok: true }], aviso: null }; }
+    catch (e) {
+      const msg = (e && e.message) || String(e);
+      if (opts.detalle) opts.detalle.apagado = { vivo: null, pasos: [{ via: "guidepup.stop()", ok: false, error: msg }],
+        aviso: "No he podido cerrar NVDA (" + msg + "). Ciérralo a mano antes de seguir." };
+      console.error("\n⚠ No he podido cerrar NVDA: " + msg + ". Ciérralo a mano antes de seguir.");
+    }
     if (!opts.keepOpen) { try { await fs.unlink(file); } catch (e) { /* noop */ } }
   }
 }

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import "./helpers.mjs"; // inyecta el DOMParser en el motor
 import {
-  compareAnnouncement, verifyWithScreenReader, bridge,
+  compareAnnouncement, verifyWithScreenReader, bridge, apagarLector,
   normalize, spokenHasRole, stripReaderNoise
 } from "../src/index.js";
 
@@ -315,4 +315,130 @@ test("regresión: la deduplicación de frases no borra elementos distintos", asy
     steps: 3, sleepMs: 0
   });
   assert.equal(out2.length, 1, "el recorrido quieto sigue colapsando");
+});
+
+/* ── El recorrido y el apagado (v0.64.0) ─────────────────────────────────────
+ *
+ * Los dos defectos reportados desde la primera sesión real de VoiceOver en este
+ * Mac: «se conecta pero no lee la página entera ni se apaga». Y el tercero, que
+ * era mío de antes: lo que se guardaba como «transcripción en bruto» era la lista
+ * ya deduplicada, o sea ni en bruto ni una transcripción.
+ */
+
+/** Lector simulado que se queda QUIETO al llegar al final, como VoiceOver. */
+function mockVOFinito(phrases) {
+  let i = -1;
+  return {
+    next: async () => { i++; },
+    // Pasado el último elemento, el cursor no avanza: repite la última frase.
+    lastSpokenPhrase: async () => phrases[Math.min(i, phrases.length - 1)] || ""
+  };
+}
+
+test("recorrido: se para al final de la página, no a los quince pasos", async () => {
+  /* Veinte elementos y un techo de 400: antes se leían los primeros 12/14/15 y
+   * el resto salía `no-encontrado`, que en este puente significa «sin verificar».
+   * Un tope escondido dejaba filas sin confirmar por el tope y no por la página. */
+  const veinte = Array.from({ length: 20 }, (_, k) => "elemento " + (k + 1) + ", botón");
+  const detalle = {};
+  const out = await verifyWithScreenReader({ voiceOver: mockVOFinito(veinte), sleepMs: 0, detalle: detalle });
+  assert.equal(out.length, 20, "tiene que capturar los veinte: " + JSON.stringify(out.map((p) => p.spoken)));
+  assert.ok(detalle.pasos >= 20 && detalle.pasos <= 24, "pasos: " + detalle.pasos);
+  assert.equal(detalle.completo, true);
+  assert.match(detalle.motivoFin, /dejó de avanzar/);
+});
+
+test("recorrido: si se agota el techo, la lectura se declara INCOMPLETA", async () => {
+  /* La regla de oro, aplicada al lector: lo que no se leyó no está verificado, y
+   * no verificado no es correcto. */
+  const muchos = Array.from({ length: 50 }, (_, k) => "elemento " + (k + 1));
+  const detalle = {};
+  await verifyWithScreenReader({ voiceOver: mockVOFinito(muchos), steps: 10, sleepMs: 0, detalle: detalle });
+  assert.equal(detalle.completo, false);
+  assert.match(detalle.motivoFin, /se agotó el techo de 10 pasos SIN llegar al final/);
+});
+
+test("recorrido: dos elementos que suenan IGUAL no son el final de la página", async () => {
+  /* La parada mira la repetición CONSECUTIVA y no el duplicado global, porque dos
+   * botones sin nombre dicen «botón» los dos y eso no es haber llegado al final.
+   * Con el duplicado global, el recorrido se habría cortado en el segundo. */
+  const conGemelos = ["botón", "botón", "Enviar, botón", "Cerrar, botón", "final"];
+  const detalle = {};
+  const out = await verifyWithScreenReader({ voiceOver: mockVOFinito(conGemelos), sleepMs: 0, detalle: detalle });
+  // La transcripción en bruto los tiene los dos; la lista única, uno.
+  const brutas = detalle.transcripcion.map((t) => t.spoken);
+  assert.equal(brutas.filter((x) => x === "botón").length >= 2, true, JSON.stringify(brutas));
+  assert.ok(out.some((p) => p.spoken === "Enviar, botón"), "no llegó al tercero: " + JSON.stringify(out));
+  assert.ok(out.some((p) => p.spoken === "final"), "no llegó al final: " + JSON.stringify(out));
+});
+
+test("transcripción: en bruto, en orden y CON repeticiones", async () => {
+  const detalle = {};
+  await verifyWithScreenReader({ voiceOver: mockVOFinito(["uno", "uno", "dos"]), sleepMs: 0, detalle: detalle });
+  const brutas = detalle.transcripcion.map((t) => t.spoken);
+  assert.deepEqual(brutas.slice(0, 3), ["uno", "uno", "dos"]);
+  // Y los pasos van numerados en orden, que es lo que la hace una transcripción.
+  assert.deepEqual(detalle.transcripcion.slice(0, 3).map((t) => t.paso), [0, 1, 2]);
+});
+
+/* ── La escalera de apagado ───────────────────────────────────────────────── */
+
+/** Ejecutor simulado: dice si VoiceOver sigue vivo y apunta lo que se le pide. */
+function mockEjec(guion) {
+  const hechos = [];
+  return {
+    hechos,
+    ejec: async (cmd) => {
+      hechos.push(cmd);
+      if (/pgrep/.test(cmd)) return { stdout: guion.vivo() ? "1234\n" : "" };
+      if (guion.falla && guion.falla.test(cmd)) throw new Error("no se pudo");
+      guion.aplica(cmd);
+      return { stdout: "" };
+    }
+  };
+}
+
+test("apagado: si `stop()` ya lo apaga, no se toca nada más", async () => {
+  let vivo = true;
+  const m = mockEjec({ vivo: () => vivo, aplica: () => {} });
+  const r = await apagarLector({ stop: async () => { vivo = false; } }, m.ejec);
+  assert.equal(r.vivo, false);
+  assert.equal(r.aviso, null);
+  assert.equal(m.hechos.filter((c) => /osascript|killall/.test(c)).length, 0, JSON.stringify(m.hechos));
+});
+
+test("apagado: si `stop()` falla, no se traga el error y sigue bajando la escalera", async () => {
+  /* El defecto exacto: el `catch` estaba vacío, así que un `stop()` que fallara
+   * dejaba VoiceOver hablando en la máquina y el programa decía que todo bien. */
+  let vivo = true;
+  const m = mockEjec({ vivo: () => vivo, aplica: (cmd) => { if (/quit/.test(cmd)) vivo = false; } });
+  const r = await apagarLector({ stop: async () => { throw new Error("API rota"); } }, m.ejec);
+  assert.equal(r.vivo, false);
+  assert.equal(r.pasos[0].ok, false);
+  assert.match(r.pasos[0].error, /API rota/);
+  assert.ok(m.hechos.some((c) => /osascript/.test(c)), JSON.stringify(m.hechos));
+});
+
+test("apagado: si ni AppleScript lo cierra, se llega a `killall`", async () => {
+  let vivo = true;
+  const m = mockEjec({ vivo: () => vivo, falla: /osascript/, aplica: (cmd) => { if (/killall/.test(cmd)) vivo = false; } });
+  const r = await apagarLector({ stop: async () => {} }, m.ejec);
+  assert.equal(r.vivo, false);
+  assert.deepEqual(r.pasos.map((x) => x.via), ["guidepup.stop()", "osascript quit", "killall"]);
+});
+
+test("apagado: si sigue vivo, se DICE, con la tecla para apagarlo a mano", async () => {
+  const m = mockEjec({ vivo: () => true, aplica: () => {} });
+  const r = await apagarLector({ stop: async () => {} }, m.ejec);
+  assert.equal(r.vivo, true);
+  assert.match(r.aviso, /SIGUE ENCENDIDO/);
+  assert.match(r.aviso, /Cmd\+F5/);
+});
+
+test("apagado: no poder comprobarlo NO es haberlo apagado", async () => {
+  /* `pgrep` que revienta: la respuesta honesta es «no lo sé», no «apagado». */
+  const r = await apagarLector({ stop: async () => {} }, async () => { throw new Error("sin shell"); });
+  assert.equal(r.vivo, null);
+  assert.match(r.aviso, /No he podido comprobar/);
+  assert.match(r.aviso, /Cmd\+F5/);
 });

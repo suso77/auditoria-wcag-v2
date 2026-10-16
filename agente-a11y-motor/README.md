@@ -989,6 +989,22 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.64.0 — quince pasos no son leer una página, y un `catch` vacío no es apagar
+
+La primera sesión de VoiceOver de verdad en este Mac duró lo justo para dejar tres defectos a la vista: **se conecta, pero no lee la página entera ni se apaga**. Y el tercero era mío de antes: lo que el verificador guardaba como «transcripción en bruto» no era ni en bruto ni una transcripción.
+
+**El recorrido tenía un número fijo de pasos**: 12 en el puente, 14 en el verificador, 15 en los dos adaptadores. Eso no es leer una página, es leer sus primeros quince elementos. Y en este puente el nodo que el lector nunca visita sale `no-encontrado`, que significa «sin verificar» — así que en un 4.1.2 con 24 familias se habrían confirmado las primeras y el resto habría quedado sin confirmar **por el tope, no por la página**.
+
+Ahora `steps` es un **techo** (400) y lo que para el recorrido es que el cursor deje de avanzar: la señal es que el lector repita literalmente la misma frase varias veces seguidas, que es lo que hace VoiceOver cuando ya está en el último elemento y se le pide el siguiente. Se mira la repetición **consecutiva** y no el duplicado global, porque dos botones sin nombre dicen «botón» los dos y eso no es haber llegado al final —hay un test con esos dos gemelos—, y no se busca ninguna frase de «fin de página», que depende del idioma del sistema. Si se agota el techo, la lectura se declara **incompleta**, que es la regla de oro aplicada al lector: lo que no se leyó no está verificado.
+
+**El apagado ya llamaba a `voiceOver.stop()`** dentro de un `finally`, así que el defecto no era que faltara: era que **nadie comprobaba el resultado**. El `catch` estaba vacío, de modo que un `stop()` que fallara dejaba VoiceOver hablando en la máquina y el programa terminaba diciendo que todo había ido bien — el mismo defecto que este proyecto persigue en los informes, aplicado a un proceso: el silencio pareciéndose al éxito.
+
+Ahora hay una escalera de tres peldaños y se comprueba entre peldaño y peldaño con `pgrep`: `stop()`, luego `tell application "VoiceOver" to quit`, luego `killall`. Si después del tercero sigue vivo, **se dice**, con la tecla para apagarlo a mano (Cmd+F5). Y no poder comprobarlo no es haberlo apagado: eso se devuelve como «no lo sé» y se dice también.
+
+**La transcripción, por fin literal.** `transcripcion` era la lista ya deduplicada, con el orden del bucle mezclado con el del registro del lector: una frase repetida —que es justo lo que delata un recorrido quieto— desaparecía. Ahora el JSON lleva la transcripción en bruto, en orden y con repeticiones, y aparte la lista única, que es con la que se emparejan los nodos. Y se imprime en pantalla, porque en una verificación con lector la transcripción *es* el entregable.
+
+**790 tests unitarios** (de 781), diez de ellos nuevos para esto. **Lo que NO está verificado en máquina**: el peldaño de AppleScript y el `pgrep` solo corren en macOS con VoiceOver, y el contenedor donde se escribieron no tiene ninguno de los dos. Lo que sí está probado aquí, con un lector y un ejecutor simulados, es toda la lógica: que el recorrido llega al final, que declara la lectura incompleta cuando se agota, que la transcripción conserva las repeticiones, que la escalera baja solo si sigue vivo, y que un `stop()` roto ya no se traga.
+
 ### v0.63.0 — el agente denunciaba los recursos de accesibilidad del sitio
 
 El banco del sitio que cumple se estrenó contra `jesusaccesible.com`, el sitio del propio autor del agente, remediado por él. **46 acusaciones en 7 criterios**, y revisadas una por una salieron tres defectos. Quince de las cuarenta y seis eran falsas: **la precisión medida fue del 67 %**, la primera cifra de precisión que este proyecto tiene.

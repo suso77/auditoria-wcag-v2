@@ -69,7 +69,11 @@ const HTML = [
 ].join("\n");
 
 const salida = process.argv[2] || "verificacion-voiceover.json";
-const pasos = Number(process.env.VO_PASOS || 14);
+/* TECHO, no objetivo. Eran 14 pasos fijos, y eso no es leer la página: es leer sus
+ * primeros catorce elementos. Reportado desde una sesión real: «no lee la página
+ * entera». Ahora el recorrido se para al llegar al final y esto es solo el límite
+ * para no quedarse colgado. */
+const pasos = Number(process.env.VO_PASOS || 400);
 
 console.log("→ Guidepup desde: " + deDonde);
 console.log("→ Arrancando VoiceOver. Hablará en voz alta y tomará el teclado.");
@@ -77,9 +81,13 @@ console.log("→ Deja Safari en primer plano y no toques nada hasta que termine.
 
 const t0 = Date.now();
 let out;
+/* El detalle del recorrido: la transcripción EN BRUTO —con repeticiones y en
+ * orden— y el resultado del apagado. Lo que antes se guardaba como «transcripción
+ * en bruto» era la lista ya deduplicada, o sea ni en bruto ni una transcripción. */
+const detalle = {};
 try {
   out = await bridge(HTML, {
-    capture: (h) => captureWithGuidepup(h, { guidepup: guidepup, steps: pasos, browser: process.env.VO_NAVEGADOR || "Safari" })
+    capture: (h) => captureWithGuidepup(h, { guidepup: guidepup, steps: pasos, browser: process.env.VO_NAVEGADOR || "Safari", detalle: detalle })
   });
 } catch (e) {
   console.error("✗ La captura falló: " + (e && e.message ? e.message : e));
@@ -106,7 +114,12 @@ const informe = {
     frase: r.spoken,
     fraseLimpia: r.cleaned
   })),
-  transcripcion: out.spokenPhrases,
+  // La transcripción LITERAL: lo que dijo, en orden y con las repeticiones.
+  transcripcion: detalle.transcripcion || [],
+  // Y la lista deduplicada, que es con la que se emparejan los nodos.
+  frasesUnicas: out.spokenPhrases,
+  recorrido: { pasos: detalle.pasos, techo: detalle.techo, completo: detalle.completo, motivoFin: detalle.motivoFin },
+  apagado: detalle.apagado || null,
   prediccionMotor: (prediccion.findings || [])
     .filter((f) => f.verdict === "falla")
     .map((f) => ({ criterio: f.c.n, nodos: (f.nodes || []).map((n) => n.locator) }))
@@ -118,6 +131,27 @@ console.log("\n── Resultado ────────────────
 for (const r of informe.resultados) {
   console.log("  " + r.veredicto.padEnd(20) + r.locator + "  ← «" + (r.fraseLimpia || "").slice(0, 70) + "»");
 }
+/* LA TRANSCRIPCIÓN, EN PANTALLA. Es el entregable de una verificación con lector:
+ * lo que de verdad se oye. Hasta ahora solo iba al JSON, y encima deduplicada. */
+const tr = detalle.transcripcion || [];
+console.log("\n── Transcripción del lector (" + tr.length + " frase(s), en orden) ──");
+for (const f of tr) {
+  console.log("  " + String(f.paso).padStart(3) + (f.deRegistro ? " ·reg " : " ·    ") + (f.spoken || "(nada)"));
+}
+
+console.log("\n── Recorrido ──────────────────────────────────────────────");
+console.log("  " + detalle.pasos + " paso(s) de un techo de " + detalle.techo + " · " + (detalle.motivoFin || "?"));
+if (detalle.completo === false) {
+  console.log("  ⚠ LA LECTURA ESTÁ INCOMPLETA: se agotó el techo antes de llegar al final de la");
+  console.log("    página, así que lo que no se leyó no está verificado — y no verificado no es");
+  console.log("    correcto. Sube el techo con VO_PASOS=800 y repite.");
+}
+if (detalle.apagado) {
+  console.log("  VoiceOver: " + (detalle.apagado.vivo === false ? "apagado"
+    : detalle.apagado.vivo === true ? "SIGUE ENCENDIDO" : "no se pudo comprobar") +
+    " (" + detalle.apagado.pasos.map((x) => x.via + (x.ok ? "" : " ✕")).join(" → ") + ")");
+}
+
 console.log("\n  " + JSON.stringify(out.summary));
 console.log("  Informe: " + salida + "  (" + Math.round(ms / 1000) + " s)");
 
