@@ -989,6 +989,20 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.67.0 — «revisión manual» y «no corrí la sonda» no son lo mismo
+
+El banco del sitio limpio dejó **25 de los 55 criterios en «No se puede comprobar (revisión manual)»**, y entre ellos 2.1.1, 2.1.4, 2.2.2, 3.3.1, 3.3.2, 3.3.3 y 4.1.3 — exactamente los que mide la capa dinámica, que en esa pasada estaba **apagada**, porque `auditar-sitio.mjs` la deja detrás de un flag y la orden que yo mismo escribí no lo llevaba.
+
+Leyendo ese informe no hay forma de distinguir **«esto necesita una persona»** de **«no corrí la sonda que lo mide»**. Son dos cosas muy distintas, y una de las dos es culpa del agente. Es la regla de oro del proyecto aplicada a su propia configuración.
+
+El mecanismo ya existía a medias: `criteriosEnSilencio` dice «la capa que lo mide no se ha ejecutado en esta pasada» — pero **solo para los criterios de los que no hay ni un hallazgo**. Y ahí estaba el hueco: un criterio con el hallazgo genérico del motor («requiere evaluación humana») tiene veredicto, así que esa pasada se lo salta, y la frase nunca aparece. Ahora hay una segunda pasada para los que **sí** tienen veredicto: a cada ficha se le añade que la sonda no corrió, con el nombre de la capa, y que por tanto lo de arriba «no es el resultado de haberlo medido: es lo que se puede decir sin medirlo». El aviso del informe los nombra.
+
+**Y una conformidad firmada con la sonda apagada se baja a `revisar`.** Si no se ha medido, no puede leerse como medido — y un `cumple` es justo la lectura que no se puede permitir.
+
+Dos cosas que la nota no hace: no toca los criterios que **solo** dictamina el motor desde el marcado (que la capa dinámica esté apagada no dice nada de 1.1.1), y no toca nada cuando alguna de las capas que miden el criterio sí corrió.
+
+**794 tests unitarios** (de 790) y 181 de integración, en verde. El ancla del sitio de prueba no se mueve: 7 criterios con barrera, 55 de 55 con veredicto.
+
 ### v0.66.0 — una barrera sobre un elemento que el navegador no expone
 
 Leyendo el **árbol de accesibilidad real** con la extensión del navegador apareció algo que ninguna capa podía ver desde dentro. El agente firmaba `1.3.1 falla` contra `button.md:hidden` —el botón del menú móvil— porque su `aria-controls="mobile-menu"` apunta a un id que no existe. Es verdad que no existe; lo comprobé. Pero a 1470 px **ese botón está en `display:none`, y el árbol del navegador no lo contiene**: lo leí y no está. Ningún lector de pantalla llega a él en ese estado.

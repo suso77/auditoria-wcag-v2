@@ -93,6 +93,53 @@ export function capasEfectivas(capas) {
  *        `sitio: true` incluye los criterios de coherencia (que una página sola
  *        no puede decidir y `auditSite` sí).
  */
+/* LA CAPA QUE NO SE EJECUTÓ, DICHA TAMBIÉN CUANDO HAY VEREDICTO.
+ *
+ * `criteriosEnSilencio` ya decía esto, pero solo para los criterios de los que no
+ * había NI UN hallazgo. Y ahí estaba el hueco: un criterio puede tener el
+ * hallazgo genérico del motor —«requiere evaluación humana»— y entonces esa pasada
+ * se lo salta, de modo que el informe no dice nunca que la sonda que lo mide no
+ * llegó a correr.
+ *
+ * Medido sobre el banco del sitio limpio: 25 de los 55 criterios salieron «No se
+ * puede comprobar (revisión manual)», y entre ellos 2.1.1, 2.1.4, 2.2.2, 3.3.1,
+ * 3.3.2, 3.3.3 y 4.1.3 — exactamente los que mide la capa dinámica, que en esa
+ * pasada estaba APAGADA porque `auditar-sitio.mjs` la deja tras un flag. Leyendo
+ * el informe no hay forma de distinguir «esto necesita una persona» de «no corrí
+ * la sonda que lo mide». Son dos cosas muy distintas y una de ellas es culpa del
+ * agente.
+ *
+ * Y es la regla de oro del proyecto aplicada a su propia configuración: si no se
+ * ha medido, no puede leerse como medido. Así que además de decirlo, una
+ * conformidad firmada con la capa apagada se baja a `revisar`.
+ */
+export function notaDeCapaApagada(findings, capas, opts) {
+  opts = opts || {};
+  const porCrit = {};
+  (findings || []).forEach(function (f) {
+    if (f && f.c && f.c.n) { (porCrit[f.c.n] = porCrit[f.c.n] || []).push(f); }
+  });
+  const afectados = [];
+  Object.keys(porCrit).forEach(function (n) {
+    const suyas = capasDe(n);
+    if (!suyas.length) return;                       // nadie más que el motor: no es esto
+    const corridas = suyas.filter(function (k) {
+      return k === "coherencia" ? !!opts.sitio : !!(capas && capas[k]);
+    });
+    if (corridas.length) return;                     // alguna corrió: no aplica la nota
+    afectados.push(n);
+    const nota = "LA SONDA QUE MIDE ESTE CRITERIO NO SE EJECUTÓ en esta pasada (" + capaQueMide(n) +
+      "), así que lo de arriba no es el resultado de haberlo medido: es lo que se puede decir sin medirlo. " +
+      "No es lo mismo que «necesita una persona». Para medirlo, repite la pasada con esa capa encendida.";
+    porCrit[n].forEach(function (f) {
+      f.evid = (f.evid || []).concat([nota]);
+      // Una conformidad firmada con la sonda apagada no es una conformidad.
+      if (f.verdict === "cumple" || f.verdict === "pasa") f.verdict = "revisar";
+    });
+  });
+  return afectados;
+}
+
 export function criteriosEnSilencio(findings, capas, opts) {
   opts = opts || {};
   const dichos = {};
@@ -443,6 +490,15 @@ export async function auditRun(target, opts) {
     /* Y lo último: nombrar los criterios de los que no habló nadie. Va aquí, con
        todas las capas ya volcadas en `findings`, porque solo entonces se sabe
        qué quedó en silencio. Los de coherencia no, que los decide `auditSite`. */
+    /* Antes del silencio: los criterios que SÍ tienen veredicto pero cuya sonda no
+       corrió. Si no se dice, el informe los confunde con «necesita una persona». */
+    const apagadas = notaDeCapaApagada(findings, capas, { sitio: false });
+    if (apagadas.length) {
+      avisos.push("La sonda de " + apagadas.length + " criterio(s) NO se ejecutó en esta pasada (" +
+        apagadas.join(", ") + "): su veredicto no es el resultado de haberlos medido, y así lo dice cada ficha. " +
+        "Si alguno salía conforme, se ha bajado a «revisar»: una conformidad firmada con la sonda apagada no es una conformidad.");
+    }
+
     const silencio = criteriosEnSilencio(findings, capas, { sitio: false });
     if (silencio.length) {
       findings = findings.concat(silencio);

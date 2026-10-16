@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { seleccionarMuestra } from "../src/sampling.js";
-import { axeFindingsNuevos, criteriosEnSilencio, capasEfectivas } from "../src/audit-run.js";
+import { axeFindingsNuevos, criteriosEnSilencio, capasEfectivas, notaDeCapaApagada } from "../src/audit-run.js";
 import { WCAG22, understand, analyze, capaQueMide } from "../src/engine.js";
 import "./helpers.mjs"; // inyecta el DOMParser
 import { esConforme } from "../src/verdicts.js";
@@ -239,4 +239,51 @@ test("toda la prosa de CAPA_QUE_MIDE mapea a una capa conocida", () => {
     .map((c) => ({ n: c.n, prosa: capaQueMide(c.n) }))
     .filter((x) => x.prosa && !PALABRAS.some((p) => x.prosa.indexOf(p) !== -1));
   assert.deepEqual(huerfanos, [], "prosa que el barrido no sabe traducir");
+});
+
+/* ── La sonda que no se ejecutó, dicha también cuando hay veredicto (v0.67.0) ──
+ *
+ * `criteriosEnSilencio` ya lo decía, pero solo para los criterios sin NI UN
+ * hallazgo. Un criterio con el hallazgo genérico del motor —«requiere evaluación
+ * humana»— se escapaba, y el informe no decía nunca que la sonda no corrió.
+ *
+ * Medido sobre el banco del sitio limpio: 25 de 55 criterios salieron «No se
+ * puede comprobar (revisión manual)», y entre ellos 2.1.1, 2.1.4, 2.2.2, 3.3.1,
+ * 3.3.2, 3.3.3 y 4.1.3 — los que mide la capa dinámica, apagada en esa pasada.
+ * Leyendo el informe no había forma de distinguir «esto necesita una persona» de
+ * «no corrí la sonda que lo mide».
+ */
+test("capa apagada: el criterio con veredicto también lo dice", () => {
+  const f = [{ c: { n: "3.3.1" }, verdict: "humano", evid: ["Requiere evaluación humana."] }];
+  const tocados = notaDeCapaApagada(f, capasEfectivas({ dynamic: false }), { sitio: false });
+  assert.deepEqual(tocados, ["3.3.1"]);
+  assert.match(f[0].evid.join(" "), /LA SONDA QUE MIDE ESTE CRITERIO NO SE EJECUTÓ/);
+  assert.match(f[0].evid.join(" "), /No es lo mismo que «necesita una persona»/);
+  // La evidencia que ya había no se pierde.
+  assert.match(f[0].evid[0], /Requiere evaluación humana/);
+});
+
+test("capa apagada: una conformidad firmada con la sonda apagada baja a revisar", () => {
+  /* La regla de oro aplicada a la configuración del propio agente: si no se ha
+   * medido, no puede leerse como medido. */
+  const f = [{ c: { n: "3.3.1" }, verdict: "cumple", evid: ["Correcto."] }];
+  notaDeCapaApagada(f, capasEfectivas({ dynamic: false }), { sitio: false });
+  assert.equal(f[0].verdict, "revisar");
+  assert.match(f[0].evid.join(" "), /NO SE EJECUTÓ/);
+});
+
+test("capa apagada: si la sonda SÍ corrió, no se toca nada", () => {
+  const f = [{ c: { n: "3.3.1" }, verdict: "cumple", evid: ["Correcto."] }];
+  const tocados = notaDeCapaApagada(f, capasEfectivas({ dynamic: true }), { sitio: false });
+  assert.deepEqual(tocados, []);
+  assert.equal(f[0].verdict, "cumple");
+  assert.equal(f[0].evid.length, 1);
+});
+
+test("capa apagada: un criterio que solo mide el motor no lleva la nota", () => {
+  /* 1.1.1 lo dictamina el motor desde el marcado: que la capa dinámica esté
+   * apagada no dice nada de él, y meterle la nota sería ruido. */
+  const f = [{ c: { n: "1.1.1" }, verdict: "falla", evid: ["Imagen sin alternativa."] }];
+  const tocados = notaDeCapaApagada(f, capasEfectivas({ dynamic: false, render: false, viewport: false, pixeles: false }), { sitio: false });
+  assert.ok(!tocados.includes("1.1.1"), JSON.stringify(tocados));
 });
