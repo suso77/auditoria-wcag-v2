@@ -989,6 +989,16 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.66.0 — una barrera sobre un elemento que el navegador no expone
+
+Leyendo el **árbol de accesibilidad real** con la extensión del navegador apareció algo que ninguna capa podía ver desde dentro. El agente firmaba `1.3.1 falla` contra `button.md:hidden` —el botón del menú móvil— porque su `aria-controls="mobile-menu"` apunta a un id que no existe. Es verdad que no existe; lo comprobé. Pero a 1470 px **ese botón está en `display:none`, y el árbol del navegador no lo contiene**: lo leí y no está. Ningún lector de pantalla llega a él en ese estado.
+
+El motor lee el marcado y no resuelve CSS, así que juzga por igual un elemento visible y uno oculto. Y esto **no es un falso positivo sin más**: a ancho de móvil ese botón sí se pinta, y entonces es el control del menú y el defecto es real. Así que la respuesta honesta no es callar ni acusar: es **decir en qué estado se midió**. Ahora el hallazgo baja a `revisar` conservando la evidencia del marcado y añadiendo que en esa pasada el elemento no se pinta, que por eso no se afirma como barrera *ahí*, y que **tampoco se descarta**: si en otro estado se pinta, la barrera está.
+
+Dos cosas que el arreglo no hace. **No toca el hallazgo si uno solo de sus nodos se ve** —bajar el conjunto por el oculto taparía una barrera real—, y **no decide cuando no puede comprobarlo**: si la ruta no resuelve en la página, no se afirma nada y el veredicto queda como estaba.
+
+**790 tests unitarios y 181 de integración** (de 178), en verde, con los tres casos: solo oculto, solo visible, y mezclado.
+
 ### v0.65.0 — la barrera de contraste era la barra de unas migas de pan
 
 Esto no salió de leer código ni de un fixture: salió de **abrir la página en el navegador y mirar el elemento**. El agente firmaba cuatro barreras de 1.4.3 contra `span.text-slate-400`, y yo había dicho que «parecían reales». Lo que hay ahí es esto:
