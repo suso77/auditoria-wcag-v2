@@ -989,6 +989,23 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.65.0 — la barrera de contraste era la barra de unas migas de pan
+
+Esto no salió de leer código ni de un fixture: salió de **abrir la página en el navegador y mirar el elemento**. El agente firmaba cuatro barreras de 1.4.3 contra `span.text-slate-400`, y yo había dicho que «parecían reales». Lo que hay ahí es esto:
+
+```
+span.text-slate-400 · texto «/» · 6×18 px · 11 px negrita
+aria-hidden="true"  · oklch(0.704 0.04 256.788) sobre transparente · 2,63:1
+```
+
+Es **la barra separadora de unas migas de pan**, marcada por el autor como oculta al árbol de accesibilidad. 1.4.3 exige el mínimo al texto que transmite información, y su propia excepción de «incidental» cubre la decoración pura: una barra de separación no transmite nada, quitarla no pierde nada. La capa de píxeles no miraba `aria-hidden` en ningún sitio — la palabra no aparecía en todo el fichero.
+
+**Las dos señales no valen lo mismo, y por eso van separadas.** Que el autor ponga `aria-hidden="true"` es una **declaración**, no un hecho sobre los píxeles: si ese texto sí transmitiera algo, esconderlo del árbol sería otra barrera y no un permiso para tener poco contraste. Que el texto no tenga **ni una letra ni una cifra** —«/», «•», «|», «→»— es un hecho que se lee del contenido. Con las dos a la vez es el separador decorativo de libro y se descuenta **diciéndolo**, con la medida delante y con la advertencia de que, si de verdad transmite algo, entonces hay dos problemas y no ninguno. Con una sola señal el agente no decide: `revisar`, con la señal escrita.
+
+El arreglo iba en dos sitios y el primer intento solo tocó uno. El separador de las migas **no está dentro de ningún control**, así que no lo caza el barrido de elementos interactivos sino el de todo el texto de la página: con un solo parche seguía saliendo `falla`. Lo vio el fixture, que lleva los cuatro casos —las dos señales juntas, cada una por separado, y texto flojo de verdad con palabras, que sigue siendo `falla`.
+
+**790 tests unitarios y 178 de integración** (de 177), en verde. El ancla del sitio de prueba no se mueve: 7 criterios con barrera.
+
 ### v0.64.0 — quince pasos no son leer una página, y un `catch` vacío no es apagar
 
 La primera sesión de VoiceOver de verdad en este Mac duró lo justo para dejar tres defectos a la vista: **se conecta, pero no lee la página entera ni se apaga**. Y el tercero era mío de antes: lo que el verificador guardaba como «transcripción en bruto» no era ni en bruto ni una transcripción.
