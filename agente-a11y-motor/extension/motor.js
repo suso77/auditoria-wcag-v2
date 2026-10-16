@@ -2962,6 +2962,40 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   }
   // Dónde hay texto de verdad dentro de un control: él mismo, o sus descendientes
   // con texto propio (un <button><span>Guardar</span></button> pinta en el span).
+  /* TEXTO QUE EL AUTOR DECLARA DECORACIÓN: la excepción «pure decoration» de 1.4.3.
+   *
+   * Medido en vivo sobre un sitio real, con la extensión del navegador: la barrera
+   * de 1.4.3 que el agente firmaba cuatro veces era este elemento —
+   *
+   *   span.text-slate-400 · texto «/» · 6x18 px · 11 px negrita
+   *   aria-hidden="true" · oklch(0.704 0.04 256.788) sobre transparente · 2.63:1
+   *
+   * — o sea, la BARRA SEPARADORA de unas migas de pan, marcada por el autor como
+   * oculta al árbol de accesibilidad. 1.4.3 exige el mínimo al texto que transmite
+   * información, y su propia excepción de «incidental» cubre la decoración pura.
+   * Una barra de separación no transmite nada: quitarla no pierde información.
+   *
+   * Las dos señales NO valen lo mismo y por eso van separadas:
+   *   · `aria-hidden="true"` es una DECLARACIÓN del autor, no un hecho sobre los
+   *     píxeles: si ese texto sí transmitiera algo, esconderlo del árbol sería otra
+   *     barrera, no un permiso para tener poco contraste;
+   *   · que el texto no tenga NI UNA letra ni cifra —«/», «•», «|», «→»— es un
+   *     hecho que se lee del propio contenido.
+   * Con las dos a la vez es el separador decorativo de libro y se descuenta
+   * diciéndolo. Con una sola, el veredicto no se afirma: queda en `revisar` con la
+   * señal escrita, porque «esto es decoración pura» lo decide quien audita.
+   */
+  function decoracionDeclarada(el) {
+    if (!el || !el.getAttribute) return null;
+    const oculto = el.getAttribute("aria-hidden") === "true" ||
+      (el.closest && !!el.closest('[aria-hidden="true"]'));
+    const txt = String((el.textContent || "")).replace(/\s+/g, "");
+    const sinPalabra = !!txt && !/[\p{L}\p{N}]/u.test(txt);
+    if (oculto && sinPalabra) return { seguro: true, porQue: 'texto «' + txt.slice(0, 12) + '» sin letras ni cifras y con aria-hidden="true"' };
+    if (oculto) return { seguro: false, porQue: 'el autor lo marca aria-hidden="true"' };
+    if (sinPalabra) return { seguro: false, porQue: 'texto «' + txt.slice(0, 12) + '» sin letras ni cifras' };
+    return null;
+  }
   function textTargets(el) {
     if (ownText(el)) return [el];
     const out = [];
@@ -3221,11 +3255,22 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
           } else {
             const min = c.large ? 3 : 4.5, ok = c.ratio >= min, lc = Math.round(Math.abs(c.lc));
             const apca = " · APCA Lc " + lc + (lc >= c.lcMin ? " (≥ " + c.lcMin + ", ok en el borrador de WCAG 3)" : " (< " + c.lcMin + ", orientativo)");
-            res.push({
-              crit: "1.4.3", label: "Contraste del texto", node: tl, path: rt,
-              verdict: ok ? "pasa" : (c.ratio >= min - 1 ? "revisar" : "falla"),
-              detail: "ratio " + ratioTxt(c.ratio) + ":1" + (c.large ? " (texto grande, mín 3:1)" : " (mín 4.5:1)") + apca + " — " + c.fg + " sobre " + c.bg
-            });
+            const deco = ok ? null : decoracionDeclarada(t);
+            const base = "ratio " + ratioTxt(c.ratio) + ":1" + (c.large ? " (texto grande, mín 3:1)" : " (mín 4.5:1)") + apca + " — " + c.fg + " sobre " + c.bg;
+            if (deco && deco.seguro) {
+              // Separador decorativo de libro: no se acusa, pero tampoco se calla.
+              res.push({ crit: "1.4.3", label: "Contraste del texto", node: tl, path: rt, verdict: "no-aplica",
+                detail: base + ". NO se cuenta como barrera: " + deco.porQue + ", así que es decoración pura y 1.4.3 exime lo incidental. Si de verdad transmite algo, entonces hay dos problemas: el contraste y el aria-hidden" });
+            } else if (deco) {
+              res.push({ crit: "1.4.3", label: "Contraste del texto", node: tl, path: rt, verdict: "revisar",
+                detail: base + ". No lo declaro barrera por mi cuenta: " + deco.porQue + ", y la excepción de 1.4.3 para la decoración pura podría aplicarle. Decide si ese texto transmite información" });
+            } else {
+              res.push({
+                crit: "1.4.3", label: "Contraste del texto", node: tl, path: rt,
+                verdict: ok ? "pasa" : (c.ratio >= min - 1 ? "revisar" : "falla"),
+                detail: base
+              });
+            }
           }
         });
         // 1.4.11 solo para controles personalizados: en los nativos el límite lo
@@ -3356,11 +3401,24 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       } else {
         const min = c.large ? 3 : 4.5, ok = c.ratio >= min, lc = Math.round(Math.abs(c.lc));
         const apca = " · APCA Lc " + lc + (lc >= c.lcMin ? " (≥ " + c.lcMin + ", ok en el borrador de WCAG 3)" : " (< " + c.lcMin + ", orientativo)");
-        res.push({
-          crit: "1.4.3", label: "Contraste del texto", node: loc, path: ruta,
-          verdict: ok ? "pasa" : (c.ratio >= min - 1 ? "revisar" : "falla"),
-          detail: "ratio " + ratioTxt(c.ratio) + ":1" + (c.large ? " (texto grande, mín 3:1)" : " (mín 4.5:1)") + apca + " — " + c.fg + " sobre " + c.bg
-        });
+        /* La misma excepción que arriba, y aquí es donde de verdad hacía falta: el
+         * separador de migas de pan no está dentro de ningún control, así que no lo
+         * cazaba el barrido de interactivos sino este, el de todo el texto. */
+        const deco = ok ? null : decoracionDeclarada(el);
+        const base = "ratio " + ratioTxt(c.ratio) + ":1" + (c.large ? " (texto grande, mín 3:1)" : " (mín 4.5:1)") + apca + " — " + c.fg + " sobre " + c.bg;
+        if (deco && deco.seguro) {
+          res.push({ crit: "1.4.3", label: "Contraste del texto", node: loc, path: ruta, verdict: "no-aplica",
+            detail: base + ". NO se cuenta como barrera: " + deco.porQue + ", así que es decoración pura y 1.4.3 exime lo incidental. Si de verdad transmite algo, entonces hay dos problemas: el contraste y el aria-hidden" });
+        } else if (deco) {
+          res.push({ crit: "1.4.3", label: "Contraste del texto", node: loc, path: ruta, verdict: "revisar",
+            detail: base + ". No lo declaro barrera por mi cuenta: " + deco.porQue + ", y la excepción de 1.4.3 para la decoración pura podría aplicarle. Decide si ese texto transmite información" });
+        } else {
+          res.push({
+            crit: "1.4.3", label: "Contraste del texto", node: loc, path: ruta,
+            verdict: ok ? "pasa" : (c.ratio >= min - 1 ? "revisar" : "falla"),
+            detail: base
+          });
+        }
       }
     }
     /* Lo que la medición no alcanza se declara; lo que alcanza, se mide.
@@ -3687,7 +3745,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   }
 
   const FNS = [parseColor, over, lum, contrastRatio, rgbStr, apcaContrast, apcaMin,
-    animacionesPersistentes, distintivoDeEnlace, enTextoCorrido, elementosFlotantes, fraccionTapada, ratioTxt, refrescar, todosM, enfocadoM, shadowCerrados, resolverColor, ownText, opacidadAcumulada, coloresDe, mismoColor, aparienciaFoco, indicadorDeFoco, fondoRealCoincide, bgBehind, contrastOf, boundaryContrastOf, ordenReordenado, literalesDeContent, tienePalabra, contrasteGenerado, isInteractiveM, locatorM, rutaM, renderedM, disabledM, managedM, textTargets,
+    animacionesPersistentes, distintivoDeEnlace, enTextoCorrido, elementosFlotantes, fraccionTapada, ratioTxt, refrescar, todosM, enfocadoM, shadowCerrados, resolverColor, ownText, opacidadAcumulada, coloresDe, mismoColor, aparienciaFoco, indicadorDeFoco, fondoRealCoincide, bgBehind, contrastOf, boundaryContrastOf, ordenReordenado, literalesDeContent, tienePalabra, contrasteGenerado, isInteractiveM, locatorM, rutaM, renderedM, disabledM, managedM, decoracionDeclarada, textTargets,
     pinta, sinPseudoFoco, coincideSinFoco, hojasLegibles, reglasDeFoco, runChecksReal];
   const FN_SRC = "var MANAGED_PARENT = " + JSON.stringify(MANAGED_PARENT) + ";\nvar NATIVOS = " + JSON.stringify(NATIVOS) + ";\n" +
     "var PROP_INDICADOR = " + JSON.stringify(PROP_INDICADOR) + ";\nvar NULOS = " + JSON.stringify(NULOS) + ";\n" +
@@ -3750,6 +3808,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   NS.renderedM = renderedM;
   NS.disabledM = disabledM;
   NS.managedM = managedM;
+  NS.decoracionDeclarada = decoracionDeclarada;
   NS.textTargets = textTargets;
   NS.rutaM = rutaM;
   NS.sinPseudoFoco = sinPseudoFoco;

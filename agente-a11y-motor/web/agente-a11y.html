@@ -4097,6 +4097,17 @@
     if (MI.indexOf(role) !== -1 && el.closest && el.closest(MANAGED_PARENT)) return true;
     return false;
   }
+  function decoracionDeclarada(el) {
+    if (!el || !el.getAttribute) return null;
+    const oculto = el.getAttribute("aria-hidden") === "true" ||
+      (el.closest && !!el.closest('[aria-hidden="true"]'));
+    const txt = String((el.textContent || "")).replace(/\s+/g, "");
+    const sinPalabra = !!txt && !/[\p{L}\p{N}]/u.test(txt);
+    if (oculto && sinPalabra) return { seguro: true, porQue: 'texto «' + txt.slice(0, 12) + '» sin letras ni cifras y con aria-hidden="true"' };
+    if (oculto) return { seguro: false, porQue: 'el autor lo marca aria-hidden="true"' };
+    if (sinPalabra) return { seguro: false, porQue: 'texto «' + txt.slice(0, 12) + '» sin letras ni cifras' };
+    return null;
+  }
   function textTargets(el) {
     if (ownText(el)) return [el];
     const out = [];
@@ -4436,11 +4447,22 @@
           } else {
             const min = c.large ? 3 : 4.5, ok = c.ratio >= min, lc = Math.round(Math.abs(c.lc));
             const apca = " · APCA Lc " + lc + (lc >= c.lcMin ? " (≥ " + c.lcMin + ", ok en el borrador de WCAG 3)" : " (< " + c.lcMin + ", orientativo)");
-            res.push({
-              crit: "1.4.3", label: "Contraste del texto", node: tl, path: rt,
-              verdict: ok ? "pasa" : (c.ratio >= min - 1 ? "revisar" : "falla"),
-              detail: "ratio " + ratioTxt(c.ratio) + ":1" + (c.large ? " (texto grande, mín 3:1)" : " (mín 4.5:1)") + apca + " — " + c.fg + " sobre " + c.bg
-            });
+            const deco = ok ? null : decoracionDeclarada(t);
+            const base = "ratio " + ratioTxt(c.ratio) + ":1" + (c.large ? " (texto grande, mín 3:1)" : " (mín 4.5:1)") + apca + " — " + c.fg + " sobre " + c.bg;
+            if (deco && deco.seguro) {
+              // Separador decorativo de libro: no se acusa, pero tampoco se calla.
+              res.push({ crit: "1.4.3", label: "Contraste del texto", node: tl, path: rt, verdict: "no-aplica",
+                detail: base + ". NO se cuenta como barrera: " + deco.porQue + ", así que es decoración pura y 1.4.3 exime lo incidental. Si de verdad transmite algo, entonces hay dos problemas: el contraste y el aria-hidden" });
+            } else if (deco) {
+              res.push({ crit: "1.4.3", label: "Contraste del texto", node: tl, path: rt, verdict: "revisar",
+                detail: base + ". No lo declaro barrera por mi cuenta: " + deco.porQue + ", y la excepción de 1.4.3 para la decoración pura podría aplicarle. Decide si ese texto transmite información" });
+            } else {
+              res.push({
+                crit: "1.4.3", label: "Contraste del texto", node: tl, path: rt,
+                verdict: ok ? "pasa" : (c.ratio >= min - 1 ? "revisar" : "falla"),
+                detail: base
+              });
+            }
           }
         });
         // 1.4.11 solo para controles personalizados: en los nativos el límite lo
@@ -4571,11 +4593,24 @@
       } else {
         const min = c.large ? 3 : 4.5, ok = c.ratio >= min, lc = Math.round(Math.abs(c.lc));
         const apca = " · APCA Lc " + lc + (lc >= c.lcMin ? " (≥ " + c.lcMin + ", ok en el borrador de WCAG 3)" : " (< " + c.lcMin + ", orientativo)");
-        res.push({
-          crit: "1.4.3", label: "Contraste del texto", node: loc, path: ruta,
-          verdict: ok ? "pasa" : (c.ratio >= min - 1 ? "revisar" : "falla"),
-          detail: "ratio " + ratioTxt(c.ratio) + ":1" + (c.large ? " (texto grande, mín 3:1)" : " (mín 4.5:1)") + apca + " — " + c.fg + " sobre " + c.bg
-        });
+        /* La misma excepción que arriba, y aquí es donde de verdad hacía falta: el
+         * separador de migas de pan no está dentro de ningún control, así que no lo
+         * cazaba el barrido de interactivos sino este, el de todo el texto. */
+        const deco = ok ? null : decoracionDeclarada(el);
+        const base = "ratio " + ratioTxt(c.ratio) + ":1" + (c.large ? " (texto grande, mín 3:1)" : " (mín 4.5:1)") + apca + " — " + c.fg + " sobre " + c.bg;
+        if (deco && deco.seguro) {
+          res.push({ crit: "1.4.3", label: "Contraste del texto", node: loc, path: ruta, verdict: "no-aplica",
+            detail: base + ". NO se cuenta como barrera: " + deco.porQue + ", así que es decoración pura y 1.4.3 exime lo incidental. Si de verdad transmite algo, entonces hay dos problemas: el contraste y el aria-hidden" });
+        } else if (deco) {
+          res.push({ crit: "1.4.3", label: "Contraste del texto", node: loc, path: ruta, verdict: "revisar",
+            detail: base + ". No lo declaro barrera por mi cuenta: " + deco.porQue + ", y la excepción de 1.4.3 para la decoración pura podría aplicarle. Decide si ese texto transmite información" });
+        } else {
+          res.push({
+            crit: "1.4.3", label: "Contraste del texto", node: loc, path: ruta,
+            verdict: ok ? "pasa" : (c.ratio >= min - 1 ? "revisar" : "falla"),
+            detail: base
+          });
+        }
       }
     }
     /* Lo que la medición no alcanza se declara; lo que alcanza, se mide.

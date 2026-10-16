@@ -413,3 +413,59 @@ test("regresión: 2.4.3 compara TODA la secuencia, no los 25 primeros controles"
   const b = bien.measurements.find((x) => x.crit === "2.4.3");
   assert.equal(b.verdict, "pasa", b.detail);
 });
+
+/* ── 1.4.3 y la decoración que el autor declara (v0.65.0) ────────────────────
+ *
+ * Salió de mirar en vivo, con la extensión del navegador, el elemento que el
+ * agente acusaba cuatro veces en un sitio real:
+ *
+ *   span.text-slate-400 · texto «/» · 6×18 px · 11 px negrita
+ *   aria-hidden="true" · 2,63:1
+ *
+ * Es la barra separadora de unas migas de pan, marcada por el autor como oculta
+ * al árbol de accesibilidad. 1.4.3 exime la decoración pura, y una barra de
+ * separación no transmite nada: quitarla no pierde información. Cuatro de las
+ * acusaciones del banco del sitio limpio eran esto.
+ */
+const MIGAS = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Migas</title><style>
+ body{font:16px system-ui;background:#fff;margin:0}
+ .sep{color:#90a1b9;font-size:11px;font-weight:700}
+ .flojo{color:#90a1b9;font-size:11px}
+ nav ol{display:flex;gap:6px;list-style:none;padding:0}
+</style></head><body>
+<nav aria-label="Migas"><ol>
+  <li><a href="/">Inicio</a></li>
+  <li><span class="sep" aria-hidden="true">/</span></li>
+  <li><a href="/contacto">Contacto</a></li>
+</ol></nav>
+<p><span class="flojo" aria-hidden="true">Texto con palabras y aria-hidden</span></p>
+<p><span class="sep">/</span></p>
+<p><span class="flojo">Texto flojo con palabras de verdad, que sí es una barrera</span></p>
+</body></html>`;
+
+test("1.4.3 real: el separador decorativo del autor no se cuenta como barrera", { skip }, async () => {
+  const out = await analyzeRendered({ html: MIGAS }, { viewport: false, axe: false });
+  const f = (out.findings || []).filter((x) => x.c.n === "1.4.3");
+  const de = (sel, v) => f.find((x) => (x.nodes || []).some((n) => n.locator === sel) && x.verdict === v);
+
+  // Las DOS señales juntas —aria-hidden y texto sin letras ni cifras— es el
+  // separador de libro: no se acusa, pero se dice por qué no.
+  const sep = de("span.sep", "no-aplica");
+  assert.ok(sep, "el separador tenía que salir no-aplica: " +
+    JSON.stringify(f.map((x) => [x.verdict, (x.nodes || []).map((n) => n.locator)])));
+  assert.match(sep.evid[0], /texto «\/» sin letras ni cifras y con aria-hidden/);
+  assert.match(sep.evid[0], /2\.63:1/, "la medida se sigue dando: " + sep.evid[0]);
+  assert.match(sep.evid[0], /hay dos problemas/, "y se dice qué pasa si sí transmite algo");
+
+  // Con UNA sola señal, el agente no decide: lo deja en `revisar` con la señal escrita.
+  assert.ok(f.some((x) => x.verdict === "revisar" && /aria-hidden="true", y la excepción/.test(x.evid[0] || "")),
+    "aria-hidden con palabras tenía que quedar en revisar");
+  assert.ok(f.some((x) => x.verdict === "revisar" && /sin letras ni cifras, y la excepción/.test(x.evid[0] || "")),
+    "«/» sin aria-hidden tenía que quedar en revisar");
+
+  // LO QUE NO PASA: el texto flojo con palabras de verdad sigue siendo una falla.
+  const real = de("span.flojo", "falla");
+  assert.ok(real, "la barrera de verdad tiene que seguir saliendo: " +
+    JSON.stringify(f.map((x) => [x.verdict, (x.nodes || []).map((n) => n.locator)])));
+  assert.doesNotMatch(real.evid[0], /NO se cuenta|No lo declaro/);
+});
