@@ -468,6 +468,67 @@ export async function analyzeRendered(target, opts) {
       } catch (e) { axe = { error: (e && e.message) || String(e) }; }
     }
 
+    /* NO ACUSAR LO QUE NO SE PINTA EN EL ESTADO MEDIDO.
+     *
+     * El motor lee el marcado y no resuelve CSS, así que juzga por igual un
+     * elemento visible y uno en `display:none`. Medido en vivo con la extensión
+     * del navegador sobre un sitio real: `button.md:hidden` —el botón del menú
+     * móvil— lleva `aria-controls="mobile-menu"` apuntando a un id que no existe,
+     * y el motor firmaba `1.3.1 falla` por ello. Pero a 1470 px ese botón está en
+     * `display:none`: el árbol de accesibilidad del navegador NO LO CONTIENE —lo
+     * comprobé leyéndolo—, así que ningún lector llega nunca a él en ese estado.
+     *
+     * Y no es un falso positivo sin más: a ancho de móvil ese botón sí se pinta y
+     * entonces es el control del menú. O sea que la respuesta honesta no es callar
+     * ni acusar: es decir en qué estado se midió. Por eso baja a `revisar`
+     * nombrando el estado, en vez de afirmar una barrera sobre algo que en esa
+     * pasada no existía para nadie.
+     *
+     * Solo se toca el hallazgo cuando TODOS sus nodos están sin pintar: si uno
+     * solo se ve, la barrera es de ese y se mantiene como estaba. */
+    const sinPintar = await (async function () {
+      try {
+        const rutas = [];
+        (analysis.findings || []).forEach(function (f) {
+          (f.nodes || []).forEach(function (n) { if (n.path) rutas.push(n.path); });
+        });
+        if (!rutas.length) return {};
+        return await page.evaluate(function (lista) {
+          const out = {};
+          lista.forEach(function (ruta) {
+            let el = null;
+            try { el = document.querySelector(ruta); } catch (e) { el = null; }
+            if (!el) { out[ruta] = null; return; }   // no se encontró: no se afirma nada
+            const cs = getComputedStyle(el);
+            out[ruta] = (cs.display === "none") ? "display:none"
+              : (cs.visibility === "hidden") ? "visibility:hidden"
+              : (el.getClientRects().length === 0) ? "sin caja" : false;
+          });
+          return out;
+        }, Array.from(new Set(rutas)));
+      } catch (e) { return {}; }
+    })();
+    const motivoOculto = function (f) {
+      const ns = (f.nodes || []).filter(function (n) { return n.path; });
+      if (!ns.length) return null;
+      const motivos = ns.map(function (n) { return sinPintar[n.path]; });
+      if (motivos.some(function (m) { return m === false || m == null; })) return null;  // alguno se ve, o no se sabe
+      return motivos[0];
+    };
+    (analysis.findings || []).forEach(function (f) {
+      if (f.verdict !== "falla") return;
+      const m = motivoOculto(f);
+      if (!m) return;
+      f.verdict = "revisar";
+      f.evid = (f.evid || []).concat([
+        "OJO AL ESTADO: en esta pasada ese elemento NO SE PINTA (" + m + "), así que el árbol de " +
+        "accesibilidad del navegador no lo contiene y ningún lector llega a él. No se afirma como barrera " +
+        "aquí — pero tampoco se descarta: si en otro estado (otro ancho de ventana, un menú abierto, una " +
+        "pestaña activa) sí se pinta, el defecto del marcado sigue ahí y entonces sí es una barrera. " +
+        "Compruébalo en ese estado."
+      ]);
+    });
+
     // Hallazgos unificados (semántico + página + medición real), listos para el muestreo.
     let findings = (analysis.findings || []).concat(pageAudit).concat(measurementFindings(todasLasMedidas)).concat(hallazgosPuntero);
     // El cuaderno sustituye el «requiere evaluación humana» genérico del motor
