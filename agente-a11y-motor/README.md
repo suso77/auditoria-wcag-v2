@@ -989,6 +989,32 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.67.0 — «revisión manual» y «no corrí la sonda» no son lo mismo
+
+El banco del sitio limpio dejó **25 de los 55 criterios en «No se puede comprobar (revisión manual)»**, y entre ellos 2.1.1, 2.1.4, 2.2.2, 3.3.1, 3.3.2, 3.3.3 y 4.1.3 — exactamente los que mide la capa dinámica, que en esa pasada estaba **apagada**, porque `auditar-sitio.mjs` la deja detrás de un flag y la orden que yo mismo escribí no lo llevaba.
+
+Leyendo ese informe no hay forma de distinguir **«esto necesita una persona»** de **«no corrí la sonda que lo mide»**. Son dos cosas muy distintas, y una de las dos es culpa del agente. Es la regla de oro del proyecto aplicada a su propia configuración.
+
+El mecanismo ya existía a medias: `criteriosEnSilencio` dice «la capa que lo mide no se ha ejecutado en esta pasada» — pero **solo para los criterios de los que no hay ni un hallazgo**. Y ahí estaba el hueco: un criterio con el hallazgo genérico del motor («requiere evaluación humana») tiene veredicto, así que esa pasada se lo salta, y la frase nunca aparece. Ahora hay una segunda pasada para los que **sí** tienen veredicto: a cada ficha se le añade que la sonda no corrió, con el nombre de la capa, y que por tanto lo de arriba «no es el resultado de haberlo medido: es lo que se puede decir sin medirlo». El aviso del informe los nombra.
+
+**Y una conformidad firmada con la sonda apagada se baja a `revisar`.** Si no se ha medido, no puede leerse como medido — y un `cumple` es justo la lectura que no se puede permitir.
+
+Dos cosas que la nota no hace: no toca los criterios que **solo** dictamina el motor desde el marcado (que la capa dinámica esté apagada no dice nada de 1.1.1), y no toca nada cuando alguna de las capas que miden el criterio sí corrió.
+
+**794 tests unitarios** (de 790) y 181 de integración, en verde. El ancla del sitio de prueba no se mueve: 7 criterios con barrera, 55 de 55 con veredicto.
+
+### v0.66.0 — una barrera sobre un elemento que el navegador no expone
+
+Mirando la página real con la extensión del navegador apareció algo que ninguna capa podía ver desde dentro. El agente firmaba `1.3.1 falla` contra `button.md:hidden` —el botón del menú móvil— porque su `aria-controls="mobile-menu"` apunta a un id que no existe. Es verdad que no existe; lo comprobé. Pero a 1470 px **ese botón está en `display:none`** —eso lo medí con `getComputedStyle`—, y un elemento en `display:none` no se expone al árbol de accesibilidad: es una regla de la plataforma, no una conjetura. Ningún lector de pantalla llega a él en ese estado.
+
+*(Corrección: la primera versión de esta entrada decía «el árbol del navegador no lo contiene: lo leí y no está». Lo que leí fue la vista de elementos interactivos de la extensión, que lo omitía; en su vista «todos» el botón sí aparece, porque esa vista incluye lo no visible. El cambio de código es el mismo y la razón sigue en pie —`display:none` no llega al árbol—, pero la frase afirmaba una comprobación que no hice así.)*
+
+El motor lee el marcado y no resuelve CSS, así que juzga por igual un elemento visible y uno oculto. Y esto **no es un falso positivo sin más**: a ancho de móvil ese botón sí se pinta, y entonces es el control del menú y el defecto es real. Así que la respuesta honesta no es callar ni acusar: es **decir en qué estado se midió**. Ahora el hallazgo baja a `revisar` conservando la evidencia del marcado y añadiendo que en esa pasada el elemento no se pinta, que por eso no se afirma como barrera *ahí*, y que **tampoco se descarta**: si en otro estado se pinta, la barrera está.
+
+Dos cosas que el arreglo no hace. **No toca el hallazgo si uno solo de sus nodos se ve** —bajar el conjunto por el oculto taparía una barrera real—, y **no decide cuando no puede comprobarlo**: si la ruta no resuelve en la página, no se afirma nada y el veredicto queda como estaba.
+
+**790 tests unitarios y 181 de integración** (de 178), en verde, con los tres casos: solo oculto, solo visible, y mezclado.
+
 ### v0.65.0 — la barrera de contraste era la barra de unas migas de pan
 
 Esto no salió de leer código ni de un fixture: salió de **abrir la página en el navegador y mirar el elemento**. El agente firmaba cuatro barreras de 1.4.3 contra `span.text-slate-400`, y yo había dicho que «parecían reales». Lo que hay ahí es esto:
@@ -1516,6 +1542,26 @@ El último módulo sin revisar era el de más riesgo legal: `oaw-letters.js` asi
 ### La misma lección, por séptima vez
 
 Las siete son la misma: **el silencio y la conformidad se parecen demasiado en un informe**. Y las comprobaciones posteriores añadieron la cara B y el caso límite: el **ruido** tampoco informa —una atadura que aprieta donde sí se ha medido entierra las barreras igual de bien que el silencio— y lo más incómodo, que una afirmación falsa puede **fosilizarse en la suite**: el test que llevaba semanas en verde confirmando una barrera inexistente de 1.3.4 es el recordatorio de que un test comprueba lo que se le pidió comprobar, no lo que es verdad. Lo que cambia es dónde se esconde el silencio. En 2.2.2, en las filas de medios, en 4.1.3 y en 1.4.2 era un criterio que no emitía nada. Aquí es más fino: un `cumple` sobre un CSS que no se ha leído, un `no-aplica` sobre un formulario que no se ha podido ver, un `pasa` sobre el 4 % de los controles, un «Correcto» sobre siete décimas partes de la muestra. La regla de oro cubría el caso en blanco; ahora cubre también el caso **medido a medias**, que es el que de verdad se cuela: tiene veredicto, tiene evidencia y parece completo.
+
+## La extensión del navegador como cuarta fuente, y hasta dónde llega
+
+El agente tiene tres fuentes dentro —el motor sobre el marcado, la medición sobre el render con CSS y geometría, y axe— y una cuarta fuera: **la extensión del navegador**, que abre la página real con su CSS y su JavaScript, deja leer el árbol que expone el navegador e **interactuar** (rellenar un formulario, provocar sus errores, pasar el ratón, tabular). Es lo único que alcanza un sitio al que el contenedor del agente no sale, y es más barato que arrancar un lector de pantalla.
+
+**Pero su «nombre» no es el nombre accesible, y eso hay que saberlo antes de apoyarse en ella.** Medido contra el formulario de contacto de un sitio real: la lectura del árbol daba `textbox "Tu nombre completo"` para un campo cuyo marcado es
+
+```html
+<label for="name">Nombre completo *</label>
+<input id="name" placeholder="Tu nombre completo" …>
+```
+
+Es decir, el **placeholder**. Según el algoritmo de nombre accesible el nombre es la etiqueta y el placeholder solo entra si no hay nada antes, y el motor —100 % contra el corpus de los WPT— calcula «Nombre completo *» desde `<label for>`. Con el marcado real delante, pasado por el motor, la discrepancia quedó clara: el defecto está en lo que la extensión llama «nombre», no en la página. Casi se publicó como un hallazgo.
+
+De ahí el reparto de confianza al usarla:
+
+- **Fiable**: la estructura (roles, anidamiento, regiones, listas, encabezados), qué nodos hay y qué nodos no, el CSS calculado, la geometría, y lo que ocurre al interactuar — todo eso se lee con `getComputedStyle` y con el DOM, y es un hecho.
+- **No fiable sin cotejar**: los nombres accesibles. Para 4.1.2 hace falta una fuente que implemente accname —el motor, axe— o directamente un lector de pantalla.
+
+Y una regla de método que vale para cualquier herramienta nueva: **antes de usar una fuente como verdad, pásale un caso de respuesta sabida.** Aquí el caso lo dio la propia página, y evitó un falso positivo y una afirmación falsa en el informe.
 
 ## Licencia
 
