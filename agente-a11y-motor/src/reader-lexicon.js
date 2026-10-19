@@ -42,7 +42,12 @@ export const ROLE_KEYWORDS = {
   combobox: ["cuadro combinado", "combo box", "combobox", "menu emergente", "pop up button", "desplegable"],
   slider: ["control deslizante", "deslizador", "slider"],
   spinbutton: ["campo incremental", "control numerico", "stepper", "spin button"],
-  heading: ["encabezado", "titulo", "heading"],
+  /* «encabezamiento» lo dice el VoiceOver español de verdad —«nivel de
+     encabezamiento 1»— y no estaba en la lista: con una transcripción real
+     delante, el `h1` del componente salía `parcial` por «no se reconoce el rol»
+     teniendo el rol dicho con todas las letras. El léxico se alimenta de lo que
+     los lectores dicen, no de lo que uno espera que digan. */
+  heading: ["encabezado", "encabezamiento", "titulo", "heading"],
   // NVDA en español dice «gráfico» donde VoiceOver dice «imagen».
   img: ["imagen", "image", "graphic", "grafico"],
   link_image: ["imagen", "image", "grafico"],
@@ -192,7 +197,15 @@ const PISTAS_MACOS = [
   /\bfinder\b/i,
   /\bventana shell\b/i,
   /\blast login:/i,
-  /\bescritorio\b.*\bventana\b/i
+  /\bescritorio\b.*\bventana\b/i,
+  /* Lo que de verdad apareció en la sesión real: los controles de la ventana del
+     navegador y de la app desde la que se lanzó la prueba. No es una lista de
+     nombres de aplicaciones —eso sería interminable—, son los controles del
+     CROMO del navegador, que no están en ninguna página. */
+  /\bvolver a cargar esta p[aá]gina\b/i,
+  /\bbarra de herramientas\b/i,
+  /\bbarra de pesta[ñn]as\b/i,
+  /\bcampo de b[uú]squeda inteligente\b/i
 ];
 /* Lo mismo en Windows. NVDA también habla de todo el sistema: al arrancar
  * anuncia su propia carga, y entre paso y paso se pueden colar la barra de
@@ -218,9 +231,23 @@ const PISTAS_ESCRITORIO = { voiceover: PISTAS_MACOS, nvda: PISTAS_WINDOWS };
 export function esRuidoDeEscritorio(spoken, lector) {
   const s = String(spoken || "");
   if (!s.trim()) return false; // vacío no es ruido: es que no se capturó nada
-  // Si la frase dice explícitamente que está en el contenido web, es de la
-  // página aunque arrastre alguna coletilla del sistema.
-  if (/dentro del contenido web/i.test(s)) return false;
+  /* ESTA LÍNEA ERA LA PUERTA POR LA QUE ENTRÓ OTRA APLICACIÓN.
+   *
+   * Decía: si la frase dice que está «dentro del contenido web», es de la página.
+   * Parece razonable y está escrita para ayudar. Pero una aplicación de Electron
+   * TAMBIÉN es contenido web, y VoiceOver la anuncia igual.
+   *
+   * Medido con una sesión real en este Mac: la ventana de la app de Claude se
+   * colaba entera —«Enviar mensaje botón», «Escriba su consulta para Claude»,
+   * «Detener respuesta botón», «Agente de accesibilidad con IA - Claude contenido
+   * web»— y esta línea la bendecía como página. Resultado: tres nodos del
+   * componente de prueba emparejados contra botones de OTRA ventana y firmados
+   * `divergente`, que es una afirmación sobre la página hecha con frases que no
+   * son de la página.
+   *
+   * Decir «esto es contenido web» no distingue una página de otra, así que ya no
+   * decide nada. Quien decide es `clasificaFrases`, que compara cada frase con el
+   * TEXTO DE LA PÁGINA QUE SE SIRVIÓ. */
   const listas = lector && PISTAS_ESCRITORIO[lector] ? [PISTAS_ESCRITORIO[lector]] : [PISTAS_MACOS, PISTAS_WINDOWS];
   for (let j = 0; j < listas.length; j++) {
     for (let i = 0; i < listas[j].length; i++) if (listas[j][i].test(s)) return true;

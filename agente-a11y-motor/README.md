@@ -989,6 +989,46 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.68.0 — el lector estaba leyendo otra ventana y el informe no lo dijo
+
+Tu primera sesión de VoiceOver con v0.64.0 dentro funcionó en lo que se arregló —**22 pasos hasta el final de la página**, 44 frases de transcripción, y VoiceOver apagado y comprobado con `pgrep`— y dejó a la vista un defecto peor que los tres anteriores. El informe salió así:
+
+```
+divergente   button  ← «Volver a cargar esta página botón»
+divergente   button  ← «Enviar mensaje botón. Escriba su consulta para Claude…»
+divergente   a       ← «Enviar mensaje botón. Agente de accesibilidad con IA…»
+parcial      h1      ← «nivel de encabezamiento 1 Verificación con lector real»
+```
+
+Las tres primeras son **la ventana del navegador y la de la aplicación desde la que se lanzó la prueba**. `divergente` significa «el lector no pronuncia el nombre previsto»: tres acusaciones sobre la página hechas con frases que no eran de la página.
+
+**La puerta era una línea escrita para ayudar.** El filtro de ruido decía: si la frase dice que está «dentro del contenido web», es de la página. Parece razonable — y **una aplicación de Electron también es contenido web**, y VoiceOver la anuncia igual. Esa línea bendecía la ventana de al lado.
+
+**Y la unidad estaba mal.** `lastSpokenPhrase()` no devuelve lo último que dijo el lector: devuelve todo lo dicho desde la pregunta anterior, pegado. En esa sesión, UNA sola «frase» traía dentro el encabezado de la página, su botón, el «VoiceOver desactivado», el «Bienvenido a macOS» del arranque y la ventana de Chrome. Clasificar eso por frase está mal se le ponga la etiqueta que se le ponga. Ahora se parte en **enunciados** y se clasifica cada uno.
+
+**Quién decide ahora: el texto de la página servida, y por parejas de palabras.** Una palabra sola no distingue — la página de prueba tiene un botón «Enviar formulario» y la app de al lado uno de «Enviar mensaje», y con «enviar» como señal dieciocho enunciados ajenos pasaban por página. Tres clases: `pagina` (comparte una pareja de palabras), `ajena` (nombra dos o más palabras de contenido y ninguna está en la página) y **`sinDatos`** — solo rol, «botón» y nada más. Los últimos **no se descartan**, porque el caso de libro de 4.1.2 es justo un botón sin nombre cuyo anuncio es «botón»: tirarlo sería perder la barrera que se busca.
+
+Con eso, dos reglas:
+
+**Al emparejar solo se usan los enunciados de la página o sin dato.** Un nodo se queda mejor sin frase —`no-encontrado`, que es «sin verificar»— que con la frase de otra ventana.
+
+**Y `divergente` solo lo puede sostener un enunciado que sepamos de la página.** Es una acusación. Con un enunciado que no distingue quedan dos salidas honestas: si el nodo previsto no tiene nombre y el lector tampoco dijo ninguno, es 4.1.2 de libro y se **confirma la barrera**; si el enunciado trae un nombre que no es de la página, no se sabe de qué hablaba — sin verificar.
+
+Tu misma captura, releída:
+
+```
+antes:   {confirmado: 0, parcial: 1, divergente: 3}
+después: {confirmado: 2, no-encontrado: 2, divergente: 0}
+         + aviso: «la mayor parte de lo que oyó el lector era de OTRA VENTANA
+           (106 enunciados frente a 12 de la página)»
+```
+
+**Dos correcciones mías por el camino.** Primero invalidé la sesión cuando lo ajeno era mayoría, y era pasarme: con el filtrado puesto, el ruido ya no contamina ningún veredicto, y el fixture de abril —dos anuncios limpios del enlace de salto y un pegote de escritorio de veinte enunciados— habría perdido la única evidencia buena que tenía. Lo que invalida es no tener **nada** de la página; que lo ajeno sea mayoría es un aviso. Y segundo, metí «nivel de encabezamiento» en el relleno del lector, que es precisamente **cómo VoiceOver anuncia el rol en español**: un encabezado no podía salir `confirmado` nunca. De paso, «encabezamiento» no estaba en el léxico —solo «encabezado»—, y por eso tu `h1` salía `parcial` teniendo el rol dicho con todas las letras.
+
+**Y lo que se hace sin el HTML servido: decirlo.** Las transcripciones viejas no lo guardan, así que la comparación con la página no se puede hacer — y hacer como si se hubiera hecho es el defecto que este proyecto persigue. Se descartan las pistas de escritorio y lo demás queda sin decidir, con esas palabras.
+
+**800 tests unitarios** (de 794), seis de ellos contra un fixture nuevo con los enunciados **tal cual** los dijo VoiceOver en esa sesión. Van sin los que arrastraban el texto que escribiste en el chat: ese contenido no es del agente y no tiene que vivir en el repo.
+
 ### v0.67.0 — «revisión manual» y «no corrí la sonda» no son lo mismo
 
 El banco del sitio limpio dejó **25 de los 55 criterios en «No se puede comprobar (revisión manual)»**, y entre ellos 2.1.1, 2.1.4, 2.2.2, 3.3.1, 3.3.2, 3.3.3 y 4.1.3 — exactamente los que mide la capa dinámica, que en esa pasada estaba **apagada**, porque `auditar-sitio.mjs` la deja detrás de un flag y la orden que yo mismo escribí no lo llevaba.

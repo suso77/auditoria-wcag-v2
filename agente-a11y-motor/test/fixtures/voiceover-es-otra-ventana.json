@@ -1,0 +1,24 @@
+{
+  "origen": "verificacion-voiceover.json (captura real de Suso, VoiceOver en español, Chrome, 2026-10-16)",
+  "nota": "Enunciados TAL CUAL los dijo VoiceOver, ya segmentados. Se han dejado fuera los que arrastraban el texto que Suso escribió en el chat: ese contenido no es del agente. El valor del fixture es que la mezcla de ventanas no es inventada.",
+  "queEnseña": "La sesión capturó la ventana de la app desde la que se lanzó la prueba. El puente la bendecía como página porque decía «contenido web», y firmó tres divergencias contra botones de otra ventana.",
+  "navegador": "chrome",
+  "html": "<button><svg viewBox=\"0 0 24 24\" width=\"24\" height=\"24\"><path d=\"M3 6h18M3 12h18M3 18h18\" stroke=\"currentColor\" stroke-width=\"2\" fill=\"none\"/></svg></button>\n<button>Enviar formulario</button>\n<a href=\"#contenido\">Saltar al contenido</a>\n<main id=\"contenido\"><h1>Verificación con lector real</h1><p>Fin del recorrido.</p></main>",
+  "dePagina": [
+    "recorrido. i seleccionado.",
+    "nivel de encabezamiento 1 Verificación con lector real",
+    "Fin del recorrido",
+    "Enviar formulario botón. botón.",
+    "botón Enviar formulario. botón",
+    "Enviar formulario botón. botón"
+  ],
+  "deOtraVentana": [
+    "Volver a cargar esta página botón.",
+    "Nueva pestaña botón",
+    "Visión general de pestañas botón. botón.",
+    "VoiceOver desactivado",
+    "Bienvenido a macOS",
+    "Detener respuesta botón principal",
+    "Detener respuesta botón"
+  ]
+}

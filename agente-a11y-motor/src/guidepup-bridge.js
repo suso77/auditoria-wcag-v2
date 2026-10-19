@@ -650,25 +650,205 @@ export async function captureWithNvda(html, opts) {
  * @param {Array<{spoken:string}>|Array<string>} phrases
  * @param {"voiceover"|"nvda"} [lector]
  */
-export function sesionUtil(phrases, lector) {
-  const lista = (phrases || []).map(function (p) {
-    return (p && typeof p === "object" && p.spoken != null) ? p.spoken : p;
+/* EL RELLENO QUE VOICEOVER AÑADE A CADA ANUNCIO, que no es de la página ni de
+   ninguna otra ventana: son sus instrucciones. Fuera, para que no cuenten como
+   contenido ni a favor ni en contra. */
+const RELLENO_LECTOR = [
+  /est[aá]s en un elemento de tipo[^.]*/gi,
+  /est[aá]s en (el|la) (contenido web|[aá]rea web|barra de[^.]*)/gi,
+  /para desplazarte[^.]*/gi,
+  /para (hacer clic|salir|interactuar|entrar)[^.]*/gi,
+  /pulsa control[^.]*/gi,
+  /tiene el foco del teclado/gi,
+  /inserci[oó]n al final del texto/gi
+];
+/* OJO: «nivel de encabezamiento N» y «área de entrada de texto» NO entran aquí.
+   Los puse como relleno y era un error mío: son la forma en que VoiceOver ANUNCIA
+   EL ROL en español. Quitándolos, un encabezado no podía salir `confirmado` nunca
+   —se quedaba en `parcial` por «no se reconoce el rol»— y un campo de texto
+   tampoco. El relleno es lo que el lector dice sobre cómo moverse, no lo que dice
+   sobre qué es la cosa. */
+
+/**
+ * UN ANUNCIO POR SEGMENTO, NO UNA FRASE POR PASO.
+ *
+ * `lastSpokenPhrase()` no devuelve «lo último que dijo»: devuelve todo lo que ha
+ * dicho desde la última vez que se le preguntó, pegado. Medido con una sesión
+ * real, UNA sola «frase» traía dentro el encabezado de la página, su botón, el
+ * aviso de que VoiceOver se desactivaba, el «Bienvenido a macOS» del arranque y
+ * la ventana de Chrome con la app de Claude — todo junto.
+ *
+ * Por eso clasificar por frase no sirve: ese pegote es a la vez de la página y de
+ * otra ventana, así que se le ponga la etiqueta que se le ponga, está mal. La
+ * unidad tiene que ser el ENUNCIADO, y la separación la dan los puntos dobles con
+ * los que el lector encadena.
+ */
+export function segmentaFrase(spoken) {
+  let t = String(spoken == null ? "" : spoken);
+  RELLENO_LECTOR.forEach(function (re) { t = t.replace(re, " · "); });
+  return t.split(/\s*\.{2,}\s*|\s*·\s*|\.\s+(?=[A-ZÁÉÍÓÚÑ¡¿])/)
+    .map(function (x) { return x.replace(/\s+/g, " ").trim(); })
+    .filter(function (x) { return x.length > 1; });
+}
+
+/**
+ * ¿QUÉ SE CAPTURÓ DE LA PÁGINA SERVIDA, Y QUÉ DE OTRA VENTANA?
+ *
+ * `lastSpokenPhrase()` escucha a TODO el sistema, así que una sesión puede
+ * capturar la ventana de al lado sin que nada falle. Y hasta aquí el único filtro
+ * era una lista de pistas del escritorio más una línea que bendecía todo lo que
+ * dijera «contenido web» — que es justo lo que dice una aplicación de Electron.
+ *
+ * Medido con una sesión real: la ventana de la app desde la que se lanzó la prueba
+ * se colaba entera y el informe no lo decía: emparejó tres nodos del componente
+ * contra botones ajenos y firmó `divergente` ×3. Una afirmación sobre la página
+ * hecha con frases que no eran de la página.
+ *
+ * Quien decide ahora es el TEXTO DE LA PÁGINA, y por PAREJAS de palabras. Una
+ * palabra sola no distingue: la página de prueba tiene un botón «Enviar
+ * formulario» y la app de al lado uno de «Enviar mensaje», y con «enviar» como
+ * señal, dieciocho enunciados ajenos pasaban por página. Dos palabras seguidas sí
+ * distinguen.
+ *
+ * Tres clases, y la del medio es la que evita que esto sea un filtro ingenuo:
+ *
+ *   · `pagina`: comparte una pareja de palabras con la página o con el nombre de
+ *     un nodo previsto. Es de la página.
+ *   · `ajena`: nombra dos o más palabras de contenido y ninguna está en la
+ *     página. Es de otra ventana.
+ *   · `sinDatos`: solo rol o relleno — «botón», «imagen». No distingue, y NO se
+ *     descarta: el caso más importante de 4.1.2 es un botón sin nombre, cuyo
+ *     anuncio es «botón» y nada más. Tirarlo sería perder la barrera que se busca.
+ */
+const ROL_PALABRAS = (function () {
+  const out = new Set();
+  Object.keys(ROLE_KEYWORDS || {}).forEach(function (r) {
+    (ROLE_KEYWORDS[r] || []).forEach(function (k) {
+      normalize(k).split(/[^a-z0-9ñ]+/).forEach(function (w) { if (w.length >= 4) out.add(w); });
+    });
   });
-  const total = lista.length;
-  const vacias = lista.filter(function (s) { return !String(s == null ? "" : s).trim(); }).length;
-  const ruido = lista.filter(function (s) {
-    const t = String(s == null ? "" : s).trim();
-    return t && esRuidoDeEscritorio(t, lector);
-  }).length;
-  const dePagina = total - vacias - ruido;
-  let motivo;
-  if (!total) motivo = "El lector no devolvió ni una frase: no llegó a arrancar, o no se le preguntó.";
-  else if (!dePagina) {
-    motivo = "Las " + total + " frase(s) capturadas son del escritorio o están vacías (" + ruido + " del escritorio, " +
-      vacias + " vacías): el navegador perdió el primer plano o el lector nunca leyó la página. " +
-      "Esto NO dice nada sobre el componente.";
-  } else motivo = dePagina + " de " + total + " frase(s) son de la página.";
-  return { ok: dePagina > 0, total: total, dePagina: dePagina, ruido: ruido, vacias: vacias, motivo: motivo };
+  return out;
+})();
+
+export function clasificaFrases(phrases, html, predicted, lector) {
+  const parejas = function (txt) {
+    const ws = normalize(String(txt || "")).split(/[^a-z0-9ñ]+/).filter(function (w) { return w.length >= 4; });
+    const out = new Set();
+    for (let k = 1; k < ws.length; k++) out.add(ws[k - 1] + " " + ws[k]);
+    return out;
+  };
+  const texto = String(html || "").replace(/<[^>]*>/g, " ");
+  /* SIN EL HTML SERVIDO NO HAY PÁGINA CON LA QUE COMPARAR.
+   *
+   * Pasa con las transcripciones antiguas, guardadas antes de que el puente
+   * anotara el HTML. Entonces la prueba fuerte no se puede hacer, y lo que NO
+   * vale es hacer como si se hubiera hecho: se descartan las pistas de escritorio
+   * —eso sigue valiendo— y todo lo demás queda en `sinDatos`, que es «no lo sé».
+   * `sesionUtil` lo dice con esas palabras. */
+  const sinPagina = !normalize(texto).replace(/[^a-z0-9ñ]+/g, "").length && !(predicted || []).length;
+  const dePagina = parejas(texto);
+  const sueltasDePagina = new Set(normalize(texto).split(/[^a-z0-9ñ]+/).filter(function (w) { return w.length >= 4; }));
+  (predicted || []).forEach(function (p) {
+    parejas(p.name).forEach(function (b) { dePagina.add(b); });
+    normalize(p.name || "").split(/[^a-z0-9ñ]+/).forEach(function (w) { if (w.length >= 4) sueltasDePagina.add(w); });
+  });
+  const palabrasDeRol = new Set();
+  Object.keys(ROLE_KEYWORDS || {}).forEach(function (r) {
+    (ROLE_KEYWORDS[r] || []).forEach(function (k) {
+      normalize(k).split(/[^a-z0-9ñ]+/).forEach(function (w) { if (w.length >= 4) palabrasDeRol.add(w); });
+    });
+  });
+
+  const out = [];
+  (phrases || []).forEach(function (ph, i) {
+    const spoken = (ph && typeof ph === "object" && ph.spoken != null) ? ph.spoken : ph;
+    const bruto = String(spoken == null ? "" : spoken);
+    if (!bruto.trim()) { out.push({ i: i, seg: 0, texto: "", clase: "vacia", porQue: "el lector no dijo nada" }); return; }
+    segmentaFrase(bruto).forEach(function (t, k) {
+      if (esRuidoDeEscritorio(t, lector)) {
+        out.push({ i: i, seg: k, texto: t, clase: "ajena", porQue: "pista de escritorio o del cromo del navegador" });
+        return;
+      }
+      const limpio = normalize(stripReaderNoise(t, lector));
+      const ws = limpio.split(/[^a-z0-9ñ]+/).filter(function (w) { return w.length >= 4; });
+      const bi = [];
+      for (let z = 1; z < ws.length; z++) bi.push(ws[z - 1] + " " + ws[z]);
+      if (sinPagina) {
+        out.push({ i: i, seg: k, texto: t, clase: "sinDatos", porQue: "no se guardó el HTML servido: no hay con qué comparar" });
+        return;
+      }
+      const casan = bi.filter(function (b) { return dePagina.has(b); });
+      if (casan.length) {
+        out.push({ i: i, seg: k, texto: t, clase: "pagina", porQue: "comparte «" + casan.slice(0, 2).join("», «") + "» con la página" });
+        return;
+      }
+      const contenido = ws.filter(function (w) { return !palabrasDeRol.has(w); });
+      const fuera = contenido.filter(function (w) { return !sueltasDePagina.has(w); });
+      if (contenido.length >= 2 && fuera.length === contenido.length) {
+        out.push({ i: i, seg: k, texto: t, clase: "ajena",
+          porQue: "nombra «" + fuera.slice(0, 3).join("», «") + "», que no está en la página servida" });
+        return;
+      }
+      out.push({ i: i, seg: k, texto: t, clase: "sinDatos", porQue: "solo rol o relleno del lector" });
+    });
+  });
+  return out;
+}
+
+/**
+ * ¿SIRVE ESTA SESIÓN PARA DECIR ALGO DE LA PÁGINA?
+ *
+ * Antes la respuesta era «sí» en cuanto UNA frase fuera de la página. Medido con
+ * una sesión real: 12 enunciados de la página contra 140 de otras ventanas, y la
+ * sesión se declaró útil — con lo que tres nodos salieron `divergente` por
+ * haberse emparejado contra botones ajenos.
+ *
+ * Una frase suelta no sostiene cuatro veredictos. Ahora manda la PROPORCIÓN entre
+ * lo que es de la página y lo que es de otra ventana, contado por enunciados, y
+ * los que no aportan dato no cuentan a ningún lado.
+ */
+export function sesionUtil(phrases, lector, html, predicted) {
+  const cl = clasificaFrases(phrases, html, predicted, lector);
+  const n = function (clase) { return cl.filter(function (x) { return x.clase === clase; }).length; };
+  const pagina = n("pagina"), ajena = n("ajena"), sinDatos = n("sinDatos"), vacias = n("vacia");
+  const total = cl.length;
+  /* QUÉ INVALIDA UNA SESIÓN, Y QUÉ SOLO LA ENSUCIA.
+   *
+   * Mi primera versión de esto la invalidaba cuando lo ajeno era mayoría, y era
+   * pasarme: con el filtrado puesto —al emparejar solo se usan los enunciados de
+   * la página—, un pegote de otra ventana ya no puede contaminar ningún veredicto.
+   * Lo comprobó el fixture de abril: dos anuncios limpios del enlace de salto y un
+   * pegote de escritorio de veinte enunciados; esa sesión SÍ dice algo del enlace,
+   * y declararla nula habría tirado la única evidencia buena que tenía.
+   *
+   * Lo que invalida es no tener NADA de la página. Que lo ajeno sea mayoría es un
+   * aviso: explica por qué quedaron nodos sin confirmar, y no es poca cosa, pero no
+   * borra lo que sí se capturó. */
+  let motivo, ok, aviso = null;
+  if (!total) {
+    ok = false;
+    motivo = "El lector no devolvió ni un enunciado: no llegó a arrancar, o no se le preguntó.";
+  } else if (!pagina && sinDatos && !String(html || "").trim() && !(predicted || []).length) {
+    ok = false;
+    motivo = "No se guardó el HTML servido con esta transcripción, así que no puedo comparar lo capturado con la " +
+      "página: solo he descartado " + ajena + " enunciado(s) por pistas de escritorio. Lo demás queda sin decidir.";
+  } else if (!pagina) {
+    ok = false;
+    motivo = "Ninguno de los " + total + " enunciado(s) capturados es de la página (" + ajena + " de otras ventanas, " +
+      sinDatos + " sin dato, " + vacias + " vacíos): el navegador perdió el primer plano o el lector nunca leyó la " +
+      "página. Esto NO dice nada sobre el componente.";
+  } else {
+    ok = true;
+    motivo = pagina + " de " + (pagina + ajena) + " enunciado(s) informativos son de la página" +
+      (ajena ? " (" + ajena + " de otras ventanas, descartados del emparejamiento)" : "") + ".";
+    if (ajena > pagina) {
+      aviso = "La mayor parte de lo que oyó el lector era de OTRA VENTANA (" + ajena + " enunciados frente a " +
+        pagina + " de la página). Lo capturado de la página vale, pero los nodos que hayan quedado sin confirmar " +
+        "lo más probable es que sea por esto y no por un defecto suyo: deja el navegador en primer plano, no toques " +
+        "el equipo y repite la sesión antes de concluir nada de ellos.";
+    }
+  }
+  return { ok: ok, total: total, dePagina: pagina, ruido: ajena, sinDatos: sinDatos, vacias: vacias, motivo: motivo, aviso: aviso };
 }
 
 export async function bridge(html, opts) {
@@ -682,7 +862,22 @@ export async function bridge(html, opts) {
     return { name: n.name.name, role: n.role, say: announcement(n), locator: n.locator };
   });
   const phrases = await opts.capture(html);
-  const aligned = alignPredictedToSpoken(predicted, phrases, lector);
+  /* EMPAREJAR SOLO CONTRA LO QUE ES DE LA PÁGINA.
+   *
+   * Aquí estaba el daño de verdad: el emparejamiento recibía TODO lo capturado, y
+   * con la ventana de otra aplicación dentro, «Enviar mensaje botón» —de la app de
+   * al lado— se llevaba un nodo del componente y lo firmaba `divergente`. El nodo
+   * se queda mejor sin frase (`no-encontrado`, que es «sin verificar») que con la
+   * frase de otra ventana. */
+  const clasificacion = clasificaFrases(phrases, html, predicted, lector);
+  const utilizables = clasificacion
+    .filter(function (x) { return x.clase === "pagina" || x.clase === "sinDatos"; })
+    .map(function (x) { return { step: x.i, spoken: x.texto, clase: x.clase }; });
+  const aligned = alignPredictedToSpoken(predicted, utilizables, lector);
+  /* De qué clase era el enunciado con el que se emparejó cada nodo. Hace falta
+     abajo: un enunciado que no aporta dato no puede CONTRADECIR una predicción. */
+  const claseDe = {};
+  utilizables.forEach(function (u) { claseDe[u.spoken] = u.clase; });
 
   const results = aligned.map(function (a) {
     if (a.spoken == null) {
@@ -692,7 +887,51 @@ export async function bridge(html, opts) {
       return { locator: a.predicted.locator, predicted: a.predicted, spoken: null, verdict: "no-encontrado",
         note: "El lector no visitó un elemento que casara con este nodo." };
     }
-    return Object.assign({ locator: a.predicted.locator }, compareAnnouncement(a.predicted, a.spoken, lector));
+    const r = Object.assign({ locator: a.predicted.locator }, compareAnnouncement(a.predicted, a.spoken, lector));
+    /* UN ENUNCIADO SIN DATO NO PUEDE CONTRADECIR NADA.
+     *
+     * `divergente` es una acusación: dice que el lector NO pronuncia el nombre
+     * previsto. Para sostenerla hace falta que el enunciado diga algo. Medido con
+     * la sesión real: «Nueva pestaña botón» —de la barra del navegador— y
+     * «Estás en el contenido web» —relleno del propio lector— firmaban dos
+     * `divergente` sobre nodos del componente.
+     *
+     * Si el nodo previsto NO tiene nombre y el lector dice solo su rol, eso sí es
+     * un dato: es el caso de libro de 4.1.2 y sigue saliendo como barrera
+     * confirmada. Lo que no vale es lo contrario: con nombre previsto y un
+     * enunciado que no distingue, lo honesto es «sin verificar». */
+    /* `divergente` SOLO lo puede sostener un enunciado que sepamos de la página.
+     *
+     * Es una acusación —«el lector no pronuncia el nombre previsto»— y para
+     * hacerla hay que estar seguro de que el lector estaba mirando este elemento.
+     * Medido con la sesión real: «Nueva pestaña botón», que es el botón de nueva
+     * pestaña del NAVEGADOR, firmaba `divergente` contra el botón de icono del
+     * componente. Dos elementos de dos ventanas distintas.
+     *
+     * Con un enunciado que no distingue solo quedan dos salidas honestas: si el
+     * nodo previsto no tiene nombre y el lector tampoco dijo ninguno, es el caso
+     * de libro de 4.1.2 y se confirma la barrera; y si el enunciado trae algún
+     * nombre que no es de la página, no se sabe de qué elemento hablaba —
+     * «sin verificar». */
+    if (r.verdict !== "confirmado" && claseDe[a.spoken] !== "pagina") {
+      const sinRol = normalize(stripReaderNoise(String(a.spoken), lector))
+        .split(/[^a-z0-9ñ]+/).filter(function (w) { return w.length >= 4 && !ROL_PALABRAS.has(w); });
+      const previstoSinNombre = !(a.predicted.name || "").trim();
+      if (previstoSinNombre && !sinRol.length) {
+        return Object.assign(r, {
+          verdict: "barrera-confirmada",
+          note: "El lector anuncia solo el rol y ningún nombre, y el motor tampoco le encontraba uno: " +
+            "la barrera de 4.1.2 queda confirmada por el lector."
+        });
+      }
+      return Object.assign(r, {
+        verdict: "no-encontrado",
+        note: "Sin verificar. El enunciado con el que casó («" + String(a.spoken).slice(0, 40) +
+          "») no es de la página servida o no nombra nada de ella, así que no sirve ni para confirmar este " +
+          "elemento ni para contradecirlo. Una acusación sobre la página necesita una frase de la página."
+      });
+    }
+    return r;
   });
 
   const tally = { confirmado: 0, parcial: 0, divergente: 0, "barrera-confirmada": 0, "no-encontrado": 0, "sin-captura": 0 };
@@ -701,10 +940,12 @@ export async function bridge(html, opts) {
   /* El resumen de la SESIÓN va al mismo nivel que el de los nodos: si no hubo
      captura de la página, lo de abajo no es un veredicto sobre el componente,
      es la ausencia de uno, y eso tiene que leerse sin interpretar la tabla. */
-  const sesion = sesionUtil(phrases, lector);
+  const sesion = sesionUtil(phrases, lector, html, predicted);
 
   return {
     model: model, lector: lector || null, predicted: predicted, spokenPhrases: phrases,
+    // La clasificación entera, para poder revisar de dónde salió cada veredicto.
+    clasificacion: clasificacion,
     results: results, summary: tally, sesion: sesion
   };
 }
