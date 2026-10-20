@@ -19,7 +19,7 @@
  * conforme en un entregable con efectos legales.
  */
 import { enClause, cmpSC, WCAG22 } from "./engine.js";
-import { worseOf } from "./verdicts.js";
+import { worseOf, esNoAplica } from "./verdicts.js";
 import { letraOAW, resumenAsignacion } from "./oaw-letters.js";
 
 const IX = {};
@@ -185,18 +185,70 @@ export function barreras(findings, ctx) {
  *   `muestra` es el rollup de la muestra (`rollupSample`). Con él, la hoja de
  *   Seguimiento sabe sobre CUÁNTAS páginas se está pronunciando.
  */
+/* POR QUÉ una fila no se puede comprobar.
+ *
+ * `seguimiento.csv` es la fila-por-criterio que alimenta el IRA, y no tiene
+ * columna de evidencia. Así que de los 55 criterios del banco del sitio limpio,
+ * 21 decían «No se puede comprobar (revisión manual)» y ni uno decía por qué.
+ * Eso mete en el mismo cajón tres cosas que no son la misma y que no se arreglan
+ * igual:
+ *
+ *   · la sonda que lo mide NO SE EJECUTÓ        → se arregla repitiendo la pasada
+ *   · nadie lo mide, o la sonda no vio contenido → es cobertura del agente
+ *   · hace falta el juicio de una persona        → es trabajo del auditor
+ *
+ * Es la distinción que v0.67.0 existe para hacer, metida en la evidencia del
+ * hallazgo; esta columna la lleva al fichero donde se decide. Y se clasifica por
+ * el código `motivo` que traen los hallazgos, no buscando expresiones regulares
+ * en la prosa castellana de las evidencias: esa prosa la escribo yo y cambiarla
+ * no debería romper una hoja con efectos legales.
+ *
+ * El orden de precedencia no es estético: lo primero que tiene que ver quien lee
+ * es lo que puede arreglar él mismo repitiendo la pasada.
+ */
+const MOTIVOS = {
+  "capa-apagada": "La sonda que lo mide no se ejecutó en esta pasada: repite la pasada con esa capa encendida",
+  "capa-no-corrio": "La sonda que lo mide no se ejecutó en esta pasada: repite la pasada con esa capa encendida",
+  "nadie-lo-mide": "Ninguna capa lo mide, y el motor no vio en el marcado nada a lo que aplicarlo: sin comprobar",
+  "sonda-muda": "La sonda corrió y no encontró contenido al que aplicarlo; el agente no afirma que no aplique",
+  "muestra-incompleta": "Hay páginas de la muestra sin analizar: lo que sale bien en el resto no cubre las que faltan"
+};
+const PRECEDENCIA = ["capa-apagada", "capa-no-corrio", "muestra-incompleta", "nadie-lo-mide", "sonda-muda"];
+
+export function motivoPendiente(fs, worst) {
+  const lista = fs || [];
+  const codigos = {};
+  lista.forEach(function (f) { if (f && f.motivo) codigos[f.motivo] = 1; });
+  for (let i = 0; i < PRECEDENCIA.length; i++) {
+    if (codigos[PRECEDENCIA[i]]) return MOTIVOS[PRECEDENCIA[i]];
+  }
+  // Sin código: se deduce del veredicto, que es un dato igual de estructurado.
+  /* `worst` nulo es «No evaluado»: NINGÚN hallazgo mencionó el criterio. Es la
+   * fila más alarmante de la hoja y era la única que se quedaba sin motivo, lo
+   * encontró un test al leer la primera fila de datos en vez de la que yo
+   * esperaba. En una pasada completa no debería aparecer —el barrido de
+   * cobertura habla de todos los criterios—, así que si aparece, lo que hay que
+   * decir es exactamente eso: que no corrió nadie. */
+  if (!worst) return "Ningún hallazgo mencionó este criterio en esta pasada: no se ha comprobado, y el barrido de cobertura tampoco llegó a él";
+  if (worst === "humano") return "Criterio de juicio: hace falta una persona, y el cuaderno dice qué mirar";
+  if (worst === "cumple-parcial") return "La parte automatizable se cumple; la calidad del texto exige juicio humano";
+  if (worst === "revisar") return "Sin dictamen del agente: queda para revisión manual";
+  return "";
+}
+
 export function seguimiento(findings, opts) {
   const by = {};
   (findings || []).forEach(function (f) {
     const n = f.c.n;
     // `worst: null` = aún no evaluado; el primer hallazgo lo fija.
-    if (!by[n]) by[n] = { criterio: n, nombre: f.c.t, nivel: f.c.lvl, worst: null, n: 0 };
+    if (!by[n]) by[n] = { criterio: n, nombre: f.c.t, nivel: f.c.lvl, worst: null, n: 0, fs: [] };
     by[n].worst = worseOf(by[n].worst, f.verdict);
+    by[n].fs.push(f);
     if (f.verdict === "falla") by[n].n += instancias(f);
   });
   if (opts && opts.todosLosCriterios) {
     WCAG22.forEach(function (c) {
-      if (!by[c.n]) by[c.n] = { criterio: c.n, nombre: c.t, nivel: c.lvl, worst: null, n: 0 };
+      if (!by[c.n]) by[c.n] = { criterio: c.n, nombre: c.t, nivel: c.lvl, worst: null, n: 0, fs: [] };
     });
   }
   /* La COBERTURA de la muestra entra en la hoja.
@@ -221,9 +273,20 @@ export function seguimiento(findings, opts) {
     .map(function (r) {
       const en = enClause(r.criterio);
       let resultado = resultadoOAW(r.worst);
+      let degradadaPorMuestra = false;
       if (incompleta && (r.worst === "cumple" || r.worst === "pasa")) {
         resultado = "No se puede comprobar (muestra incompleta: " + cobertura + ")";
+        degradadaPorMuestra = true;
       }
+      /* El motivo solo acompaña a lo que NO es un dictamen. Una barrera, un
+       * «Correcto» y un «No aplica» son afirmaciones del agente y no necesitan
+       * excusa; ponerles un motivo al lado invitaría a leerlo como una reserva
+       * sobre el dictamen, que es justo lo contrario de lo que son. */
+      const esDictamen = r.worst === "falla" || esNoAplica(r.worst) ||
+        (!degradadaPorMuestra && (r.worst === "cumple" || r.worst === "pasa"));
+      const motivo = esDictamen ? ""
+        : degradadaPorMuestra ? MOTIVOS["muestra-incompleta"]
+        : motivoPendiente(r.fs, r.worst);
       return {
         subcriterio: en || "",
         enEN: !!en,
@@ -233,6 +296,7 @@ export function seguimiento(findings, opts) {
         veredicto: r.worst,
         resultado: resultado,
         cobertura: cobertura,
+        motivo: motivo,
         num_barreras: r.n
       };
     });
@@ -370,6 +434,7 @@ const COLS_SEGUIMIENTO = [
   // La cobertura, al lado del resultado: quien lee la hoja tiene que poder ver
   // sobre cuántas páginas se está afirmando cada cosa sin salir de la fila.
   { key: "cobertura", label: "Cobertura de la muestra" },
+  { key: "motivo", label: "Por qué no se puede comprobar" },
   { key: "num_barreras", label: "Nº barreras" }
 ];
 

@@ -184,6 +184,9 @@ export function notaDeCapaApagada(findings, capas, opts) {
       "No es lo mismo que «necesita una persona». Para medirlo, repite la pasada con esa capa encendida.";
     porCrit[n].forEach(function (f) {
       f.evid = (f.evid || []).concat([nota]);
+      // Y el motivo como dato, para que `seguimiento.csv` pueda decirlo en su
+      // fila: es el único de los motivos que se arregla repitiendo la pasada.
+      f.motivo = "capa-apagada";
       // Una conformidad firmada con la sonda apagada no es una conformidad.
       if (f.verdict === "cumple" || f.verdict === "pasa") f.verdict = "revisar";
     });
@@ -207,19 +210,31 @@ export function criteriosEnSilencio(findings, capas, opts) {
     const corridas = suyas.filter(function (k) {
       return k === "coherencia" ? !!opts.sitio : !!(capas && capas[k]);
     });
-    let razon;
+    /* El MOTIVO va también como dato, no solo dentro de la frase.
+     *
+     * La razón se escribió para que la leyera una persona en la evidencia del
+     * hallazgo, y ahí se quedó: `seguimiento.csv` —la fila por criterio que
+     * alimenta el IRA— no tiene columna de evidencia, así que sus filas decían
+     * «No se puede comprobar (revisión manual)» sin decir nunca por qué. En el
+     * banco del sitio limpio eran 21 de 55 filas. Un código aquí permite que esa
+     * hoja clasifique sin que nadie tenga que buscar expresiones regulares en mi
+     * propia prosa castellana, que es frágil y además mía. */
+    let razon, motivo;
     if (!suyas.length) {
+      motivo = "nadie-lo-mide";
       razon = "ninguna capa del agente mide este criterio aparte del motor, y el motor no ha encontrado en el marcado nada a lo que aplique: nadie lo ha comprobado.";
     } else if (!corridas.length) {
+      motivo = "capa-no-corrio";
       razon = "la capa que lo mide (" + capaQueMide(c.n) + ") no se ha ejecutado en esta pasada, así que este criterio NO se ha comprobado.";
     } else {
+      motivo = "sonda-muda";
       razon = "la capa que lo mide (" + capaQueMide(c.n) + ") sí se ha ejecutado y no ha dicho nada de este criterio: " +
         "lo más probable es que no haya encontrado contenido al que aplique, pero el agente no lo afirma.";
     }
     out.push({
       c: critDe(c.n), verdict: "revisar", sev: null,
       evid: [razon + " Queda sin dictamen: «revisar» no es conforme y no puede exportarse como cumplido."],
-      scope: "cobertura", origen: "barrido", en: enClause(c.n)
+      scope: "cobertura", origen: "barrido", motivo: motivo, en: enClause(c.n)
     });
   });
   return out;

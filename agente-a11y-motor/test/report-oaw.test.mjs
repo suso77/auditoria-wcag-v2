@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { oawExport, barreras, barrerasAgrupadas, seguimiento } from "../src/index.js";
+import { oawExport, barreras, barrerasAgrupadas, seguimiento, motivoPendiente } from "../src/index.js";
 
 const F = (n, lvl, verdict, sev, nodes, evid) => ({ c: { n, lvl, t: n }, verdict, sev, nodes, evid });
 
@@ -256,4 +256,94 @@ test("agrupadas: el informe por elemento sigue intacto y sale en el mismo viaje"
   assert.equal(out.barreras.length, 3, "una por elemento, que es lo que pide un IRA");
   assert.equal(out.barrerasAgrupadas.length, 1, "y una por familia, que es lo que se lee");
   assert.ok(out.csv.barreras && out.csv.barrerasAgrupadas, "los dos CSV");
+});
+
+/* ── Por qué una fila no se puede comprobar ────────────────────────────────────
+ *
+ * Medido en el banco del sitio limpio: 21 de las 55 filas de `seguimiento.csv`
+ * decían «No se puede comprobar (revisión manual)» y ni una decía por qué, con lo
+ * que «no corrí la sonda» (se arregla repitiendo la pasada), «nadie lo mide»
+ * (cobertura del agente) y «hace falta una persona» (trabajo del auditor) caían
+ * en el mismo cajón. La distinción existía desde v0.67.0 pero vivía en la
+ * evidencia del hallazgo, y esta hoja —la que alimenta el IRA— no tiene columna
+ * de evidencia. */
+const Fm = (n, verdict, motivo) => ({ c: { n, lvl: "A", t: n }, verdict, motivo, evid: [] });
+
+test("motivo: la sonda apagada manda sobre los demás, porque es lo único que arregla quien lee", () => {
+  const m = motivoPendiente([Fm("3.3.1", "revisar", "sonda-muda"), Fm("3.3.1", "revisar", "capa-apagada")], "revisar");
+  assert.match(m, /no se ejecutó/);
+  assert.match(m, /repite la pasada/);
+});
+
+test("motivo: sin código se deduce del veredicto, que también es un dato", () => {
+  assert.match(motivoPendiente([], "humano"), /hace falta una persona/i);
+  assert.match(motivoPendiente([], "cumple-parcial"), /calidad del texto/i);
+  assert.match(motivoPendiente([], "revisar"), /Sin dictamen/i);
+  // Y nunca se clasifica buscando expresiones regulares en la prosa castellana
+  // de las evidencias: esa prosa cambia y la hoja tiene efectos legales.
+  assert.equal(motivoPendiente([{ c: { n: "1.1.1" }, verdict: "cumple", evid: ["la capa que lo mide sí se ha ejecutado y no ha dicho nada"] }], "cumple"), "");
+});
+
+test("seguimiento: un dictamen NO lleva motivo al lado", () => {
+  /* Una barrera, un «Correcto» y un «No aplica» son afirmaciones del agente.
+   * Ponerles un motivo invitaría a leerlo como una reserva sobre el dictamen. */
+  const rows = seguimiento([
+    F("4.1.2", "A", "falla", "crítica", [{ locator: "button" }], ["sin nombre"]),
+    F("2.1.1", "A", "cumple", null, [], ["Correcto."]),
+    F("3.3.4", "AA", "no-aplica", null, [], ["No hay formularios."])
+  ]);
+  rows.forEach((r) => assert.equal(r.motivo, "", r.criterio + " no debía llevar motivo (" + r.resultado + ")"));
+});
+
+test("seguimiento: toda fila sin dictamen SÍ lleva motivo", () => {
+  const rows = seguimiento([
+    Fm("3.3.1", "revisar", "capa-apagada"),
+    Fm("1.1.1", "revisar", "nadie-lo-mide"),
+    Fm("2.2.2", "revisar", "sonda-muda"),
+    { c: { n: "1.4.5", lvl: "AA", t: "x" }, verdict: "humano", evid: [] },
+    { c: { n: "1.1.1b", lvl: "A", t: "y" }, verdict: "cumple-parcial", evid: [] }
+  ].filter((f) => f.c.n !== "1.1.1b"));
+  const sinMotivo = rows.filter((r) => /No se puede comprobar/.test(r.resultado) && !String(r.motivo || "").trim());
+  assert.deepEqual(sinMotivo.map((r) => r.criterio), [], "estas filas se quedaron sin decir por qué");
+});
+
+test("seguimiento: la muestra incompleta es su propio motivo, y pisa a los demás", () => {
+  /* Un «Correcto» degradado por muestra incompleta ya no es un dictamen: la razón
+   * que tiene que leerse es que faltan páginas, no lo que dijera cada hallazgo. */
+  const rows = seguimiento([F("2.1.1", "A", "cumple", null, [], ["Correcto."])],
+    { muestra: { paginas: 4, paginasAnalizadas: 3 } });
+  const r = rows.find((x) => x.criterio === "2.1.1");
+  assert.match(r.resultado, /muestra incompleta/);
+  assert.match(r.motivo, /sin analizar/i);
+});
+
+test("seguimiento: la columna viaja al CSV con su cabecera", () => {
+  const out = oawExport([Fm("3.3.1", "revisar", "capa-apagada")], {});
+  const lineas = out.csv.seguimiento.split("\r\n");
+  assert.match(lineas[0], /Por qué no se puede comprobar/);
+  // Y en el sitio correcto: justo después de la cobertura.
+  const cols = lineas[0].replace(/^﻿/, "").split(";");
+  assert.equal(cols[cols.indexOf("Cobertura de la muestra") + 1], "Por qué no se puede comprobar");
+  const fila331 = lineas.find((l) => /;3\.3\.1;/.test(l));
+  assert.match(fila331, /no se ejecutó/);
+});
+
+test("seguimiento: «No evaluado» tampoco se queda sin motivo", () => {
+  /* Esta la encontró el test de arriba al leer la primera fila de datos (1.1.1,
+   * por orden) en vez de la que yo esperaba: salía «No evaluado» con la columna
+   * en blanco. Es la fila que más tiene que explicarse de toda la hoja. */
+  const out = oawExport([Fm("3.3.1", "revisar", "capa-apagada")], {});
+  const L = out.csv.seguimiento.split("\r\n").filter(Boolean);
+  const noEvaluadas = L.slice(1).filter((l) => /;No evaluado;/.test(l));
+  assert.ok(noEvaluadas.length, "este export tiene que traer filas «No evaluado»");
+  noEvaluadas.forEach((l) => {
+    const c = l.split(";");
+    assert.match(String(c[7] || "").replace(/^"|"$/g, ""), /no se ha comprobado/i, l.slice(0, 80));
+  });
+  // Y el invariante de toda la hoja: ninguna fila que no sea un dictamen se calla.
+  const mudas = L.slice(1).filter((l) => {
+    const c = l.split(";"); const res = String(c[5] || "").replace(/"/g, "");
+    return !/^(Falla|Correcto|No aplica)/.test(res) && !String(c[7] || "").replace(/"/g, "").trim();
+  });
+  assert.deepEqual(mudas.map((l) => l.split(";")[2]), []);
 });

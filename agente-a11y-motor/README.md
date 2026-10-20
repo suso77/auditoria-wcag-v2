@@ -1001,6 +1001,29 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.70.0 — 21 filas decían «revisión manual» y ninguna decía por qué
+
+`seguimiento.csv` es la fila-por-criterio que alimenta el IRA. En el banco del sitio limpio, **21 de sus 55 filas** decían «No se puede comprobar (revisión manual)» y ni una decía el motivo:
+
+```
+9.3.3.1;true;3.3.1;Identificación de errores;A;No se puede comprobar (revisión manual);6 de 6 página(s) analizadas;0
+9.3.3.2;true;3.3.2;Etiquetas o instrucciones;A;No se puede comprobar (revisión manual);6 de 6 página(s) analizadas;0
+```
+
+Eso mete en el mismo cajón tres cosas que no son la misma y que no se arreglan igual: que **la sonda que lo mide no se ejecutara** (lo arregla quien lee, repitiendo la pasada), que **nadie lo mida o la sonda no viera contenido** (es cobertura del agente) y que **haga falta el juicio de una persona** (es trabajo del auditor). La distinción existe desde v0.67.0, pero vive en la evidencia del hallazgo, y esta hoja no tiene columna de evidencia. Así que la hacía el agente y no llegaba al fichero donde se decide.
+
+Hay una columna nueva, **«Por qué no se puede comprobar»**, justo después de la cobertura. Y se clasifica por un código (`motivo`) que ahora emiten `criteriosEnSilencio` y `notaDeCapaApagada`, **no buscando expresiones regulares en la prosa castellana de las evidencias**: esa prosa la escribo yo, cambiarla no debería romper una hoja con efectos legales, y hay un test en el emisor que se pone rojo si el código desaparece. El orden de precedencia no es estético: lo primero que ve quien lee es lo que puede arreglar él mismo.
+
+El motivo acompaña solo a lo que **no** es un dictamen. Una barrera, un «Correcto» y un «No aplica» son afirmaciones del agente: ponerles un motivo al lado invitaría a leerlo como una reserva sobre el dictamen, que es lo contrario de lo que son. Un «Correcto» degradado por muestra incompleta sí lo lleva, y el suyo propio.
+
+Un test encontró de paso la fila que más tenía que explicarse y era la única muda: **«No evaluado»**, que significa que ningún hallazgo mencionó el criterio. Salía con la columna en blanco. Lo encontró porque leía la primera fila de datos en vez de la que yo esperaba.
+
+Comprobado sobre la misma página con la capa dinámica apagada y encendida: con ella apagada, 3.3.1 dice «La sonda que lo mide no se ejecutó en esta pasada: repite la pasada con esa capa encendida»; con ella encendida dice `Falla` y ningún motivo. En las dos pasadas, cero filas sin dictamen calladas y cero dictámenes con motivo indebido.
+
+**Lleva bundle**: `report-oaw.js` entra en `extension/motor.js`, y lo descubrió la guardia de «generado al día» poniéndose roja. `web/agente-a11y.html` no lleva esta capa y queda idéntico byte a byte, así que no se toca.
+
+818 tests unitarios (809 + 9).
+
 ### v0.69.0 — el entregable afirmaba una cobertura que no hubo, y un fallo del CLI se leía como un veredicto
 
 Dos defectos encontrados por accidente, los dos del mismo tipo: una salida que no dice lo que el agente sí sabe.

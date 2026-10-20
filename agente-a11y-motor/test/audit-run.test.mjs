@@ -345,3 +345,29 @@ test("cobertura: el script de los entregables la imprime Y la escribe en el json
   assert.match(src, /paginasFallidas: sitio\.paginasFallidas/, "auditoria.json tiene que llevar las páginas caídas");
   assert.match(src, /avisos: sitio\.avisos/, "y los avisos del sitio");
 });
+
+/* El código `motivo` es un CONTRATO, no un adorno: `seguimiento.csv` clasifica
+ * por él. Si alguien lo quita, la hoja no se rompe —cae a deducirlo del
+ * veredicto— y vuelve a perder justo la distinción que v0.67.0 existe para
+ * hacer, en silencio. Así que se fija aquí, en el emisor. */
+test("barrido: cada motivo sale como código además de como frase", () => {
+  const conDinamico = criteriosEnSilencio([], capasEfectivas({ dynamic: true, render: true, viewport: true, pixeles: true }), { sitio: false });
+  const sinDinamico = criteriosEnSilencio([], capasEfectivas({ dynamic: false, render: true, viewport: true, pixeles: true }), { sitio: false });
+  const codigos = (l) => [...new Set(l.map((f) => f.motivo))].sort();
+  // Todos llevan código, ninguno se queda sin él.
+  assert.equal(conDinamico.filter((f) => !f.motivo).length, 0);
+  assert.equal(sinDinamico.filter((f) => !f.motivo).length, 0);
+  // Y con la capa apagada aparece el motivo que se arregla repitiendo la pasada.
+  assert.ok(codigos(sinDinamico).includes("capa-no-corrio"), JSON.stringify(codigos(sinDinamico)));
+  assert.ok(!codigos(conDinamico).includes("capa-no-corrio"), "con la capa encendida ese motivo no debe salir");
+  // El código tiene que concordar con la frase, que es lo que lee una persona.
+  sinDinamico.filter((f) => f.motivo === "capa-no-corrio")
+    .forEach((f) => assert.match(f.evid.join(" "), /no se ha ejecutado/));
+});
+
+test("capa apagada: la nota también marca el motivo en el hallazgo que toca", () => {
+  const f = [{ c: { n: "3.3.1" }, verdict: "cumple", evid: ["Correcto."] }];
+  notaDeCapaApagada(f, capasEfectivas({ dynamic: false }), { sitio: false });
+  assert.equal(f[0].motivo, "capa-apagada");
+  assert.equal(f[0].verdict, "revisar");
+});
