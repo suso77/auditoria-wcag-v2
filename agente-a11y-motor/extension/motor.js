@@ -1381,6 +1381,30 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       });
     }
     (model.brokenRefs || []).forEach(function (br) {
+      /* Una referencia colgante de `aria-controls` en un widget CERRADO no es lo
+       * mismo que una de `aria-labelledby`. La primera es el idioma de todo
+       * componente colapsado que renderiza su destino al abrirse; la segunda
+       * pierde el nombre de verdad. Medido en el banco del sitio limpio: siete de
+       * las veintiséis acusaciones eran `aria-controls` hacia un panel que aparece
+       * al expandir, y se firmaban como barrera.
+       *
+       * El estado se lee del propio elemento: `aria-expanded="false"` o
+       * `aria-haspopup` dicen que el destino está legítimamente ausente AHORA. Con
+       * esa señal el veredicto baja a `revisar` y se dan las dos lecturas; sin
+       * ella se mantiene la observación, que tampoco afirmaba una barrera. */
+      const relacional = br.attr === "aria-controls" || br.attr === "aria-owns" || br.attr === "aria-flowto";
+      const cerrado = model.expanded === "false" || (model.haspopup != null && model.haspopup !== "" && model.haspopup !== false);
+      if (relacional && cerrado) {
+        obs.push({
+          html: "La relación <code>" + esc(br.attr) + "</code> apunta a IDs que no existen en este estado: <code>" + esc(br.ids) +
+            "</code>. Pero este control está CERRADO (<code>aria-expanded=\"false\"</code>" +
+            (model.haspopup != null && model.haspopup !== "" ? " / <code>aria-haspopup</code>" : "") +
+            "), y lo normal es que el destino se cree al abrirlo: entonces resuelve y no hay barrera. Su nombre, su rol y su estado no dependen de esta relación y llegan igual a la API. " +
+            "COMPRUEBA si <code>#" + esc(String(br.ids).split(/\s+/)[0]) + "</code> existe tras expandir: si existe, no es barrera; si no aparece nunca, sí lo es.",
+          crit: br.crit, sev: "moderada", type: "broken-ref-colapsado", nivel: "revisar"
+        });
+        return;
+      }
       obs.push({ html: "La relación <code>" + esc(br.attr) + "</code> apunta a IDs inexistentes: <code>" + esc(br.ids) + "</code>.", crit: br.crit, sev: br.attr === "aria-labelledby" ? "grave" : "moderada", type: "broken-ref" });
     });
     return obs;
@@ -6019,10 +6043,77 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     });
     const dupRef = Object.keys(idCount).filter(function (id) { return idCount[id] > 1 && referenced[id]; });
     if (dupRef.length) out.push(F("1.3.1", "falla", "grave", ["IDs duplicados usados en relaciones ARIA/label: " + dupRef.slice(0, 8).join(", ") + " — la relación se vuelve ambigua."]));
+    /* ── Referencias colgantes: NO todas valen lo mismo ───────────────────────
+     *
+     * Esta regla metía los doce atributos IDREF en un solo `4.1.2 falla grave` con
+     * la frase «el nombre, la descripción o la relación no llegan a la API de
+     * accesibilidad», y ni se guardaba qué atributo apuntaba a dónde. Medido en el
+     * banco del sitio limpio: de las 26 acusaciones, SIETE eran esto, y las siete
+     * sobre el mismo idioma:
+     *
+     *     <button aria-expanded="false" aria-controls="mobile-menu" aria-label="Abrir menú">
+     *     <button aria-haspopup="listbox" aria-expanded="false" aria-controls="service-listbox">
+     *
+     * `#mobile-menu` no está en el DOM porque el menú está CERRADO. Al abrirlo
+     * existe y la referencia resuelve. Es el patrón de todo widget colapsado de
+     * React, Vue o Svelte, es decir, de media web.
+     *
+     * Y la frase era falsa para ese atributo. El nombre de ese botón llega
+     * perfectamente a la API —`aria-label="Abrir menú"`—, igual que su rol y su
+     * estado `aria-expanded`. Lo único que no resuelve es `aria-controls`, que es
+     * una relación OPCIONAL en los patrones de divulgación y combobox, y que las
+     * tecnologías de apoyo ignoran cuando no resuelve. Acusar de 4.1.2 grave
+     * diciendo que el nombre no llega, cuando llega, es afirmar un hecho falso.
+     *
+     * Así que se separan dos grupos, y la diferencia es si el atributo APORTA el
+     * nombre, la descripción o el foco:
+     *
+     *   · los que sí → una referencia colgante PIERDE de verdad lo que aportaba,
+     *     y eso sigue siendo `falla`, con la evidencia diciendo qué se pierde;
+     *   · los que solo declaran una relación opcional → `revisar` con las dos
+     *     lecturas. Es ARIA inválida según la especificación, y en una auditoría
+     *     con efectos legales puede ser reportable; pero no es una barrera que el
+     *     agente pueda firmar él solo, y menos sin saber si el destino aparece al
+     *     expandir. `revisar` deja la decisión en quien audita y nunca se exporta
+     *     como conforme, que es lo que exige la regla de oro.
+     */
+    const APORTAN_NOMBRE = { "aria-labelledby": "el nombre accesible", "aria-describedby": "la descripción accesible",
+      "aria-errormessage": "el mensaje de error asociado", "aria-details": "los detalles asociados",
+      "aria-activedescendant": "cuál es el descendiente activo (el foco dentro del widget)",
+      "headers": "la cabecera que da sentido a la celda", "list": "la lista de valores sugeridos" };
     const colgantes = Object.keys(referenced).filter(function (id) { return !idCount[id]; });
-    if (colgantes.length) {
-      out.push(F("4.1.2", "falla", "grave", ["Referencias a IDs que no existen: " + colgantes.slice(0, 8).join(", ") + " — el nombre, la descripción o la relación no llegan a la API de accesibilidad."],
-        colgantes.slice(0, 8).map(function (id) { return { locator: loc(referenced[id][0]), name: id }; })));
+    const atributoDe = function (id) {
+      // ¿Por qué atributo se referencia ese id? Se busca en el elemento que lo cita.
+      const el = referenced[id][0];
+      for (let i = 0; i < IDREF_ATTRS.length; i++) {
+        const v = (el.getAttribute(IDREF_ATTRS[i]) || "").trim();
+        if (v && v.split(/\s+/).indexOf(id) !== -1) return IDREF_ATTRS[i];
+      }
+      return (el.tagName || "").toLowerCase() === "label" ? "for" : "";
+    };
+    const fuertes = [], flojas = [];
+    colgantes.forEach(function (id) {
+      const attr = atributoDe(id);
+      (APORTAN_NOMBRE[attr] || attr === "for" ? fuertes : flojas).push({ id: id, attr: attr, el: referenced[id][0] });
+    });
+    if (fuertes.length) {
+      out.push(F("4.1.2", "falla", "grave", [fuertes.slice(0, 8).map(function (r) {
+        return "<code>" + r.attr + "=\"" + r.id + "\"</code> apunta a un ID que no existe, así que " +
+          (APORTAN_NOMBRE[r.attr] || "la etiqueta del campo") + " NO llega a la API de accesibilidad.";
+      }).join(" ")], fuertes.slice(0, 8).map(function (r) { return { locator: loc(r.el), name: r.id }; })));
+    }
+    if (flojas.length) {
+      out.push(F("4.1.2", "revisar", "moderada", [flojas.slice(0, 8).map(function (r) {
+        const colapsado = r.el.getAttribute("aria-expanded") === "false" || r.el.hasAttribute("aria-haspopup");
+        return "<code>" + r.attr + "=\"" + r.id + "\"</code> apunta a un ID que no existe en este estado de la página. " +
+          (colapsado
+            ? "PERO el elemento que la declara está CERRADO (<code>aria-expanded=\"false\"</code>" +
+              (r.el.hasAttribute("aria-haspopup") ? " / <code>aria-haspopup</code>" : "") +
+              "), y el idioma habitual es renderizar el destino solo al abrirlo: entonces la referencia resuelve y no hay barrera. " +
+              "Lo que hay que comprobar es si <code>#" + r.id + "</code> aparece AL EXPANDIR. Si aparece, no es barrera; si no aparece nunca, sí lo es."
+            : "El nombre, el rol y el estado de ese elemento NO dependen de esta relación y llegan igual a la API. " +
+              "Es ARIA inválida según la especificación y puede ser reportable en una auditoría formal, pero no es una barrera que el agente pueda firmar.");
+      }).join(" ")], flojas.slice(0, 8).map(function (r) { return { locator: loc(r.el), name: r.id }; })));
     }
 
     /* ── 1.2.x Medios ── */

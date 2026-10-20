@@ -2006,6 +2006,30 @@
       });
     }
     (model.brokenRefs || []).forEach(function (br) {
+      /* Una referencia colgante de `aria-controls` en un widget CERRADO no es lo
+       * mismo que una de `aria-labelledby`. La primera es el idioma de todo
+       * componente colapsado que renderiza su destino al abrirse; la segunda
+       * pierde el nombre de verdad. Medido en el banco del sitio limpio: siete de
+       * las veintiséis acusaciones eran `aria-controls` hacia un panel que aparece
+       * al expandir, y se firmaban como barrera.
+       *
+       * El estado se lee del propio elemento: `aria-expanded="false"` o
+       * `aria-haspopup` dicen que el destino está legítimamente ausente AHORA. Con
+       * esa señal el veredicto baja a `revisar` y se dan las dos lecturas; sin
+       * ella se mantiene la observación, que tampoco afirmaba una barrera. */
+      const relacional = br.attr === "aria-controls" || br.attr === "aria-owns" || br.attr === "aria-flowto";
+      const cerrado = model.expanded === "false" || (model.haspopup != null && model.haspopup !== "" && model.haspopup !== false);
+      if (relacional && cerrado) {
+        obs.push({
+          html: "La relación <code>" + esc(br.attr) + "</code> apunta a IDs que no existen en este estado: <code>" + esc(br.ids) +
+            "</code>. Pero este control está CERRADO (<code>aria-expanded=\"false\"</code>" +
+            (model.haspopup != null && model.haspopup !== "" ? " / <code>aria-haspopup</code>" : "") +
+            "), y lo normal es que el destino se cree al abrirlo: entonces resuelve y no hay barrera. Su nombre, su rol y su estado no dependen de esta relación y llegan igual a la API. " +
+            "COMPRUEBA si <code>#" + esc(String(br.ids).split(/\s+/)[0]) + "</code> existe tras expandir: si existe, no es barrera; si no aparece nunca, sí lo es.",
+          crit: br.crit, sev: "moderada", type: "broken-ref-colapsado", nivel: "revisar"
+        });
+        return;
+      }
       obs.push({ html: "La relación <code>" + esc(br.attr) + "</code> apunta a IDs inexistentes: <code>" + esc(br.ids) + "</code>.", crit: br.crit, sev: br.attr === "aria-labelledby" ? "grave" : "moderada", type: "broken-ref" });
     });
     return obs;

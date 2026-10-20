@@ -455,3 +455,69 @@ test("2.5.3: con el idioma en el atributo `style`, el agente decide y no se esco
   assert.match(ev2, /estilo en línea/);
   assert.doesNotMatch(ev2, /convención/);
 });
+
+/* ── Referencias colgantes: no todas valen lo mismo ───────────────────────────
+ *
+ * Medido adjudicando las 26 acusaciones del banco del sitio limpio contra el
+ * marcado real de jesusaccesible.com: SIETE eran esto, y las siete sobre el
+ * mismo idioma. El marcado acusado, literal:
+ *
+ *   <button aria-expanded="false" aria-controls="mobile-menu" aria-label="Abrir menú">
+ *   <button aria-haspopup="listbox" aria-expanded="false" aria-controls="service-listbox">
+ *
+ * `#mobile-menu` no está en el DOM porque el menú está CERRADO; al abrirlo
+ * existe. Es el patrón de todo widget colapsado de React, Vue o Svelte. Y la
+ * evidencia afirmaba que «el nombre, la descripción o la relación no llegan a la
+ * API», cuando el nombre de ese botón llega perfectamente: `aria-label="Abrir
+ * menú"`. Acusar de 4.1.2 grave diciendo que el nombre no llega, cuando llega,
+ * es afirmar un hecho falso en un informe. */
+
+test("ref colgante: aria-controls en un widget CERRADO no es barrera firmada", () => {
+  const m = understand('<button type="button" aria-expanded="false" aria-controls="mobile-menu" aria-label="Abrir menú">m</button>');
+  const f = analyze(m).findings.find((x) => x.c.n === "1.3.1" && !["cumple", "pasa"].includes(x.verdict));
+  assert.equal(f.verdict, "revisar", "un destino ausente porque el widget está cerrado no se firma como barrera");
+  const txt = f.evid.join(" ");
+  assert.match(txt, /CERRADO/);
+  assert.match(txt, /aria-expanded="false"/);
+  // Las DOS lecturas, que es el patrón del proyecto cuando el veredicto depende
+  // de algo que el agente no puede ver desde el marcado.
+  // Las dos emisiones (motor y página) lo dicen con palabras distintas; lo que
+  // este test fija es la OBLIGACIÓN de comprobarlo al expandir, no mi redacción.
+  assert.match(txt, /(AL EXPANDIR|tras expandir)/i, txt);
+  assert.match(txt, /si no aparece nunca, sí lo es/i);
+  // Y lo que NO puede decir: que el nombre no llegue a la API, porque llega.
+  assert.ok(!/el nombre.{0,40}no lleg/i.test(txt), "el nombre de ese botón sí llega a la API: " + txt.slice(0, 120));
+});
+
+test("ref colgante: aria-haspopup cuenta como señal de cerrado igual que aria-expanded", () => {
+  const m = understand('<button type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="service-listbox" aria-label="Servicio">s</button>');
+  const f = analyze(m).findings.find((x) => x.c.n === "1.3.1" && !["cumple", "pasa"].includes(x.verdict));
+  assert.equal(f.verdict, "revisar");
+  assert.match(f.evid.join(" "), /aria-haspopup/);
+});
+
+test("ref colgante: aria-controls SIN señal de estado sigue siendo barrera", () => {
+  /* Fail-safe: la rebaja se apoya en un hecho leído del marcado —el widget
+   * declara estar cerrado—, no en la suposición de que ya aparecerá. Sin esa
+   * señal, el agente no tiene motivo para descartar nada. */
+  const m = understand('<button type="button" aria-controls="panel-fantasma" aria-label="Algo">x</button>');
+  const f = analyze(m).findings.find((x) => x.c.n === "1.3.1" && !["cumple", "pasa"].includes(x.verdict));
+  assert.equal(f.verdict, "falla");
+});
+
+test("ref colgante: aria-labelledby y aria-describedby siguen siendo barrera, y dicen QUÉ se pierde", () => {
+  for (const [attr, loQueSePierde] of [["aria-labelledby", /nombre accesible/i], ["aria-describedby", /descripci/i]]) {
+    const html = '<button type="button" aria-label="Guardar" ' + attr + '="no-existe">Guardar</button>';
+    const f = analyze(understand(html)).findings.find((x) => x.c.n === "4.1.2" && !["cumple", "pasa"].includes(x.verdict));
+    assert.equal(f.verdict, "falla", attr + " colgante pierde de verdad lo que aportaba");
+    assert.match(f.evid.join(" "), new RegExp(attr));
+  }
+});
+
+test("ref colgante: un aria-expanded ABIERTO con destino ausente sí es barrera", () => {
+  /* Si el widget dice estar abierto, el destino tendría que existir ya. La rebaja
+   * no aplica, y esto es exactamente el caso que la rebaja NO debe tapar. */
+  const m = understand('<button type="button" aria-expanded="true" aria-controls="panel-que-deberia-estar" aria-label="Cerrar">c</button>');
+  const f = analyze(m).findings.find((x) => x.c.n === "1.3.1" && !["cumple", "pasa"].includes(x.verdict));
+  assert.equal(f.verdict, "falla", "abierto y sin destino es una barrera de verdad");
+});

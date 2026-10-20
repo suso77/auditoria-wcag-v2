@@ -1001,6 +1001,40 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.71.0 — los siete falsos positivos eran el menú cerrado de media web
+
+**La precisión de este agente, medida hoy: 63,2 %** sobre las 26 acusaciones de `ja3` contra jesusaccesible.com, adjudicadas una a una contra el marcado real del sitio. Es la segunda cifra de precisión que este proyecto tiene (la primera fue 67 % sobre 46 filas, hace ocho versiones) y la primera con intervalo: Wilson 95 % entre 41,0 % y 80,9 %, con 7 de 26 filas en duda, que la hacen optimista.
+
+```
+2.5.3    10 juzgadas: 10 reales,  0 falsos · 100,0 % EXACTA
+1.4.10    2 juzgadas:  2 reales,  0 falsos · 100,0 % EXACTA
+4.1.2     5 juzgadas:  0 reales,  5 falsos ·   0,0 % EXACTA
+1.3.1     2 juzgadas:  0 reales,  2 falsos ·   0,0 % EXACTA
+2.4.11 (5) · 2.1.2 (1) · 2.4.7 (1) — en duda, no se deciden sin medir
+```
+
+**Los siete falsos son una sola causa.** El marcado acusado, literal del sitio:
+
+```html
+<button aria-expanded="false" aria-controls="mobile-menu" aria-label="Abrir menú">
+<button aria-haspopup="listbox" aria-expanded="false" aria-controls="service-listbox">
+```
+
+`#mobile-menu` no está en el DOM porque el menú está **cerrado**; al abrirlo existe y la referencia resuelve. Es el patrón de todo widget colapsado de React, Vue o Svelte — es decir, de media web. Y la evidencia decía «el nombre, la descripción o la relación no llegan a la API de accesibilidad», que para ese atributo es **falso**: el nombre de ese botón llega perfectamente (`aria-label="Abrir menú"`), igual que su rol y su estado. Lo único que no resuelve es `aria-controls`, que es una relación *opcional* en los patrones de divulgación y combobox, y que las tecnologías de apoyo ignoran cuando no resuelve. Acusar de 4.1.2 grave afirmando que el nombre no llega, cuando llega, es poner un hecho falso en un informe.
+
+La regla metía los doce atributos IDREF en un solo `4.1.2 falla grave` y ni guardaba cuál apuntaba a dónde. Ahora se separan por si el atributo **aporta** el nombre, la descripción o el foco:
+
+- `aria-labelledby`, `aria-describedby`, `aria-errormessage`, `aria-details`, `aria-activedescendant`, `headers`, `list`, `for` → una referencia colgante pierde de verdad lo que aportaba: sigue siendo `falla`, y la evidencia dice **qué** se pierde y por qué atributo.
+- `aria-controls`, `aria-owns`, `aria-flowto` → relación opcional. Con señal de estado cerrado en el propio elemento (`aria-expanded="false"` o `aria-haspopup`), baja a `revisar` con **las dos lecturas** y la obligación de comprobar si el destino aparece al expandir. Sin esa señal se mantiene como estaba: la rebaja se apoya en un hecho leído del marcado, no en la suposición de que ya aparecerá. Y con `aria-expanded="true"` y el destino ausente sigue siendo `falla`, que es justo el caso que la rebaja no debe tapar.
+
+**Dos sospechas mías que el marcado real tumbó**, y valen tanto como el arreglo. Creí que el `a.ml-2` de 1.4.10 estaba dentro del `overflow-x-auto` de la miga de pan y era por tanto un falso positivo; no lo está: es `<a class="ml-2 … px-1" href="mailto:…">s.fernandezabeledo@gmail.com</a>` dentro de un `<p>` en un `<article class="px-6">`, o sea 28 caracteres sin punto de corte en 272 px. Los 21 y 28 px de desbordamiento son **reales**, y estuve a punto de suprimir dos hallazgos verdaderos. Y las diez filas de 2.5.3 son reales de libro: texto visible «JFA» contra nombre «Ir a la página de inicio - Jesús Accesible», y «LinkedIn Profesional» contra «Perfil de LinkedIn de Jesús Fernández Abeledo» — F96 las dos, con el `sr-only` correctamente descontado desde v0.63.0.
+
+**Predicción en acta, falsable:** la siguiente pasada del banco baja de 26 filas a 19, 1.3.1 y 4.1.2 desaparecen enteros de `barreras-agrupadas.csv`, y la precisión de lo decidido sube de 63,2 % a 100 % (12 de 12) con las mismas 7 dudas sin resolver.
+
+Lleva los dos bundles: `engine.js` entra en `extension/motor.js` y en `web/agente-a11y.html`.
+
+823 tests unitarios (818 + 5).
+
 ### v0.70.0 — 21 filas decían «revisión manual» y ninguna decía por qué
 
 `seguimiento.csv` es la fila-por-criterio que alimenta el IRA. En el banco del sitio limpio, **21 de sus 55 filas** decían «No se puede comprobar (revisión manual)» y ni una decía el motivo:
