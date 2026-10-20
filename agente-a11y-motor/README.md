@@ -195,7 +195,19 @@ a11y-motor componente.html --json   # informe estructurado
 cat componente.html | a11y-motor    # desde stdin
 ```
 
-Código de salida **1** si hay barreras, **0** si no, **2** si el fragmento no tiene elemento analizable. Es exactamente el mismo `understand`/`analyze` que corre en la web.
+Códigos de salida:
+
+| Código | Significa |
+|---|---|
+| `0` | sin barreras deterministas |
+| `1` | hay barreras |
+| `2` | el fragmento no tiene elemento analizable |
+| `3` | no se pudo leer la entrada (ruta inexistente, directorio, permisos) |
+| `4` | error inesperado del motor — un fallo del agente |
+
+`3` y `4` quieren decir **no hay veredicto**, y existen porque antes no se distinguían del `1`: Node sale con `1` ante una excepción no capturada, así que una ruta mal escrita salía con el mismo código que «he encontrado barreras», con `stdout` vacío y un volcado de pila. En `--json`, un fallo devuelve `{error, detalle, veredicto: null}` y **no** devuelve `summary` ni `barreras`, ni siquiera vacíos: una lista de barreras vacía se leería como página limpia.
+
+Es exactamente el mismo `understand`/`analyze` que corre en la web.
 
 ## Fuente única de verdad: la web se genera desde la librería
 
@@ -988,6 +1000,29 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 **En el cruce con axe, dos afirmaciones que no se podían sostener.** `crossCheck` fabricaba `{findings: []}` cuando el motor no llegaba a construir el modelo —texto suelto, un comentario, una cadena vacía—, y ese resultado entraba en la reconciliación como una comprobación limpia: «soloMotor: 0» era indistinguible de «el motor comprobó y no encontró nada». Y el «acuerdo» se construía solo porque coincidía el número de criterio: el motor acusando a `img.logo` y axe a otro `img` de la página salían como «acuerdo: 1». Casar los elementos exige la página abierta —lo hace la orquestación, no la reconciliación pura—, así que ahora se publica cuántos elementos trae cada fuente, que la coincidencia a nivel de elemento NO está comprobada, y que el motor no miró cuando no miró.
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
+
+### v0.69.0 — el entregable afirmaba una cobertura que no hubo, y un fallo del CLI se leía como un veredicto
+
+Dos defectos encontrados por accidente, los dos del mismo tipo: una salida que no dice lo que el agente sí sabe.
+
+**El hueco de la muestra no llegaba a la salida.** Medido con una muestra de cuatro páginas y una caída: `auditSite` registra la página en `paginasFallidas`, levanta el aviso «ATENCIÓN: 1 de 4 página(s) de la muestra NO se han podido auditar», se lo pasa al cuaderno para que no firme «no aplica en el sitio» desde las tres que sí cargaron, y `seguimiento.csv` lleva «3 de 4 página(s) analizadas» en cada fila. Todo eso ya estaba bien. Lo que imprimía `examples/auditar-sitio.mjs` —el script que produce los entregables, y lo único que se lee después de una pasada— era esto:
+
+```
+NO CONFORME
+  3 criterios fallan · 46 sin determinar · 6 conformes
+```
+
+Ni una palabra del hueco. Porque `rollup.conformidad` solo dice «Incompleta» cuando no falla nada —la escalera mira `fallan` antes que `sinAnalizar`, y eso está bien: una página sin mirar no puede volver conforme a un sitio que falla—, de modo que en cuanto aparece una barrera la incompletitud desaparece de la única frase que el script daba. Y el resumen seguía contando seis criterios conformes sobre una muestra de la que no se abrió la cuarta parte. Sus hermanos (`auditar-muestra.mjs`, `regresion-sitio.mjs`) sí lo imprimían: el que hace los entregables del cliente era el único callado.
+
+Ahora hay `lineasDeCobertura(sitio)` en `audit-run.js` —pura, con tests, y compartida para que los scripts no vuelvan a separarse— y el script la imprime **antes** de la conformidad, porque cambia cómo hay que leer todo lo que sigue. `auditoria.json` lleva además `paginasFallidas` y `avisos` arriba, no enterrados en `rollup`: `procedencia.muestra` lista las N urls como si las N se hubieran auditado, y eso es peor que el silencio.
+
+**Y el CLI salía con 1 tanto al encontrar barreras como al romperse.** Node sale con `1` ante una excepción no capturada, así que `a11y-motor fichero-que-no-existe.html` salía `1` con `stdout` vacío y un volcado de pila en stderr, exactamente igual que «he encontrado barreras». Un CI que hace `a11y-motor x.html || echo BARRERAS` canta barreras por una ruta mal escrita; un script que parsea `--json` recibe cero bytes, y si es indulgente con el parseo, una lista vacía de barreras se lee como página limpia. Ahora hay `3` (no pude leer la entrada) y `4` (error del motor), que solo ocupan casos que antes caían en el `1` ambiguo —nada de lo que ya salía `0`, `1` o `2` cambia—, y el objeto JSON de error no lleva `summary` ni `barreras`.
+
+Esto salió de un accidente propio: al reconstruir la copia de trabajo olvidé meter `bin/` en el tarball, el CLI no existía, y de los cuatro tests que corrieron contra un `MODULE_NOT_FOUND` tres se pusieron rojos y uno no. El que pasó era el que comprobaba `code === 1`: una aserción que no podía fallar en la dirección para la que estaba escrita, tapando que un fallo era indistinguible de un veredicto.
+
+**Tres sospechas descartadas midiendo**, que valen tanto como los dos arreglos: que `auditar-sitio.mjs` dejara CSV a medias al cortarse (no: no escribe nada hasta que `auditSite` termina); que hubiera criterios firmados conformes sin cobertura (`enPaginas` solo se rellena para veredictos no conformes, así que «visto en 0 de 4 páginas» era un artefacto de la consulta); y que `seguimiento.csv` —el que va al IRA— no dijera nada del hueco (sí lo dice, columna «Cobertura de la muestra», en todas las filas).
+
+809 tests unitarios (800 + 9). Ningún veredicto de ninguna capa de medición cambia: esto es lo que el agente *dice*, no lo que mide.
 
 ### v0.68.0 — el lector estaba leyendo otra ventana y el informe no lo dijo
 

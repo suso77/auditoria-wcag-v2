@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { seleccionarMuestra } from "../src/sampling.js";
-import { axeFindingsNuevos, criteriosEnSilencio, capasEfectivas, notaDeCapaApagada } from "../src/audit-run.js";
+import { axeFindingsNuevos, criteriosEnSilencio, capasEfectivas, notaDeCapaApagada, lineasDeCobertura } from "../src/audit-run.js";
+import { readFileSync } from "node:fs";
 import { WCAG22, understand, analyze, capaQueMide } from "../src/engine.js";
 import "./helpers.mjs"; // inyecta el DOMParser
 import { esConforme } from "../src/verdicts.js";
@@ -286,4 +287,61 @@ test("capa apagada: un criterio que solo mide el motor no lleva la nota", () => 
   const f = [{ c: { n: "1.1.1" }, verdict: "falla", evid: ["Imagen sin alternativa."] }];
   const tocados = notaDeCapaApagada(f, capasEfectivas({ dynamic: false, render: false, viewport: false, pixeles: false }), { sitio: false });
   assert.ok(!tocados.includes("1.1.1"), JSON.stringify(tocados));
+});
+
+/* ── El hueco de la muestra tiene que salir en la SALIDA, no solo en el objeto ──
+ *
+ * Medido con una muestra de 4 páginas y una caída: `auditSite` producía
+ * `paginasFallidas`, el aviso «ATENCIÓN: 1 de 4…» y `rollup.sinAnalizar`, y
+ * `seguimiento.csv` llevaba «3 de 4 página(s) analizadas» en cada fila. Pero
+ * `examples/auditar-sitio.mjs` —el script que hace los entregables— imprimía
+ * solo «NO CONFORME / 3 criterios fallan · 46 sin determinar · 6 conformes»,
+ * sin una palabra del hueco, porque `rollup.conformidad` únicamente dice
+ * «Incompleta» cuando no falla nada. */
+
+test("cobertura: una muestra completa no genera ninguna línea", () => {
+  assert.deepEqual(lineasDeCobertura({ rollup: { paginas: 3, paginasAnalizadas: 3, sinAnalizar: [] }, paginasFallidas: [] }), []);
+});
+
+test("cobertura: con un hueco lo dice con las dos cifras y la url", () => {
+  const l = lineasDeCobertura({
+    rollup: { paginas: 4, paginasAnalizadas: 3, sinAnalizar: [{ url: "https://x/c", error: "ERR_CONNECTION_REFUSED" }] },
+    paginasFallidas: [{ url: "https://x/c", error: "ERR_CONNECTION_REFUSED" }]
+  });
+  assert.ok(l.length >= 2, JSON.stringify(l));
+  assert.match(l[0], /INCOMPLETA/);
+  assert.match(l[0], /3 de 4/);
+  // Y lo que importa: que un criterio sin barreras no se lea como comprobado.
+  assert.match(l[0], /no está comprobado/i);
+  assert.match(l.join(" "), /https:\/\/x\/c/);
+  assert.match(l.join(" "), /ERR_CONNECTION_REFUSED/);
+});
+
+test("cobertura: sirve con solo rollup.sinAnalizar, sin paginasFallidas", () => {
+  /* Fail-safe: si quien llama trae el rollup pero no la lista de fallidas, la
+   * cobertura se calcula igual. Lo contrario —callarse por falta de un campo—
+   * es justo el defecto que esto arregla. */
+  const l = lineasDeCobertura({ rollup: { paginas: 8, paginasAnalizadas: 6, sinAnalizar: [{ url: "a" }, { url: "b" }] } });
+  assert.match(l[0], /6 de 8/);
+});
+
+test("cobertura: con muchas caídas no vuelca las 50, pero dice cuántas quedan", () => {
+  const caidas = Array.from({ length: 14 }, (_, i) => ({ url: "https://x/" + i, error: "timeout" }));
+  const l = lineasDeCobertura({ rollup: { paginas: 20, paginasAnalizadas: 6, sinAnalizar: caidas }, paginasFallidas: caidas });
+  assert.match(l[0], /6 de 20/);
+  assert.match(l[l.length - 1], /y 4 más/);
+});
+
+test("cobertura: el script de los entregables la imprime Y la escribe en el json", () => {
+  /* Este test existe porque el defecto no estaba en el motor sino en el script,
+   * y un motor correcto con un script callado produce un entregable que afirma
+   * una cobertura que no hubo. Sus hermanos (`auditar-muestra.mjs`,
+   * `regresion-sitio.mjs`) ya lo imprimían: el de los entregables era el único
+   * que no. Si alguien vuelve a quitarlo, esto se pone rojo. */
+  const src = readFileSync(new URL("../examples/auditar-sitio.mjs", import.meta.url), "utf8");
+  assert.match(src, /lineasDeCobertura/, "el script tiene que llamar a lineasDeCobertura");
+  assert.ok(src.indexOf("lineasDeCobertura(sitio)") < src.indexOf("rollup.conformidad.toUpperCase"),
+    "la cobertura va ANTES de la conformidad: cambia cómo hay que leer lo que sigue");
+  assert.match(src, /paginasFallidas: sitio\.paginasFallidas/, "auditoria.json tiene que llevar las páginas caídas");
+  assert.match(src, /avisos: sitio\.avisos/, "y los avisos del sitio");
 });

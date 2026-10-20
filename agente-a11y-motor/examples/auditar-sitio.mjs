@@ -13,7 +13,7 @@
  * Requiere Chromium de Playwright (o PW_CHROMIUM apuntando a uno ya instalado).
  */
 import { writeFile } from "fs/promises";
-import { muestrearSitio, auditSite, oawExport } from "../src/index.js";
+import { muestrearSitio, auditSite, oawExport, lineasDeCobertura } from "../src/index.js";
 
 const args = process.argv.slice(2);
 const flag = (n, def) => { const i = args.indexOf("--" + n); return i !== -1 ? args[i + 1] : def; };
@@ -71,10 +71,28 @@ await writeFile(F("seguimiento.csv"), out.csv.seguimiento, "utf8");
 await writeFile(F("auditoria.json"), JSON.stringify({
   muestra: { justificacion: sel.justificacion, paginas: sel.muestra, procedencia: sel.procedencia },
   procedencia: sitio.procedencia,
+  /* Las páginas que no cargaron, arriba y por su nombre. `rollup.sinAnalizar` ya
+   * las llevaba, pero enterradas; y `procedencia.muestra` lista las N urls como
+   * si las N se hubieran auditado, que es peor que el silencio: afirma una
+   * cobertura que no hubo. */
+  paginasFallidas: sitio.paginasFallidas || [],
+  avisos: sitio.avisos || [],
   coherencia: sitio.coherencia,
   rollup: sitio.rollup,
   barreras: out.barreras, seguimiento: out.seguimiento, fueraDeEN: out.fueraDeEN
 }, null, 2), "utf8");
+
+/* El hueco de la muestra, ANTES de la conformidad y no después.
+ *
+ * `rollup.conformidad` solo dice «Incompleta» si no falla nada, así que en cuanto
+ * aparece una barrera la incompletitud se caía de la única frase que este script
+ * imprimía, y el resumen seguía dando una cuenta de «conformes» sobre una muestra
+ * con agujeros. Va primero porque cambia cómo hay que leer todo lo que sigue. */
+const cobertura = lineasDeCobertura(sitio);
+if (cobertura.length) {
+  console.log("");
+  cobertura.forEach((l, i) => console.log((i === 0 ? "  ⚠ " : "   ") + l));
+}
 
 console.log("\n" + sitio.rollup.conformidad.toUpperCase());
 console.log("  " + sitio.rollup.resumen.fallan + " criterios fallan · " + sitio.rollup.resumen.revisar + " sin determinar · " + sitio.rollup.resumen.conformes + " conformes");

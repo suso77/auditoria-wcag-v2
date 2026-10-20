@@ -6,7 +6,26 @@
  *   a11y-motor componente.html --json     # informe en JSON
  *   cat componente.html | a11y-motor      # desde stdin
  *
- * Código de salida: 1 si hay barreras (útil en CI), 0 si no.
+ * CÓDIGOS DE SALIDA. Antes eran tres —0 sin barreras, 1 con barreras, 2 sin
+ * elemento analizable— y el 1 estaba compartido con el fallo: Node sale con 1
+ * ante una excepción no capturada, así que `a11y-motor fichero-que-no-existe.html`
+ * salía 1 con stdout VACÍO y un volcado de pila en stderr, exactamente igual que
+ * «he encontrado barreras». Medido: un CI que hace `a11y-motor x.html || echo
+ * BARRERAS` canta barreras por una ruta mal escrita, y un script que parsea
+ * `--json` recibe cero bytes donde esperaba un informe — y si es indulgente con
+ * el parseo, una lista de barreras vacía se lee como página limpia. Es la regla
+ * de oro del proyecto en el borde del proceso: el fallo no puede parecerse al
+ * veredicto.
+ *
+ *   0  sin barreras deterministas
+ *   1  hay barreras                       ← los tres de siempre, sin cambios
+ *   2  sin elemento analizable
+ *   3  no pude leer la entrada            ← ruta inexistente, directorio, permiso
+ *   4  error inesperado del motor         ← esto es un fallo del agente, no tuyo
+ *
+ * 3 y 4 son nuevos y solo ocupan casos que antes caían en el 1 ambiguo: nada de
+ * lo que ya salía 0, 1 o 2 cambia de código. Y los dos quieren decir lo mismo de
+ * fondo: NO HAY VEREDICTO.
  */
 import { readFile } from "fs/promises";
 import { DOMParser } from "linkedom";
@@ -19,8 +38,32 @@ const asJson = args.includes("--json");
 const wantsHelp = args.includes("--help") || args.includes("-h");
 const file = args.find((a) => !a.startsWith("-"));
 
+/* Un fallo se cuenta como fallo, no como informe.
+ *
+ * En `--json` el objeto de error NO lleva `summary` ni `barreras`, ni siquiera
+ * vacíos: un consumidor que mire `parsed.barreras.length === 0` concluiría
+ * «página limpia» a partir de una excepción. Lleva `error` y nada más, de modo
+ * que cualquier lectura razonable falle en vez de absolver. */
+function muere(codigo, mensaje, detalle) {
+  if (asJson) console.log(JSON.stringify({ error: mensaje, detalle: detalle || null, veredicto: null }, null, 2));
+  else console.error("✕ " + mensaje + (detalle ? "\n  " + detalle : ""));
+  process.exit(codigo);
+}
+
 if (wantsHelp) {
-  console.log("Uso: a11y-motor [archivo.html] [--json]\n  Analiza un componente HTML (WCAG 2.2 A+AA / EN 301 549).\n  Sin archivo, lee de stdin. Salida 1 si hay barreras.");
+  console.log([
+    "Uso: a11y-motor [archivo.html] [--json]",
+    "  Analiza un componente HTML (WCAG 2.2 A+AA / EN 301 549).",
+    "  Sin archivo, lee de stdin.",
+    "",
+    "  Códigos de salida:",
+    "    0  sin barreras deterministas",
+    "    1  hay barreras",
+    "    2  sin elemento analizable en el fragmento",
+    "    3  no se pudo leer la entrada",
+    "    4  error inesperado del motor",
+    "  3 y 4 quieren decir que NO hay veredicto: no los confundas con el 1."
+  ].join("\n"));
   process.exit(0);
 }
 
@@ -36,16 +79,41 @@ async function readStdin() {
   return data;
 }
 
-const html = file ? await readFile(file, "utf8") : await readStdin();
-
-const model = understand(html);
-if (!model) {
-  if (asJson) console.log(JSON.stringify({ error: "sin-elemento-analizable" }));
-  else console.error("No se encontró ningún elemento analizable en el fragmento.");
-  process.exit(2);
+/* Leer la entrada es lo PRIMERO que puede fallar y lo que más veces falla: una
+ * ruta mal escrita, un directorio, un fichero sin permiso. Nada de eso es un
+ * veredicto, así que sale con 3 y lo dice en una frase en vez de volcar la pila
+ * de Node y salir con el mismo 1 que «hay barreras». */
+let html;
+try {
+  html = file ? await readFile(file, "utf8") : await readStdin();
+} catch (e) {
+  const codigo = (e && e.code) || "";
+  const porQue = codigo === "ENOENT" ? "no existe"
+    : codigo === "EISDIR" ? "es un directorio, no un fichero"
+    : codigo === "EACCES" || codigo === "EPERM" ? "no se puede leer (permisos)"
+    : ((e && e.message) || String(e)).split("\n")[0];
+  muere(3, "No pude leer " + (file ? "«" + file + "»" : "la entrada estándar") + ": " + porQue,
+    "No hay informe: esto no es ni «hay barreras» ni «no hay barreras».");
 }
 
-const a = analyze(model);
+/* Y de aquí al final, cualquier excepción del motor sale con 4.
+ *
+ * Sin esto, un fallo interno —un hallazgo malformado, un criterio que revienta—
+ * salía con el 1 de Node, que es el código de «hay barreras». Un fallo del
+ * agente presentándose como un resultado del agente. */
+let a, model;
+try {
+  model = understand(html);
+  if (!model) {
+    if (asJson) console.log(JSON.stringify({ error: "sin-elemento-analizable", veredicto: null }, null, 2));
+    else console.error("No se encontró ningún elemento analizable en el fragmento.");
+    process.exit(2);
+  }
+  a = analyze(model);
+} catch (e) {
+  muere(4, "El motor falló analizando el fragmento: " + ((e && e.message) || String(e)).split("\n")[0],
+    "Esto es un fallo del agente, no de tu HTML. No hay veredicto.");
+}
 const fallas = a.findings.filter((f) => f.verdict === "falla");
 
 if (asJson) {

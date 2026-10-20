@@ -113,6 +113,57 @@ export function capasEfectivas(capas) {
  * ha medido, no puede leerse como medido. Así que además de decirlo, una
  * conformidad firmada con la capa apagada se baja a `revisar`.
  */
+/**
+ * Las líneas que CUALQUIER salida tiene que dar cuando la muestra tiene huecos.
+ *
+ * `auditSite` ya sabía qué páginas se cayeron: las guarda en `paginasFallidas`,
+ * las pone en `avisos` y se las pasa al cuaderno para que no firme «no aplica en
+ * el sitio» a partir de las que sí cargaron. Y `seguimiento.csv` lleva la columna
+ * «Cobertura de la muestra» en cada fila. Todo eso estaba bien.
+ *
+ * Lo que no estaba era la salida de `auditar-sitio.mjs`, que es el script que
+ * produce los entregables y lo único que se lee después de una pasada. Con una
+ * página de cuatro caída imprimía:
+ *
+ *     NO CONFORME
+ *       3 criterios fallan · 46 sin determinar · 6 conformes
+ *
+ * y ni una palabra del hueco. Porque `rollup.conformidad` solo dice «Incompleta»
+ * cuando NO falla nada —la escalera mira `fallan` antes que `sinAnalizar`, y eso
+ * está bien, que una página sin mirar no puede volver conforme a un sitio que
+ * falla—, de modo que en cuanto hay una barrera la incompletitud desaparece de la
+ * única frase que el script imprimía. Sus hermanos (`auditar-muestra.mjs`,
+ * `regresion-sitio.mjs`) sí la imprimían: el que hace los entregables del cliente
+ * era el único callado.
+ *
+ * Es la regla de oro otra vez: seis criterios presentados como conformes sobre una
+ * muestra de la que no se abrió la cuarta parte. Así que esto vive aquí, al lado
+ * del motor y con tests, y no copiado en tres scripts que pueden volver a
+ * separarse. Devuelve [] cuando la muestra está completa.
+ */
+export function lineasDeCobertura(sitio) {
+  const s = sitio || {};
+  const r = s.rollup || {};
+  const fallidas = (s.paginasFallidas && s.paginasFallidas.length)
+    ? s.paginasFallidas
+    : (r.sinAnalizar || []);
+  if (!fallidas.length) return [];
+  const total = r.paginas || (s.procedencia && s.procedencia.paginas) || fallidas.length;
+  const analizadas = (typeof r.paginasAnalizadas === "number")
+    ? r.paginasAnalizadas
+    : Math.max(0, total - fallidas.length);
+  const lineas = [
+    "MUESTRA INCOMPLETA: " + analizadas + " de " + total + " página(s) analizadas. " +
+    "Lo que diga este informe NO cubre la(s) que faltan, y un criterio sin barreras " +
+    "en las analizadas no está comprobado en las que no se abrieron."
+  ];
+  fallidas.slice(0, 10).forEach(function (f) {
+    lineas.push("  · " + ((f && f.url) || "(sin url)") + " — " + ((f && f.error) || "no se obtuvo ningún hallazgo"));
+  });
+  if (fallidas.length > 10) lineas.push("  · … y " + (fallidas.length - 10) + " más");
+  return lineas;
+}
+
 export function notaDeCapaApagada(findings, capas, opts) {
   opts = opts || {};
   const porCrit = {};
