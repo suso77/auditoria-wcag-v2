@@ -3030,6 +3030,12 @@
    * leyéndolo.
    */
   const TOPE_SELECTORES = 10;
+  /**
+   * La forma de una evidencia: su texto con los contenidos entre «» enmascarados.
+   *
+   * Es lo que permite reconocer «el mismo hallazgo» cuando lo único que cambia es
+   * el texto del elemento. Se exporta para poder probarla sin montar un informe.
+   */
   // Una fila por ELEMENTO afectado, igual que src/report-oaw.js: un hallazgo
   // con 7 nodos son 7 barreras en el IRA, no una con siete nombres pegados.
   const COLS_CSV = [

@@ -349,12 +349,84 @@ export function toCsv(rows, columns) {
  * leyéndolo.
  */
 const TOPE_SELECTORES = 10;
+/**
+ * La forma de una evidencia: su texto con los contenidos entre «» enmascarados.
+ *
+ * Es lo que permite reconocer «el mismo hallazgo» cuando lo único que cambia es
+ * el texto del elemento. Se exporta para poder probarla sin montar un informe.
+ */
+export function formaDeEvidencia(e) {
+  return String(e == null ? "" : e)
+    .replace(/«[^»]*»/g, "«·»")
+    // El recuento que esta misma función añade al agrupar no puede entrar en la
+    // clave: si entrara, agrupar dos veces daría familias distintas.
+    .replace(/\s*\[\d+\s+elementos[^\]]*\]/g, "")
+    .replace(/\s+/g, " ").trim();
+}
+
+/**
+ * El esqueleto de un selector: la misma ruta sin los índices de posición.
+ *
+ * `article:nth-of-type(7) > div > a` y `article:nth-of-type(31) > div > a` son
+ * el mismo componente en dos sitios de la lista. Lo que NO colapsa son dos rutas
+ * distintas, así que dos componentes diferentes nunca se mezclan.
+ */
+export function esqueletoSelector(sel) {
+  return String(sel == null ? "" : sel).replace(/:nth-(of-type|child)\(\d+\)/g, "").replace(/\s+/g, " ").trim();
+}
+
 export function barrerasAgrupadas(findings, ctx) {
   const rows = filasPorElemento(findings, ctx);
   const grupos = [];
   const ix = {};
+  /* ── UNA FAMILIA ES UN DEFECTO, NO UN ELEMENTO ─────────────────────────────
+   *
+   * La clave era `[criterio, página, EVIDENCIA, subcriterio]`, y la evidencia
+   * lleva dentro los textos del elemento. Mientras esos textos son iguales en
+   * todas las instancias —el caso de visitspain, donde la familia mayor tenía 63
+   * rutas— la agrupación funciona. En cuanto cambian, no agrupa nada.
+   *
+   * Medido en la pasada `ja6` de jesusaccesible.com: de 134 filas, 113 eran
+   * 2.5.3 y 93 estaban en `/blog`. Reducidas a su esqueleto de selector son
+   * CUATRO patrones:
+   *
+   *     85 filas  … ul > li > article > div > div > a    visible «Leer guía»
+   *      6 filas  … section > div > article > div > a    visible «Leer artículo»
+   *      1 fila   header > nav > a                       visible «JFA»
+   *      1 fila   footer > … > a                         visible «LinkedIn Profesional»
+   *
+   * Las 85 son UN componente repetido 85 veces, con un solo arreglo para todas:
+   * el nombre accesible sustituye al texto visible en vez de contenerlo. Pero
+   * cada tarjeta lleva el título de su artículo, así que cada evidencia era
+   * distinta y salían 85 familias en el fichero que promete «una fila por
+   * familia».
+   *
+   * Eso no es solo ilegible: envenena la medición de precisión. Contar por filas
+   * pesa un único error de autoría 85 veces, de modo que la cifra depende de
+   * cuántos artículos tenga el blog y no de lo que acierta el agente.
+   *
+   * Así que la clave usa la FORMA de la evidencia —con los textos entre comillas
+   * angulares enmascarados— y el ESQUELETO del selector, sin los índices
+   * `:nth-of-type`. Dos elementos del mismo componente con el mismo hallazgo son
+   * una familia; dos componentes distintos siguen separados aunque el hallazgo
+   * tenga la misma forma, porque el esqueleto no coincide. Y lo que se enmascara
+   * no se pierde: si dentro de la familia esos textos variaban, la evidencia lo
+   * dice con ejemplos, que es lo que necesita quien va a arreglarlo.
+   */
   rows.forEach(function (r) {
-    const k = [r.criterio, r.pagina, r.evidencia, r.subcriterioOAW || ""].join("\u0000");
+    /* El esqueleto es la PRUEBA de que dos filas son el mismo componente. Si no
+     * hay selector —un hallazgo de ámbito de página, un nodo sin ruta— no hay
+     * prueba, y entonces NO se enmascara nada: se usa la evidencia literal, que
+     * es exactamente lo que hacía la clave de antes. Así este cambio solo puede
+     * colapsar filas de las que se tiene la ruta para demostrar que coinciden, y
+     * nunca fusiona más de lo que ya fusionaba.
+     *
+     * Lo encontró un test mío al fallar: construí el caso sin `path` y el logo
+     * del header se fusionó con el del footer. El test estaba mal —en los datos
+     * reales la ruta viene— pero el hueco que enseñó era de verdad. */
+    const esq = esqueletoSelector(r.selector);
+    const forma = esq ? formaDeEvidencia(r.evidencia) : r.evidencia;
+    const k = [r.criterio, r.pagina, forma, esq, r.subcriterioOAW || ""].join("\u0000");
     if (ix[k] === undefined) { ix[k] = grupos.length; grupos.push([]); }
     grupos[ix[k]].push(r);
   });
@@ -390,8 +462,22 @@ export function barrerasAgrupadas(findings, ctx) {
         : elsUnicos.join(" · "),
       /* El recuento va también en la evidencia: el Word y el IRA leen ese texto,
        * y «63 elementos» es parte del hallazgo, no un adorno de la hoja. */
+      /* Y si dentro de la familia los textos CAMBIABAN, se dice con ejemplos.
+       * Enmascararlos sirve para reconocer el mismo defecto, no para esconder
+       * datos: quien va a arreglar 85 tarjetas necesita ver que el patrón es
+       * siempre el mismo y un par de casos concretos para comprobarlo. */
       evidencia: g.length > 1
-        ? p.evidencia + " [" + g.length + " elementos con esta misma medida en esta página]"
+        ? p.evidencia + " [" + g.length + " elementos con esta misma medida en esta página" +
+          (function () {
+            const distintas = [];
+            g.forEach(function (r) { if (distintas.indexOf(r.evidencia) === -1) distintas.push(r.evidencia); });
+            if (distintas.length < 2) return "";
+            const muestras = distintas.slice(1, 3).map(function (e) {
+              const t = String(e).match(/«[^»]*»/g);
+              return t ? t.join(" → ") : String(e).slice(0, 60);
+            });
+            return "; los textos cambian de uno a otro (" + distintas.length + " variantes), por ejemplo: " + muestras.join(" · ");
+          })() + "]"
         : p.evidencia
     });
   });

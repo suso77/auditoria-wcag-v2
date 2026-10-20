@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { oawExport, barreras, barrerasAgrupadas, seguimiento, motivoPendiente } from "../src/index.js";
+import { oawExport, barreras, barrerasAgrupadas, seguimiento, motivoPendiente, formaDeEvidencia, esqueletoSelector } from "../src/index.js";
 
 const F = (n, lvl, verdict, sev, nodes, evid) => ({ c: { n, lvl, t: n }, verdict, sev, nodes, evid });
 
@@ -346,4 +346,105 @@ test("seguimiento: «No evaluado» tampoco se queda sin motivo", () => {
     return !/^(Falla|Correcto|No aplica)/.test(res) && !String(c[7] || "").replace(/"/g, "").trim();
   });
   assert.deepEqual(mudas.map((l) => l.split(";")[2]), []);
+});
+
+/* ── Una familia es un defecto, no un elemento ────────────────────────────────
+ *
+ * La clave de agrupación era `[criterio, página, EVIDENCIA, subcriterio]`, y la
+ * evidencia lleva dentro los textos del elemento. Mientras son iguales en todas
+ * las instancias —visitspain, donde la familia mayor tenía 63 rutas— agrupa
+ * bien; en cuanto cambian, no agrupa nada.
+ *
+ * Medido en la pasada `ja6` de jesusaccesible.com: 134 familias de 147 filas por
+ * elemento, y 113 de esas familias eran 2.5.3, con 93 en `/blog`. Reducidas a su
+ * esqueleto de selector son cuatro patrones, y 85 de las 93 son UN componente
+ * repetido 85 veces: tarjetas «Leer guía» cuyo nombre accesible es el título de
+ * la guía. Un solo arreglo para las 85, y 85 filas en el fichero que promete
+ * «una fila por familia».
+ *
+ * Y envenenaba la medición: contar por filas pesa un único error de autoría 85
+ * veces, así que la precisión dependía de cuántos artículos tiene el blog.
+ *
+ * Con la clave nueva, sobre esas mismas 147 filas: 134 familias → 56, y 2.5.3
+ * 113 → 35, sin que ningún otro criterio se mueva. */
+
+test("forma de evidencia: enmascara los textos y NO deja entrar el recuento", () => {
+  const e = "link «Leer guía»: El texto visible es «Leer guía» y el nombre accesible es «WCAG 1.1.1 Contenido no textual», que no lo contiene.";
+  assert.equal(formaDeEvidencia(e), "link «·»: El texto visible es «·» y el nombre accesible es «·», que no lo contiene.");
+  /* El recuento lo añade la propia agrupación. Si entrara en la clave, agrupar
+   * dos veces daría familias distintas: una agrupación no idempotente es un
+   * informe que cambia según cuántas veces lo generes. */
+  assert.equal(formaDeEvidencia(e + " [85 elementos con esta misma medida en esta página]"), formaDeEvidencia(e));
+});
+
+test("esqueleto de selector: quita los índices de posición y nada más", () => {
+  assert.equal(esqueletoSelector("html > body > ul > li:nth-of-type(31) > article:nth-of-type(1) > div > a"),
+    "html > body > ul > li > article > div > a");
+  assert.equal(esqueletoSelector("div:nth-child(4) > a"), "div > a");
+  // Dos rutas distintas NO colapsan: dos componentes nunca se mezclan.
+  assert.notEqual(esqueletoSelector("header > nav > a"), esqueletoSelector("footer > nav > a"));
+});
+
+test("agrupación: 85 tarjetas del mismo componente son UNA familia", () => {
+  const filas = [];
+  for (let i = 1; i <= 85; i++) {
+    filas.push(F("2.5.3", "A", "falla", "grave",
+      [{ locator: "a.card", path: "html > body > ul > li:nth-of-type(" + i + ") > article > div > a" }],
+      ["link «Leer guía»: El texto visible es «Leer guía» y el nombre accesible es «WCAG " + i + " Algo», que no lo contiene."]));
+  }
+  const g = barrerasAgrupadas(filas, { url: "https://x/blog" });
+  assert.equal(g.length, 1, "85 instancias de un componente son un defecto, no 85");
+  assert.equal(g[0].instancias, 85);
+  // Y lo que se enmascaró para agrupar no se pierde: se dice que variaba, con ejemplos.
+  assert.match(g[0].evidencia, /85 elementos/);
+  assert.match(g[0].evidencia, /los textos cambian de uno a otro \(85 variantes\)/);
+  assert.match(g[0].evidencia, /por ejemplo:/);
+});
+
+test("agrupación: dos componentes distintos NO se fusionan aunque el hallazgo tenga la misma forma", () => {
+  /* Este es el test que impide que el arreglo se pase de listo. El esqueleto es
+   * la garantía: misma forma de evidencia, rutas distintas, familias distintas. */
+  const ev = ["link «JFA»: El texto visible es «JFA» y el nombre accesible es «Ir a la página de inicio», que no lo contiene."];
+  const filas = [
+    F("2.5.3", "A", "falla", "grave", [{ locator: "a.logo", path: "html > body > header > nav > a" }], ev),
+    F("2.5.3", "A", "falla", "grave", [{ locator: "a.logo", path: "html > body > footer > div > a" }], ev)
+  ];
+  const g = barrerasAgrupadas(filas, { url: "https://x/" });
+  assert.equal(g.length, 2, "el logo del header y el del footer son dos sitios que arreglar");
+});
+
+test("agrupación: SIN selector no se enmascara nada, y no se fusiona más que antes", () => {
+  /* Fail-safe que encontró el test de arriba al fallar. El esqueleto es la
+   * prueba de que dos filas son el mismo componente; sin ruta no hay prueba, así
+   * que se usa la evidencia literal —la clave de antes— y este cambio no puede
+   * colapsar nada que no colapsara ya. */
+  const filas = [
+    F("4.1.2", "A", "falla", "grave", [{ locator: "button" }], ["Referencia a «uno» que no existe."]),
+    F("4.1.2", "A", "falla", "grave", [{ locator: "button" }], ["Referencia a «otro» que no existe."])
+  ];
+  const g = barrerasAgrupadas(filas, { url: "https://x/" });
+  assert.equal(g.length, 2, "sin ruta, dos evidencias distintas siguen siendo dos familias");
+});
+
+test("agrupación: el caso que ya funcionaba sigue funcionando", () => {
+  /* Regresión de visitspain: evidencias IDÉNTICAS en el mismo componente. Si el
+   * arreglo rompiera esto, cambiaría una agrupación buena por otra. */
+  const filas = [1, 2, 3].map((i) => F("1.4.3", "AA", "falla", "grave",
+    [{ locator: "span", path: "html > body > main > p:nth-of-type(" + i + ") > span" }],
+    ["Contraste 2,63:1 sobre blanco."]));
+  const g = barrerasAgrupadas(filas, { url: "https://x/" });
+  assert.equal(g.length, 1);
+  assert.equal(g[0].instancias, 3);
+  // Aquí los textos NO variaban, así que no se dice que varíen.
+  assert.ok(!/los textos cambian/.test(g[0].evidencia), g[0].evidencia);
+});
+
+test("agrupación: agrupar dos veces da lo mismo (idempotente)", () => {
+  const filas = [1, 2, 3].map((i) => F("2.5.3", "A", "falla", "grave",
+    [{ locator: "a.card", path: "html > body > ul > li:nth-of-type(" + i + ") > a" }],
+    ["link «Leer»: visible «Leer», nombre «Título " + i + "», que no lo contiene."]));
+  const una = barrerasAgrupadas(filas, { url: "https://x/" });
+  assert.equal(una.length, 1);
+  // La forma de la evidencia YA agrupada tiene que seguir siendo la misma forma.
+  assert.equal(formaDeEvidencia(una[0].evidencia), formaDeEvidencia(filas[0].evid[0]));
 });

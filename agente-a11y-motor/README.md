@@ -1001,6 +1001,43 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.74.0 — ochenta y cinco filas eran un defecto
+
+La pasada `ja6` —la primera sobre el sitio de verdad: 124 páginas rastreadas, 9 plantillas, muestra de 12— dio **134 barreras**, de las que **113 eran 2.5.3 y 93 estaban en `/blog`**. Reducidas a su esqueleto de selector son cuatro patrones:
+
+```
+85 filas   … ul > li > article > div > div > a     visible «Leer guía»
+ 6 filas   … section > div > article > div > a     visible «Leer artículo»
+ 1 fila    header > nav > a                        visible «JFA»
+ 1 fila    footer > … > a                          visible «LinkedIn Profesional»
+```
+
+**Las 113 son reales**, y del tipo más clásico que existe: el nombre accesible SUSTITUYE al texto visible en vez de contenerlo —`Leer guía` → `WCAG 1.1.1 Contenido no textual`—, que es el ejemplo canónico de F96 y del Understanding de 2.5.3. Quien usa voz dice «leer guía» mirando la pantalla y no pasa nada. Lo que estaba mal no era la precisión: era el informe.
+
+Porque 85 de esas filas son **un componente repetido 85 veces, con un solo arreglo para todas**, en el fichero que promete «una fila por familia». La clave de agrupación era `[criterio, página, EVIDENCIA, subcriterio]`, y la evidencia lleva dentro los textos del elemento: mientras son iguales en todas las instancias —visitspain, donde la familia mayor tenía 63 rutas— agrupa bien; en cuanto cambian, no agrupa nada. Cada tarjeta llevaba el título de su guía, así que 85 títulos eran 85 familias.
+
+Y eso no solo es ilegible: **envenena la medición de precisión**, porque contar por filas pesa un único error de autoría 85 veces. La cifra dependía de cuántos artículos tiene el blog.
+
+Ahora la clave usa la **forma** de la evidencia —textos entre «» enmascarados— y el **esqueleto** del selector, sin los índices `:nth-of-type`. Medido sobre las 147 filas por elemento de `ja6`:
+
+| criterio | familias antes | después |
+|---|---|---|
+| 2.5.3 | 113 | **35** |
+| 2.4.11 | 11 | 11 |
+| 1.4.10 | 4 | 4 |
+| 2.4.7 | 3 | 3 |
+| 1.3.1 | 2 | 2 |
+| 2.1.2 | 1 | 1 |
+| **total** | **134** | **56** |
+
+Solo colapsa lo que debe: ningún otro criterio se mueve una fila. El esqueleto es la garantía — dos componentes con rutas distintas no se fusionan aunque el hallazgo tenga la misma forma. Y lo enmascarado no se pierde: la familia dice que los textos variaban, cuántas variantes hay y dos ejemplos, que es lo que necesita quien va a arreglar 85 tarjetas.
+
+**Un fail-safe que encontró un test mío al fallar.** Construí el caso del logo sin `path` y el del header se fusionó con el del footer: el test estaba mal —en los datos reales la ruta viene— pero el hueco era de verdad. Si no hay selector no hay prueba de que dos filas sean el mismo componente, así que no se enmascara nada y se usa la evidencia literal, que es la clave de antes. Este cambio solo puede colapsar filas de las que se tiene la ruta para demostrarlo.
+
+La agrupación es además **idempotente**: el recuento que ella misma añade a la evidencia no entra en la clave. Si entrara, agrupar dos veces daría familias distintas, y un informe que cambia según cuántas veces lo generes no es un informe.
+
+842 tests unitarios (835 + 7). Lleva los dos bundles: `report-oaw.js` entra en `extension/motor.js` y su región CSV en `web/agente-a11y.html`.
+
 ### v0.73.0 — una espera fija no es una medición, y la auditoría esperaba a ciegas
 
 v0.72.0 arregló el rastreo y al medirlo en jesusaccesible.com salió una cifra que obliga a esto: **53 de 60 páginas cambiaban entre la primera lectura y la segunda**, y el rastreo necesitó 500 ms para ver siquiera los enlaces. Lo que eso destapó de la pasada anterior:
