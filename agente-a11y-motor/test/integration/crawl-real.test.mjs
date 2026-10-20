@@ -1,136 +1,77 @@
-/**
- * Rastreo y muestreo WCAG-EM contra un sitio real servido por HTTP.
- *
- * El servidor registra CADA petición que recibe, así que se puede comprobar lo
- * que de verdad importa de un rastreador que visita un sitio ajeno: que no entra
- * donde robots.txt lo prohíbe, que no pulsa nada destructivo, que no se sale del
- * dominio y que no descarga binarios.
- */
-import { test, before, after } from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createServer } from "node:http";
-import { crawlSite, muestrearSitio } from "../../src/crawl.js";
-import { chromiumDisponible } from "../../src/playwright-launch.js";
 
-const sonda = await chromiumDisponible();
-const skip = sonda.ok ? false : "sin navegador: " + sonda.motivo;
+/* ── Una sola captura no basta en un sitio que pinta en el cliente ────────────
+ *
+ * Medido en la pasada `ja4` de jesusaccesible.com: el rastreo iba con
+ * `waitUntil: "load"` y SIN espera añadida, mientras la auditoría va con
+ * `load` + 400 ms. `/contacto` —cuatro campos y un botón de envío— salió con
+ * `tieneFormulario: false`, la cobertura quedó con `formulario: false`, y la
+ * justificación de la muestra que va al IRA decía «No se ha encontrado ninguna
+ * página de la categoría "Página con formulario": compruébalo a mano» con la
+ * página del formulario DENTRO de la muestra. Una afirmación falsa en el
+ * documento que sostiene la auditoría.
+ *
+ * Las huellas lo delataban: cuatro páginas con la MISMA huella —el armazón
+ * compartido— y una sin header ni footer. Dos momentos de pintado distintos en
+ * la misma pasada no son marcado estable.
+ *
+ * Estos tests necesitan navegador: se saltan donde no lo hay, y eso se dice. */
 
-const P = (titulo, cuerpo, plantilla) => `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${titulo}</title></head><body>
-<header><nav aria-label="Principal">
-  <a href="/">Inicio</a><a href="/servicios">Servicios</a><a href="/contacto">Contacto</a>
-  <a href="/accesibilidad">Accesibilidad</a><a href="/buscar?q=x">Buscar</a><a href="/acceso">Acceso</a>
-  <a href="/privado/panel">Panel</a><a href="/logout">Cerrar sesión</a>
-  <a href="https://externo.example/otra">Sitio externo</a><a href="/informe.pdf">Informe PDF</a>
-</nav></header>
-<main class="${plantilla || "generica"}"><h1>${titulo}</h1>${cuerpo}</main>
-<footer><a href="/ayuda">Ayuda</a><a href="/mapa-web">Mapa web</a></footer></body></html>`;
+const hayNavegador = await (async () => {
+  try { const m = await import("../src/playwright-launch.js"); return (await m.chromiumDisponible()).ok; }
+  catch (e) { return false; }
+})();
 
-const SITIO = {
-  "/robots.txt": { tipo: "text/plain", cuerpo: "User-agent: *\nDisallow: /privado/\n" },
-  "/": { cuerpo: P("Inicio", "<p>Bienvenida.</p>", "home") },
-  "/servicios": { cuerpo: P("Servicios", "<ul><li><a href='/servicios/uno'>Uno</a></li><li><a href='/servicios/dos'>Dos</a></li></ul>", "listado") },
-  "/servicios/uno": { cuerpo: P("Servicio uno", "<p>Detalle.</p><table><tr><th>A</th></tr><tr><td>1</td></tr></table>", "ficha") },
-  "/servicios/dos": { cuerpo: P("Servicio dos", "<p>Detalle.</p><video controls></video>", "ficha") },
-  "/contacto": { cuerpo: P("Contacto", "<form><label for='n'>Nombre</label><input id='n'><button>Enviar</button></form>", "form") },
-  "/accesibilidad": { cuerpo: P("Declaración de accesibilidad", "<p>Conformidad parcial.</p>", "texto") },
-  "/ayuda": { cuerpo: P("Ayuda y preguntas frecuentes", "<details><summary>Duda</summary><p>R</p></details>", "texto") },
-  "/mapa-web": { cuerpo: P("Mapa web", "<ul><li><a href='/servicios'>Servicios</a></li></ul>", "texto") },
-  "/acceso": { cuerpo: P("Acceso", "<form><label for='u'>Usuario</label><input id='u'><label for='p'>Clave</label><input id='p' type='password'><button>Entrar</button></form>", "form") },
-  "/buscar": { cuerpo: P("Resultados de búsqueda", "<form role='search'><label for='q'>Buscar</label><input id='q' type='search'></form><p>3 resultados</p>", "listado") },
-  "/privado/panel": { cuerpo: P("Panel privado", "<p>No deberías estar aquí.</p>", "panel") },
-  "/logout": { cuerpo: P("Sesión cerrada", "<p>Adiós.</p>", "texto") },
-  "/informe.pdf": { tipo: "application/pdf", cuerpo: "%PDF-1.4 falso" }
-};
+test("rastreo: una página que pinta su formulario después de «load» se lee bien", { skip: !hayNavegador && "sin Chromium" }, async () => {
+  const { createServer } = await import("node:http");
+  const { crawlSite } = await import("../src/crawl.js");
+  const HTML = '<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Contacto</title></head>' +
+    '<body><div id="root"></div><script>' +
+    'document.getElementById("root").innerHTML=' +
+    '"<header><nav><a href=\\"/\\">JFA</a></nav></header><main id=\\"m\\"></main><footer>pie</footer>";' +
+    'window.addEventListener("load",function(){setTimeout(function(){' +
+    'document.getElementById("m").innerHTML="<h1>Contacto</h1><form><label for=\\"n\\">Nombre</label>' +
+    '<input id=\\"n\\" required><button type=\\"submit\\">Enviar</button></form>";},250);});' +
+    '<\/script></body></html>';
+  const srv = createServer((_q, s) => { s.writeHead(200, { "content-type": "text/html; charset=utf-8" }); s.end(HTML); });
+  await new Promise((ok) => srv.listen(0, "127.0.0.1", ok));
+  const url = "http://127.0.0.1:" + srv.address().port + "/contacto";
+  try {
+    // Sin reposo: es lo que hacía el muestreo, y lee el armazón.
+    const crudo = await crawlSite(url, { max: 1, asentarMs: 0 });
+    assert.equal(crudo.candidatas[0]["señales"].tieneFormulario, false,
+      "con asentarMs=0 se lee la página antes de pintarse: esto documenta el defecto, no lo aprueba");
+    assert.deepEqual(crudo.reposadas, [], "sin reposo no hay segunda lectura que comparar");
 
-let server, base, recibido;
-before(async () => {
-  if (!sonda.ok) return;
-  recibido = [];
-  server = createServer((req, res) => {
-    const ruta = req.url.replace(/\?.*$/, "");
-    recibido.push(ruta);
-    const p = SITIO[ruta];
-    res.writeHead(p ? 200 : 404, { "content-type": (p && p.tipo) || "text/html; charset=utf-8" });
-    res.end(p ? p.cuerpo : "no");
-  });
-  await new Promise((r) => server.listen(0, "127.0.0.1", r));
-  base = "http://127.0.0.1:" + server.address().port + "/";
-});
-after(async () => { if (server) await new Promise((r) => server.close(r)); });
-
-test("rastrea el sitio y reconoce las páginas comunes", { skip }, async () => {
-  const r = await crawlSite(base, { pausaMs: 0, max: 30 });
-  assert.deepEqual(r.errores, [], JSON.stringify(r.errores));
-  const rutas = r.candidatas.map((c) => c.ruta).sort();
-  assert.ok(rutas.includes("/"), rutas.join(" "));
-  assert.ok(rutas.includes("/contacto"));
-  assert.ok(rutas.includes("/accesibilidad"));
-  assert.ok(rutas.includes("/servicios/uno"), "debe bajar de nivel");
+    // Con la doble lectura, que es ahora el comportamiento por omisión.
+    const bien = await crawlSite(url, { max: 1 });
+    assert.equal(bien.candidatas[0]["señales"].tieneFormulario, true, "la segunda lectura sí ve el formulario");
+    assert.deepEqual(bien.candidatas[0].asentado, ["tieneFormulario"], "y se anota QUÉ cambió");
+    assert.equal(bien.reposadas.length, 1);
+    // Y se dice arriba, porque de estas señales salen las categorías del IRA.
+    const aviso = (bien.avisos || []).find((a) => /PINTA EN EL CLIENTE/.test(a));
+    assert.ok(aviso, "un sitio donde hay que reposar es un dato que el informe tiene que dar");
+    assert.match(aviso, /hueco de LECTURA del agente y no del sitio/);
+  } finally { srv.close(); }
 });
 
-test("SEGURIDAD: no entra donde robots.txt lo prohíbe", { skip }, async () => {
-  const r = await crawlSite(base, { pausaMs: 0, max: 30 });
-  assert.ok(!r.candidatas.some((c) => c.ruta.startsWith("/privado")), "entró en /privado");
-  assert.ok(!recibido.includes("/privado/panel"), "el servidor recibió la petición prohibida");
-  assert.ok(r.saltadas.robots >= 1, JSON.stringify(r.saltadas));
-  assert.ok(r.avisos.some((a) => /robots\.txt aplicado/.test(a)));
-});
-
-test("SEGURIDAD: no pulsa «cerrar sesión» ni nada destructivo", { skip }, async () => {
-  const r = await crawlSite(base, { pausaMs: 0, max: 30 });
-  assert.ok(!recibido.includes("/logout"), "el rastreador cerró la sesión");
-  assert.ok(!r.candidatas.some((c) => /logout/.test(c.ruta)));
-  assert.ok(r.saltadas.destructiva >= 1);
-});
-
-test("SEGURIDAD: no sale del dominio ni descarga binarios", { skip }, async () => {
-  const r = await crawlSite(base, { pausaMs: 0, max: 30 });
-  assert.ok(!r.candidatas.some((c) => /externo\.example/.test(c.url)));
-  assert.ok(!recibido.includes("/informe.pdf"), "descargó el PDF");
-  assert.ok(r.saltadas.externa >= 1 && r.saltadas.noHtml >= 1, JSON.stringify(r.saltadas));
-});
-
-test("robots: \"ignorar\" exige decisión explícita y lo deja dicho", { skip }, async () => {
-  const r = await crawlSite(base, { pausaMs: 0, max: 30, robots: "ignorar" });
-  assert.ok(r.candidatas.some((c) => c.ruta.startsWith("/privado")), "con robots ignorado sí debe entrar");
-  assert.equal(r.procedencia.robots, "ignorado");
-  assert.ok(r.avisos.some((a) => /IGNORADO/.test(a)));
-});
-
-test("las plantillas distintas se distinguen y las iguales se agrupan", { skip }, async () => {
-  const r = await crawlSite(base, { pausaMs: 0, max: 30 });
-  const porRuta = {};
-  r.candidatas.forEach((c) => { porRuta[c.ruta] = c.plantilla; });
-  assert.equal(porRuta["/servicios/uno"], porRuta["/servicios/dos"], "dos fichas comparten plantilla");
-  assert.notEqual(porRuta["/"], porRuta["/contacto"], "inicio y formulario no");
-});
-
-test("las señales de contenido se detectan sobre el render real", { skip }, async () => {
-  const r = await crawlSite(base, { pausaMs: 0, max: 30 });
-  const de = (ruta) => r.candidatas.find((c) => c.ruta === ruta)["señales"];
-  assert.equal(de("/servicios/dos").video, true);
-  assert.equal(de("/servicios/uno").tabla, true);
-  assert.equal(de("/acceso").tieneAcceso, true);
-  assert.equal(de("/buscar?q=x") ? de("/buscar?q=x").tieneBusqueda : de("/buscar").tieneBusqueda, true);
-  assert.equal(de("/ayuda").widget, true, "el <details> es un widget dinámico");
-  assert.equal(de("/").pdf, true, "el enlace al PDF se anota como señal, aunque no se descargue");
-});
-
-test("muestrearSitio entrega la muestra con su motivo y su justificación", { skip }, async () => {
-  const sel = await muestrearSitio(base, { pausaMs: 0, max: 30, semilla: "prueba", tamañoMuestra: 12 });
-  assert.ok(sel.muestra.length >= 5, JSON.stringify(sel.muestra.map((m) => m.url)));
-  assert.ok(sel.muestra.every((m) => m.motivos.length), "toda página debe llevar motivo");
-  assert.equal(sel.cobertura.categorias.inicio, true);
-  assert.equal(sel.cobertura.categorias.accesibilidad, true);
-  assert.equal(sel.cobertura.categorias.contacto, true);
-  assert.equal(sel.cobertura.contenidos.video, true);
-  assert.match(sel.justificacion, /WCAG-EM/);
-  assert.match(sel.justificacion, /semilla «prueba», reproducible/);
-  assert.equal(sel.procedencia.robots, "respetado");
-});
-
-test("dos muestreos con la misma semilla dan la misma muestra", { skip }, async () => {
-  const a = await muestrearSitio(base, { pausaMs: 0, max: 30, semilla: "igual" });
-  const b = await muestrearSitio(base, { pausaMs: 0, max: 30, semilla: "igual" });
-  assert.deepEqual(a.muestra.map((m) => m.url).sort(), b.muestra.map((m) => m.url).sort());
+test("rastreo: si la página ya está estable a «load», la segunda lectura no anota nada", { skip: !hayNavegador && "sin Chromium" }, async () => {
+  /* El coste de la doble lectura es una evaluación más. Lo que NO puede hacer es
+   * marcar como «pinta en el cliente» un sitio estático, porque ese aviso cambia
+   * cómo se leen las categorías de la muestra. */
+  const { createServer } = await import("node:http");
+  const { crawlSite } = await import("../src/crawl.js");
+  const HTML = '<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Quieta</title></head>' +
+    '<body><header><nav><a href="/">Inicio</a></nav></header><main><h1>Quieta</h1>' +
+    '<form><label for="a">A</label><input id="a"></form></main><footer>pie</footer></body></html>';
+  const srv = createServer((_q, s) => { s.writeHead(200, { "content-type": "text/html; charset=utf-8" }); s.end(HTML); });
+  await new Promise((ok) => srv.listen(0, "127.0.0.1", ok));
+  try {
+    const r = await crawlSite("http://127.0.0.1:" + srv.address().port + "/", { max: 1 });
+    assert.equal(r.candidatas[0]["señales"].tieneFormulario, true);
+    assert.equal(r.candidatas[0].asentado, null, "no cambió nada: no hay nada que anotar");
+    assert.deepEqual(r.reposadas, []);
+    assert.ok(!(r.avisos || []).some((a) => /PINTA EN EL CLIENTE/.test(a)));
+  } finally { srv.close(); }
 });

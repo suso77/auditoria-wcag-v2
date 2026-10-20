@@ -219,6 +219,29 @@ function __señales(){
 return { titulo: (document.title||'').trim(), lang: (document.documentElement.getAttribute('lang')||''), plantilla: __plantilla(), enlaces: __enlaces(), señales: __señales() };
 `;
 
+/**
+ * Qué cambió entre la primera lectura de una página y la segunda.
+ *
+ * Vive fuera del bucle del rastreo y se exporta A PROPÓSITO: la comparación es
+ * la pieza que decide si una señal es de fiar, y dentro del `page.evaluate` solo
+ * se podía probar con navegador. Los tests con navegador se SALTAN donde no lo
+ * hay, y un test que se salta en silencio es el verde falso que este proyecto
+ * persigue. Así que la lógica se prueba pura y aparte.
+ *
+ * Devuelve las claves que cambiaron, en orden estable: `plantilla` primero si
+ * cambió, luego las señales por nombre, luego `enlaces`. Vacío = la primera
+ * lectura ya era estable.
+ */
+export function diferenciaDeLectura(primera, segunda) {
+  if (!primera || !segunda) return [];
+  const cambio = [];
+  if (segunda.plantilla !== primera.plantilla) cambio.push("plantilla");
+  const a = primera["señales"] || {}, b = segunda["señales"] || {};
+  Object.keys(b).sort().forEach(function (k) { if (String(a[k]) !== String(b[k])) cambio.push(k); });
+  if ((segunda.enlaces || []).length !== (primera.enlaces || []).length) cambio.push("enlaces");
+  return cambio;
+}
+
 /* ── Rastreo ─────────────────────────────────────────────────────────────── */
 
 function mismaRaiz(u, raiz) {
@@ -230,7 +253,7 @@ function mismaRaiz(u, raiz) {
  *
  * @param {string} inicio  URL de partida
  * @param {{ max?:number, profundidad?:number, pausaMs?:number, robots?:"respetar"|"ignorar",
- *           timeout?:number, waitMs?:number, launchOptions?, onPagina?:(p)=>void }} [opts]
+ *           timeout?:number, waitMs?:number, asentarMs?:number, launchOptions?, onPagina?:(p)=>void }} [opts]
  */
 export async function crawlSite(inicio, opts) {
   opts = opts || {};
@@ -299,6 +322,42 @@ export async function crawlSite(inicio, opts) {
         if (ct && ct.indexOf("html") === -1) { saltadas.noHtml++; continue; }
         if (opts.waitMs) await page.waitForTimeout(opts.waitMs);
         datos = await page.evaluate(new Function(EXTRAER));
+        /* ── UNA SOLA CAPTURA NO BASTA EN UN SITIO QUE PINTA EN EL CLIENTE ──
+         *
+         * El rastreo iba con `waitUntil: "load"` y SIN espera añadida, mientras
+         * la auditoría va con `load` + 400 ms. En un SPA con enrutado en cliente
+         * —React, Vue, Svelte— a `load` la ruta puede no haberse pintado todavía,
+         * así que lo que se leía era el armazón compartido o menos.
+         *
+         * Medido, y es el defecto más caro que ha dado este banco: en la pasada
+         * `ja4` de jesusaccesible.com, `/contacto` salió con
+         * `tieneFormulario: false` —tiene cuatro campos y un botón de envío— y la
+         * cobertura de la muestra quedó con `formulario: false`. Eso va al
+         * `muestra.json` y de ahí al IRA: la justificación de la muestra decía
+         * «No se ha encontrado ninguna página de la categoría "Página con
+         * formulario": compruébalo a mano» con la página del formulario DENTRO de
+         * la muestra. Una afirmación falsa en el documento que sostiene la
+         * auditoría, y encima mandando al auditor a buscar algo que ya tenía.
+         *
+         * Las huellas lo delataban: cuatro páginas con la MISMA huella —el
+         * armazón— y una con `main|…|nav:0`, sin header ni footer. Dos momentos
+         * de pintado distintos en la misma pasada no son marcado estable, son una
+         * carrera.
+         *
+         * Así que se lee DOS VECES con un reposo entre medias y se comparan. Si
+         * cambia algo, la primera lectura era prematura: vale la segunda y se
+         * anota qué cambió, porque un sitio donde hay que reposar es un dato que
+         * el informe tiene que dar. Si no cambia nada, el coste es una
+         * evaluación más y no se anota nada. No es una espera a ciegas: es una
+         * medición de si hacía falta esperar. */
+        const reposo = opts.asentarMs != null ? opts.asentarMs : 500;
+        if (reposo > 0) {
+          await page.waitForTimeout(reposo);
+          let segunda = null;
+          try { segunda = await page.evaluate(new Function(EXTRAER)); } catch (e2) { segunda = null; }
+          const cambio = diferenciaDeLectura(datos, segunda);
+          if (cambio.length) { datos = segunda; datos.asentado = cambio; }
+        }
       } catch (e) {
         errores.push({ url: u.href, error: (e && e.message) || String(e) });
         // La pausa también después de un error. Sin esto, un sitio que responde
@@ -320,7 +379,10 @@ export async function crawlSite(inicio, opts) {
       datos["señales"].esInicio = (u.pathname === "/" || u.pathname === "" || esArranque);
       candidatas.push({
         url: u.href, ruta: ruta, titulo: datos.titulo, lang: datos.lang,
-        plantilla: datos.plantilla, "señales": datos["señales"], profundidad: actual.prof
+        plantilla: datos.plantilla, "señales": datos["señales"], profundidad: actual.prof,
+        // Qué cambió entre la primera lectura y la segunda. Vacío = nada: lo que
+        // se leyó a `load` ya era estable.
+        asentado: datos.asentado || null
       });
       if (opts.onPagina) opts.onPagina(candidatas[candidatas.length - 1]);
 
@@ -352,7 +414,22 @@ export async function crawlSite(inicio, opts) {
         ". Esa parte del sitio NO está auditada; si entra en el alcance, hay que rastrearla con robots: \"ignorar\" y decirlo en el informe.");
     }
     if (candidatas.length >= max) avisos.push("Se alcanzó el tope de " + max + " páginas rastreadas: puede haber más sitio sin explorar.");
+    /* Un sitio donde hubo que reposar para leer bien ES UN DATO, y va arriba.
+     * Si alguna página cambió entre la primera lectura y la segunda, las señales
+     * de ESTE rastreo eran propensas a la carrera, y cualquier «no se ha
+     * encontrado ninguna página de la categoría X» que salga después hay que
+     * leerlo sabiéndolo. Se dice qué páginas y qué cambió en cada una. */
+    const reposadas = candidatas.filter(function (c) { return c.asentado && c.asentado.length; });
+    if (reposadas.length) {
+      avisos.push("ESTE SITIO PINTA EN EL CLIENTE: " + reposadas.length + " de " + candidatas.length +
+        " página(s) cambiaron entre la primera lectura y la segunda, así que lo que se ve a «load» no es la página. " +
+        "Vale la segunda lectura. Lo que cambió: " +
+        reposadas.slice(0, 5).map(function (c) { return c.ruta + " (" + c.asentado.join(", ") + ")"; }).join(" · ") +
+        (reposadas.length > 5 ? " · …" : "") +
+        ". Importa porque las categorías de la muestra salen de estas señales: un «no se ha encontrado ninguna página de la categoría X» en un sitio así puede ser un hueco de LECTURA del agente y no del sitio.");
+    }
     return {
+      reposadas: reposadas.map(function (c) { return { ruta: c.ruta, cambio: c.asentado }; }),
       inicio: raiz.href,
       candidatas: candidatas,
       saltadas: saltadas,
@@ -385,7 +462,9 @@ export async function muestrearSitio(inicio, opts) {
     porcentajeAleatorio: opts.porcentajeAleatorio
   });
   return Object.assign({}, sel, {
-    rastreo: { candidatas: r.candidatas.length, saltadas: r.saltadas, saltadasDetalle: r.saltadasDetalle, avisos: r.avisos, errores: r.errores },
+    rastreo: { candidatas: r.candidatas.length, saltadas: r.saltadas, saltadasDetalle: r.saltadasDetalle,
+               // Dato, no solo prosa: qué páginas hubo que reposar y qué cambió.
+               reposadas: r.reposadas || [], avisos: r.avisos, errores: r.errores },
     procedencia: r.procedencia,
     justificacion: justificarMuestra(sel),
     avisos: (sel.avisos || []).concat(r.avisos)

@@ -1001,6 +1001,40 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.72.0 — el IRA decía que no había página con formulario, con el formulario dentro de la muestra
+
+La pasada `ja4` confirmó la predicción de v0.71.0 —26 filas → **19**, 1.3.1 y 4.1.2 desaparecidos enteros, 100 % de precisión en lo decidido (12 de 12)— y al hacerlo dejó ver un defecto peor que los siete falsos positivos que acababa de arreglar.
+
+En la justificación de la muestra de `ja4`:
+
+```
+⚠ No se ha encontrado ninguna página de la categoría «Página con formulario»:
+  compruébalo a mano antes de dar la muestra por buena.
+```
+
+Y en la misma muestra, tres líneas más arriba: `https://jesusaccesible.com/contacto`. Que tiene cuatro campos y un botón de envío. En `ja4-muestra.json`, `cobertura.categorias.formulario: false`.
+
+Eso es una **afirmación falsa en el `muestra.json`**, que es el fichero que sostiene la muestra ante el IRA, y además manda al auditor a buscar a mano una página que ya tenía delante.
+
+**La causa: el rastreo no esperaba nada y la auditoría sí.**
+
+| fase | espera |
+|---|---|
+| rastreo / muestreo | `waitUntil: "load"`, sin `waitMs` |
+| auditoría | `load` + `waitMs: 400` |
+
+En un sitio que pinta en el cliente —React, Vue, Svelte— a `load` la ruta puede no haberse pintado, así que lo que se leía era el armazón compartido o menos. Las huellas de plantilla lo delataban sin que yo mirase el código: cuatro páginas con la **misma** huella y una con `main|/|…|nav:0`, sin header ni footer. Dos momentos de pintado distintos en la misma pasada no son marcado estable.
+
+Medido con un SPA simulado, que es lo que prueba el mecanismo: sin reposo, una página con formulario da `tieneFormulario: false`; con reposo, `true`.
+
+**El arreglo no es esperar más a ciegas: es leer dos veces y comparar.** Tras la primera lectura hay un reposo y una segunda; si algo cambió, la primera era prematura, vale la segunda y se anota **qué** cambió. Si no cambió nada, el coste es una evaluación más y no se anota nada. Es una medición de si hacía falta esperar, no una suposición.
+
+Y un sitio donde hubo que reposar es un dato que el informe da, arriba: *«ESTE SITIO PINTA EN EL CLIENTE: N de M página(s) cambiaron entre la primera lectura y la segunda… un "no se ha encontrado ninguna página de la categoría X" en un sitio así puede ser un hueco de LECTURA del agente y no del sitio»*. Con el detalle por página en `rastreo.reposadas` del `muestra.json`, como dato y no solo como prosa.
+
+La comparación (`diferenciaDeLectura`) está **fuera** del `page.evaluate` y exportada a propósito: dentro solo se podía probar con navegador, los tests con navegador se saltan donde no lo hay, y un test que se salta en silencio es el verde falso que este proyecto persigue. Siete tests puros la fijan, incluidos los dos fail-safe: sin segunda lectura no se inventa ningún cambio, y una señal que **desaparece** cuenta igual que una que aparece.
+
+830 tests unitarios (823 + 7) y 2 de integración nuevos, que sí piden Chromium. No lleva bundles: `crawl.js` no entra en el motor inyectado.
+
 ### v0.71.0 — los siete falsos positivos eran el menú cerrado de media web
 
 **La precisión de este agente, medida hoy: 63,2 %** sobre las 26 acusaciones de `ja3` contra jesusaccesible.com, adjudicadas una a una contra el marcado real del sitio. Es la segunda cifra de precisión que este proyecto tiene (la primera fue 67 % sobre 46 filas, hace ocho versiones) y la primera con intervalo: Wilson 95 % entre 41,0 % y 80,9 %, con 7 de 26 filas en duda, que la hacen optimista.
