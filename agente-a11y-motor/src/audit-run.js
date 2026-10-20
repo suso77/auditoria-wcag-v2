@@ -164,6 +164,65 @@ export function lineasDeCobertura(sitio) {
   return lineas;
 }
 
+/**
+ * Espera a que el DOM deje de cambiar, y DICE si lo consiguió.
+ *
+ * La huella es barata a propósito: número de elementos y longitud del HTML del
+ * cuerpo. No pretende detectar cualquier cambio —un atributo que cambia de valor
+ * sin alterar nada más se le escapa—, sino el caso que de verdad arruina una
+ * medición: la página que todavía está montando su contenido.
+ *
+ * Devuelve `{ asentado, ms, lecturas, huella }`. `asentado: false` significa que
+ * se agotó el techo con la página aún moviéndose, y eso NO se traga: lo recoge
+ * `notaDePaginaInquieta` y baja las conformidades a `revisar`.
+ */
+export async function esperarAsentado(page, opts) {
+  opts = opts || {};
+  const techo = opts.techoMs != null ? opts.techoMs : 3000;
+  const paso = opts.pasoMs != null ? opts.pasoMs : 150;
+  const HUELLA = "return (function(){var b=document.body;return (document.getElementsByTagName('*').length||0)+':'+((b&&b.innerHTML)?b.innerHTML.length:0);})()";
+  let previa = null, lecturas = 0, t0 = Date.now();
+  while (Date.now() - t0 < techo) {
+    let h;
+    try { h = await page.evaluate(new Function(HUELLA)); } catch (e) { break; }
+    lecturas++;
+    if (previa !== null && h === previa) {
+      return { asentado: true, ms: Date.now() - t0, lecturas: lecturas, huella: h };
+    }
+    previa = h;
+    await page.waitForTimeout(paso);
+  }
+  return { asentado: false, ms: Date.now() - t0, lecturas: lecturas, huella: previa };
+}
+
+/**
+ * La nota de la página que seguía moviéndose cuando se midió.
+ *
+ * Mismo patrón que `notaDeCapaApagada`, y por la misma razón: una conformidad
+ * firmada sobre algo que no se midió bien no es una conformidad. Si el DOM no se
+ * quedó quieto dentro del techo, cada veredicto de esa página se tomó sobre un
+ * blanco en movimiento, así que se dice en la evidencia y los `cumple`/`pasa`
+ * bajan a `revisar`. Las BARRERAS no se tocan: un elemento que está mal estaba
+ * mal cuando se vio, y que la página siguiera montándose no lo absuelve.
+ *
+ * Devuelve la lista de criterios tocados, vacía si la página se asentó.
+ */
+export function notaDePaginaInquieta(findings, asentamiento) {
+  if (!asentamiento || asentamiento.asentado !== false) return [];
+  const nota = "OJO: ESTA PÁGINA SEGUÍA CAMBIANDO cuando se midió. Se esperó a que el DOM se quedara quieto y " +
+    "se agotó el techo (" + (asentamiento.ms || 0) + " ms, " + (asentamiento.lecturas || 0) + " lectura(s)) con la página " +
+    "todavía montando contenido, así que esto se midió sobre un blanco en movimiento. Las barreras encontradas son " +
+    "barreras —lo que estaba mal, estaba mal—, pero lo que salga como conforme aquí NO puede firmarse: repite la " +
+    "pasada con un techo mayor (`asentarTechoMs`) antes de dar por bueno ningún «cumple» de esta página.";
+  const tocados = [];
+  (findings || []).forEach(function (f) {
+    if (!f || !f.c || !f.c.n) return;
+    f.evid = (f.evid || []).concat([nota]);
+    if (f.verdict === "cumple" || f.verdict === "pasa") { f.verdict = "revisar"; f.motivo = "pagina-inquieta"; tocados.push(f.c.n); }
+  });
+  return tocados;
+}
+
 export function notaDeCapaApagada(findings, capas, opts) {
   opts = opts || {};
   const porCrit = {};
@@ -393,6 +452,35 @@ export async function auditRun(target, opts) {
     else if (target.html != null) await page.setContent('<!doctype html><html lang="es"><head><meta charset="utf-8"></head><body>' + target.html + "</body></html>", { waitUntil: "load" });
     else throw new Error("auditRun necesita { url } o { html }");
     if (opts.waitMs) await page.waitForTimeout(opts.waitMs);
+    /* ── UNA ESPERA FIJA NO ES UNA MEDICIÓN ───────────────────────────────────
+     *
+     * Aquí había `waitForTimeout(400)` y nada más: una espera a ciegas, sin
+     * comprobar que la página hubiera terminado de pintarse. Y lo que se mide
+     * después NO es la muestra, son los VEREDICTOS.
+     *
+     * El rastreo tenía el mismo defecto y v0.72.0 lo arregló leyendo dos veces.
+     * Lo que salió al medirlo en jesusaccesible.com es lo que obliga a hacer
+     * esto: 53 de 60 páginas cambiaban entre la primera lectura y la segunda, y
+     * el rastreo necesitó 500 ms para ver siquiera los enlaces. Con 400 fijos y
+     * sin comprobación, la auditoría puede estar midiendo una página a medio
+     * pintar y firmando sus criterios.
+     *
+     * El síntoma estaba en la pasada `ja4` y lo apunté sin entenderlo:
+     * `/auditoria-accesibilidad-web` salió con CERO barreras mientras sus
+     * hermanas daban dos o tres, y era justo la página cuya huella de plantilla
+     * salió sin header ni footer. Una página sin barreras y una página que no se
+     * llegó a pintar se parecen demasiado.
+     *
+     * Así que se espera a que el DOM deje de cambiar: se toma una huella barata
+     * —número de elementos y longitud del HTML del cuerpo— y se repite hasta que
+     * dos lecturas seguidas coinciden, con un techo. Lo que se devuelve es si se
+     * asentó o si se agotó el techo, porque una página que seguía moviéndose
+     * cuando se midió es un dato que el informe tiene que dar. No es esperar
+     * más: es saber si hacía falta esperar. */
+    const asentamiento = await esperarAsentado(page, {
+      techoMs: opts.asentarTechoMs != null ? opts.asentarTechoMs : 3000,
+      pasoMs: opts.asentarPasoMs != null ? opts.asentarPasoMs : 150
+    });
 
     // 1) OBSERVAR — motor + ámbito de página + medición + axe
     const render = capas.render ? await capa("render", function () {
@@ -558,6 +646,17 @@ export async function auditRun(target, opts) {
        qué quedó en silencio. Los de coherencia no, que los decide `auditSite`. */
     /* Antes del silencio: los criterios que SÍ tienen veredicto pero cuya sonda no
        corrió. Si no se dice, el informe los confunde con «necesita una persona». */
+    /* La página inquieta va PRIMERO, antes que cualquier otra nota: si se midió
+     * sobre un blanco en movimiento, eso cambia cómo hay que leer todo lo demás. */
+    const inquietos = notaDePaginaInquieta(findings, asentamiento);
+    if (inquietos.length) {
+      avisos.push("ESTA PÁGINA SEGUÍA CAMBIANDO cuando se midió: se agotó el techo de asentamiento (" +
+        asentamiento.ms + " ms) con el DOM todavía montando contenido. " + inquietos.length +
+        " criterio(s) que salían conformes se han bajado a «revisar» (" + inquietos.slice(0, 10).join(", ") +
+        (inquietos.length > 10 ? ", …" : "") + "): una conformidad medida sobre una página a medio pintar no es una " +
+        "conformidad. Las barreras encontradas SÍ valen. Repite con un techo mayor (`asentarTechoMs`).");
+    }
+
     const apagadas = notaDeCapaApagada(findings, capas, { sitio: false });
     if (apagadas.length) {
       avisos.push("La sonda de " + apagadas.length + " criterio(s) NO se ejecutó en esta pasada (" +
@@ -584,6 +683,9 @@ export async function auditRun(target, opts) {
       cuaderno: (render && render.cuaderno) || null,
       render: render, viewport: viewport, dynamic: dynamic,
       huella: huella, pixeles: pixeles,
+      // Si la página se quedó quieta antes de medirla, y cuánto costó saberlo.
+      // `asentado: false` quiere decir que se midió sobre algo en movimiento.
+      asentamiento: asentamiento,
       axeExtra: axeExtra,
       avisos: avisos,
       errores: errores,

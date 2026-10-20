@@ -1001,6 +1001,30 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.73.0 — una espera fija no es una medición, y la auditoría esperaba a ciegas
+
+v0.72.0 arregló el rastreo y al medirlo en jesusaccesible.com salió una cifra que obliga a esto: **53 de 60 páginas cambiaban entre la primera lectura y la segunda**, y el rastreo necesitó 500 ms para ver siquiera los enlaces. Lo que eso destapó de la pasada anterior:
+
+| | ja4 (antes) | ja5 (después) |
+|---|---|---|
+| páginas rastreadas | 11 | **60** (tope alcanzado) |
+| plantillas detectadas | 3 | **7** |
+| plantillas cubiertas | 3 de 3 (100 %) | 4 de 7 (57 %) |
+| `cobertura.formulario` | `false` | `true` |
+| `cobertura.proceso` | `false` | `true` |
+
+La muestra WCAG-EM de `ja4` se sacó de un rastreo que había visto **el 18 % del sitio**, y su justificación —la que va al IRA— afirmaba cobertura de plantillas del 100 % porque solo había visto 3 de las 7 que hay. Todas las cifras de muestreo estaban mal y **todas en la dirección tranquilizadora**. El aviso falso del formulario era el síntoma; esto era la enfermedad.
+
+**Y la fase de auditoría tenía el mismo defecto, con mucho más en juego.** Hacía `waitForTimeout(400)` y nada más: una espera a ciegas, sin comprobar que la página hubiera terminado de pintarse. Lo que se mide después no es la muestra, son los **veredictos**. El síntoma estaba en `ja4` y lo apunté sin entenderlo: `/auditoria-accesibilidad-web` salió con **cero barreras** mientras sus hermanas daban dos o tres, y era justo la página cuya huella de plantilla salió sin header ni footer. Una página sin barreras y una página que no se pintó se parecen demasiado.
+
+Ahora `esperarAsentado` toma una huella barata —número de elementos y longitud del HTML del cuerpo— y la repite hasta que dos lecturas seguidas coinciden, con un techo de 3 s. Medido: una página quieta se asienta en **193 ms con dos lecturas**, así que el coste es despreciable; una que sigue montando contenido agota el techo y lo dice.
+
+Y si no se asentó, `notaDePaginaInquieta` hace lo que exige la regla de oro: la nota va en la evidencia de cada ficha y **los `cumple`/`pasa` bajan a `revisar`** (medido: 12 de 12 en una página inquieta). Las **barreras no se tocan**, y es deliberado: lo que estaba mal, estaba mal cuando se vio, y absolverlo por que la página siguiera montándose convertiría una cautela en un falso negativo. Hay un test que lo fija en las dos direcciones.
+
+El motivo `pagina-inquieta` entra en la columna «Por qué no se puede comprobar» de v0.70.0, y va **primero** en la precedencia: si se midió sobre un blanco en movimiento, eso cambia cómo hay que leer todo lo demás.
+
+835 tests unitarios (830 + 5). Lleva el bundle de la extensión: `audit-run.js` y `report-oaw.js` entran en él.
+
 ### v0.72.0 — el IRA decía que no había página con formulario, con el formulario dentro de la muestra
 
 La pasada `ja4` confirmó la predicción de v0.71.0 —26 filas → **19**, 1.3.1 y 4.1.2 desaparecidos enteros, 100 % de precisión en lo decidido (12 de 12)— y al hacerlo dejó ver un defecto peor que los siete falsos positivos que acababa de arreglar.

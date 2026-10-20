@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { seleccionarMuestra } from "../src/sampling.js";
-import { axeFindingsNuevos, criteriosEnSilencio, capasEfectivas, notaDeCapaApagada, lineasDeCobertura } from "../src/audit-run.js";
+import { axeFindingsNuevos, criteriosEnSilencio, capasEfectivas, notaDeCapaApagada, lineasDeCobertura, notaDePaginaInquieta } from "../src/audit-run.js";
 import { readFileSync } from "node:fs";
 import { WCAG22, understand, analyze, capaQueMide } from "../src/engine.js";
 import "./helpers.mjs"; // inyecta el DOMParser
@@ -370,4 +370,77 @@ test("capa apagada: la nota también marca el motivo en el hallazgo que toca", (
   notaDeCapaApagada(f, capasEfectivas({ dynamic: false }), { sitio: false });
   assert.equal(f[0].motivo, "capa-apagada");
   assert.equal(f[0].verdict, "revisar");
+});
+
+/* ── Una espera fija no es una medición ───────────────────────────────────────
+ *
+ * La auditoría hacía `waitForTimeout(400)` y nada más: una espera a ciegas sin
+ * comprobar que la página hubiera terminado de pintarse. Y lo que se mide
+ * después no es la muestra, son los VEREDICTOS.
+ *
+ * Medido en jesusaccesible.com con v0.72.0 puesto: 53 de 60 páginas cambiaban
+ * entre la primera lectura y la segunda, y el rastreo necesitó 500 ms para ver
+ * siquiera los enlaces. El síntoma estaba en la pasada `ja4` y lo apunté sin
+ * entenderlo: `/auditoria-accesibilidad-web` salió con CERO barreras mientras
+ * sus hermanas daban dos o tres, y era justo la página cuya huella salió sin
+ * header ni footer. Una página sin barreras y una página que no se pintó se
+ * parecen demasiado.
+ *
+ * El comportamiento con navegador va en integración; la decisión vive aquí. */
+
+test("inquieta: una página que se asentó no se toca", () => {
+  const f = [{ c: { n: "2.1.1" }, verdict: "cumple", evid: ["Correcto."] }];
+  assert.deepEqual(notaDePaginaInquieta(f, { asentado: true, ms: 193, lecturas: 2 }), []);
+  assert.equal(f[0].verdict, "cumple");
+  assert.equal(f[0].evid.length, 1, "ni una nota de más");
+});
+
+test("inquieta: sin dato de asentamiento no se inventa nada", () => {
+  /* Fail-safe en la dirección correcta: si no se midió el asentamiento —una
+   * auditoría de fragmento HTML, una capa que no abrió página— no se puede
+   * declarar la página inquieta, igual que no se puede declararla quieta. */
+  const f = [{ c: { n: "2.1.1" }, verdict: "cumple", evid: ["Correcto."] }];
+  assert.deepEqual(notaDePaginaInquieta(f, null), []);
+  assert.deepEqual(notaDePaginaInquieta(f, {}), []);
+  assert.equal(f[0].verdict, "cumple");
+});
+
+test("inquieta: las conformidades bajan a revisar y llevan el motivo", () => {
+  const f = [
+    { c: { n: "2.1.1" }, verdict: "cumple", evid: ["Correcto."] },
+    { c: { n: "2.4.3" }, verdict: "pasa", evid: ["Correcto."] }
+  ];
+  const tocados = notaDePaginaInquieta(f, { asentado: false, ms: 3000, lecturas: 20 });
+  assert.deepEqual(tocados, ["2.1.1", "2.4.3"]);
+  f.forEach((x) => {
+    assert.equal(x.verdict, "revisar");
+    assert.equal(x.motivo, "pagina-inquieta", "el motivo es dato, para que seguimiento.csv lo diga");
+    assert.match(x.evid.join(" "), /SEGUÍA CAMBIANDO/);
+    assert.match(x.evid.join(" "), /3000 ms/);
+  });
+});
+
+test("inquieta: las BARRERAS no se tocan, y eso es deliberado", () => {
+  /* Lo que estaba mal, estaba mal cuando se vio. Que la página siguiera
+   * montándose no absuelve a un botón sin nombre: absolverlo sería convertir una
+   * cautela en un falso negativo, que es el error que este proyecto no admite en
+   * ninguna de las dos direcciones. */
+  const f = [
+    { c: { n: "4.1.2" }, verdict: "falla", sev: "crítica", evid: ["Botón sin nombre."] },
+    { c: { n: "1.1.1" }, verdict: "revisar", evid: ["Hace falta una persona."] },
+    { c: { n: "3.3.4" }, verdict: "no-aplica", evid: ["No hay formularios."] }
+  ];
+  const tocados = notaDePaginaInquieta(f, { asentado: false, ms: 3000, lecturas: 20 });
+  assert.deepEqual(tocados, [], "ninguno era conforme, así que ninguno cambia de veredicto");
+  assert.equal(f[0].verdict, "falla");
+  assert.equal(f[1].verdict, "revisar");
+  assert.equal(f[2].verdict, "no-aplica");
+  // Pero todos llevan la nota: quien lea esa ficha tiene que saber sobre qué se midió.
+  f.forEach((x) => assert.match(x.evid.join(" "), /SEGUÍA CAMBIANDO/));
+});
+
+test("inquieta: un hallazgo malformado no tira el informe", () => {
+  const f = [null, { verdict: "cumple" }, { c: {}, verdict: "cumple" }, { c: { n: "2.1.1" }, verdict: "cumple", evid: [] }];
+  const tocados = notaDePaginaInquieta(f, { asentado: false, ms: 1000, lecturas: 7 });
+  assert.deepEqual(tocados, ["2.1.1"]);
 });

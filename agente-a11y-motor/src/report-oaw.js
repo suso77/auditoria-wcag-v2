@@ -211,9 +211,10 @@ const MOTIVOS = {
   "capa-no-corrio": "La sonda que lo mide no se ejecutó en esta pasada: repite la pasada con esa capa encendida",
   "nadie-lo-mide": "Ninguna capa lo mide, y el motor no vio en el marcado nada a lo que aplicarlo: sin comprobar",
   "sonda-muda": "La sonda corrió y no encontró contenido al que aplicarlo; el agente no afirma que no aplique",
-  "muestra-incompleta": "Hay páginas de la muestra sin analizar: lo que sale bien en el resto no cubre las que faltan"
+  "muestra-incompleta": "Hay páginas de la muestra sin analizar: lo que sale bien en el resto no cubre las que faltan",
+  "pagina-inquieta": "La página seguía cambiando cuando se midió: lo que saliera conforme ahí no se puede firmar"
 };
-const PRECEDENCIA = ["capa-apagada", "capa-no-corrio", "muestra-incompleta", "nadie-lo-mide", "sonda-muda"];
+const PRECEDENCIA = ["pagina-inquieta", "capa-apagada", "capa-no-corrio", "muestra-incompleta", "nadie-lo-mide", "sonda-muda"];
 
 export function motivoPendiente(fs, worst) {
   const lista = fs || [];
