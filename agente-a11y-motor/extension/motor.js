@@ -2462,6 +2462,48 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       decoracion: (cs.textDecorationLine || "") + " " + (cs.textDecorationThickness || "")
     };
   }
+  /**
+   * POR QUÉ el contorno tiene ese color: el diagnóstico, no solo el síntoma.
+   *
+   * «El contorno es del mismo color que el fondo» es cierto y no sirve de nada: no
+   * dice si el autor eligió mal el color o si la regla que debía fijarlo no está
+   * llegando. Son dos arreglos distintos y uno de ellos arregla seis botones a la
+   * vez.
+   *
+   * Medido en jesusaccesible.com, dos botones del mismo sitio:
+   *
+   *   «Auditoría»              reposo 3px rgb(255,255,255) → foco 4px solid rgb(15,23,42) offset 3px
+   *   «SOLICITAR DIAGNÓSTICO»  reposo 3px rgb(255,255,255) → foco 3px solid rgb(255,255,255) offset 0
+   *
+   * En el segundo el contorno NO cambia al enfocar, y su color es exactamente el
+   * `color` del elemento: es `currentColor` sin resolver, lo que queda cuando la
+   * regla `focus-visible:outline-black` que está en el marcado no produce CSS. En
+   * ese sitio pasaba en cinco botones por una migración de Tailwind, y el informe
+   * decía «al enfocar cambia el estilo» —que era falso para el contorno— en vez de
+   * señalar la causa común.
+   *
+   * Las dos señales se leen del marcado, no se suponen: el contorno idéntico en
+   * reposo y con foco es un hecho; que su color sea el `color` del elemento es otro.
+   * Sobre los datos reales las dos aciertan en los cinco casos y ninguna dispara en
+   * el que sí aplica.
+   */
+  function porQueEseColor(base, foc) {
+    if (!foc) return "";
+    const notas = [];
+    const igual = base && base.outlineStyle === foc.outlineStyle &&
+      base.outlineWidth === foc.outlineWidth && base.outlineColor === foc.outlineColor;
+    if (igual) {
+      notas.push("el contorno es IDÉNTICO en reposo y con el foco puesto (" + foc.outlineWidth + "px " +
+        foc.outlineStyle + " " + foc.outlineColor + "), así que la regla de foco del marcado NO está aplicando");
+    }
+    if (foc.color && foc.outlineColor === foc.color) {
+      notas.push("y ese color es exactamente el `color` del elemento, la firma de un `currentColor` sin resolver: " +
+        "lo que queda cuando la regla que debía fijar el color del contorno no llega al CSS. Comprueba que las clases " +
+        "o reglas de `:focus-visible` del marcado están de verdad en la hoja compilada");
+    }
+    return notas.length ? ". " + notas.join(", ").replace(/, y /, " y ") : "";
+  }
+
   /** @returns {{visible:boolean, via:string, motivo:string}} */
   function indicadorDeFoco(base, foc, el, win) {
     if (!foc) return { visible: false, via: "", motivo: "no se pudo leer el estado con el foco puesto" };
@@ -2497,7 +2539,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     const hayContorno = foc.outlineStyle !== "none" && foc.outlineStyle !== "hidden" && foc.outlineWidth > 0;
     if (hayContorno) {
       if (!oc || oc.a === 0) nulos.push("el contorno es transparente (" + foc.outlineColor + ")");
-      else if (fondoFiable && mismoColor(oc, detras)) nulos.push("el contorno es del mismo color que el fondo de detrás (" + foc.outlineColor + ")");
+      else if (fondoFiable && mismoColor(oc, detras)) nulos.push("el contorno es del mismo color que el fondo de detrás (" + foc.outlineColor + ")" + porQueEseColor(base, foc));
       else return { visible: true, via: "contorno",
         motivo: "contorno de " + foc.outlineWidth + "px en " + foc.outlineColor +
           (fondoFiable ? "" : " (no se ha podido medir contra qué fondo se dibuja: comprueba a ojo que contrasta)") };
@@ -3235,7 +3277,15 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
               ? { crit: "2.4.7", label: "Foco visible", node: loc, path: ruta, verdict: "pasa", detail: "indicador visible al enfocar: " + ind.motivo }
               : cambioInvisible
                 ? { crit: "2.4.7", label: "Foco visible", node: loc, path: ruta, verdict: "falla",
-                    detail: "al enfocar cambia el estilo pero el indicador NO se ve: " + ind.motivo + ". Tabulando hasta aquí no se sabe dónde está el foco" }
+                    /* Antes empezaba con «al enfocar cambia el estilo». `cambioInvisible`
+                     * compara el snapshot ENTERO, así que basta con que cambie el
+                     * borde, la sombra o un color en transición para que la frase se
+                     * emita — y en los botones con `transition-all` de
+                     * jesusaccesible.com el contorno era idéntico en reposo y con
+                     * foco. Afirmaba un cambio que en el indicador no existía. Lo que
+                     * el agente sí ha medido es que el indicador no se ve, y `motivo`
+                     * dice por qué. */
+                    detail: "al enfocar el indicador NO se ve: " + ind.motivo + ". Tabulando hasta aquí no se sabe dónde está el foco" }
                 : { crit: "2.4.7", label: "Foco visible", node: loc, path: ruta, verdict: "revisar", detail: "sin cambio medible (revisar a ojo / :focus-visible)" });
           } else {
             const rf = reglasDeFoco(el, doc);
@@ -3769,7 +3819,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   }
 
   const FNS = [parseColor, over, lum, contrastRatio, rgbStr, apcaContrast, apcaMin,
-    animacionesPersistentes, distintivoDeEnlace, enTextoCorrido, elementosFlotantes, fraccionTapada, ratioTxt, refrescar, todosM, enfocadoM, shadowCerrados, resolverColor, ownText, opacidadAcumulada, coloresDe, mismoColor, aparienciaFoco, indicadorDeFoco, fondoRealCoincide, bgBehind, contrastOf, boundaryContrastOf, ordenReordenado, literalesDeContent, tienePalabra, contrasteGenerado, isInteractiveM, locatorM, rutaM, renderedM, disabledM, managedM, decoracionDeclarada, textTargets,
+    animacionesPersistentes, distintivoDeEnlace, enTextoCorrido, elementosFlotantes, fraccionTapada, ratioTxt, refrescar, todosM, enfocadoM, shadowCerrados, resolverColor, ownText, opacidadAcumulada, coloresDe, mismoColor, aparienciaFoco, porQueEseColor, indicadorDeFoco, fondoRealCoincide, bgBehind, contrastOf, boundaryContrastOf, ordenReordenado, literalesDeContent, tienePalabra, contrasteGenerado, isInteractiveM, locatorM, rutaM, renderedM, disabledM, managedM, decoracionDeclarada, textTargets,
     pinta, sinPseudoFoco, coincideSinFoco, hojasLegibles, reglasDeFoco, runChecksReal];
   const FN_SRC = "var MANAGED_PARENT = " + JSON.stringify(MANAGED_PARENT) + ";\nvar NATIVOS = " + JSON.stringify(NATIVOS) + ";\n" +
     "var PROP_INDICADOR = " + JSON.stringify(PROP_INDICADOR) + ";\nvar NULOS = " + JSON.stringify(NULOS) + ";\n" +
@@ -3810,6 +3860,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   NS.rgbStr = rgbStr;
   NS.apcaContrast = apcaContrast;
   NS.apcaMin = apcaMin;
+  NS.porQueEseColor = porQueEseColor;
   NS.MEASURE_BODY = MEASURE_BODY;
   NS.MEASURE_FNS = MEASURE_FNS;
   NS.MEASURE_SRC = MEASURE_SRC;

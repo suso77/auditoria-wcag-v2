@@ -1001,6 +1001,33 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.75.0 — el informe afirmaba un cambio que no hubo, y cuatro versiones sin correr integración
+
+Dos cosas, y la segunda importa más que la primera.
+
+**1. El 2.4.7 decía «al enfocar cambia el estilo» y no cambiaba.** Adjudicando las tres filas de 2.4.7 de `ja6` contra el sitio real salió que **son verdaderas** —mi duda desde v0.63.0 era infundada— pero que la evidencia afirmaba un hecho falso. Dos botones del mismo sitio, medidos con `getComputedStyle` en reposo y con el foco puesto:
+
+```
+«Auditoría»              reposo 3px rgb(255,255,255) → foco 4px solid rgb(15,23,42) offset 3px   ✓ aplica
+«SOLICITAR DIAGNÓSTICO»  reposo 3px rgb(255,255,255) → foco 3px solid rgb(255,255,255) offset 0  ✗ no cambia
+```
+
+En los acusados el contorno es **idéntico** en reposo y con foco, y su color es exactamente el `color` del elemento: `currentColor` sin resolver, lo que queda cuando la regla `focus-visible:outline-black` que está en el marcado no llega al CSS compilado. `cambioInvisible` compara el snapshot entero, así que bastaba con que cambiara la sombra o un color en transición —esos botones llevan `transition-all`— para emitir una frase que del indicador era falsa.
+
+`porQueEseColor` añade ahora el diagnóstico con dos señales leídas del marcado, no supuestas: el contorno idéntico en los dos estados, y el color igual al `color` del elemento. Sobre los datos reales las dos aciertan en los cinco casos y ninguna dispara en el que sí aplica. Eso convierte cinco filas de «no se ve el foco» en un solo arreglo: mirar si esas clases están en la hoja compilada.
+
+Y dos hipótesis mías murieron midiendo antes de llegar aquí: que el foco por programa no activara `:focus-visible` (lo activa) y que un clic previo lo desactivara (no lo hace). Las dos refutadas en Chromium antes de escribir una línea.
+
+**2. Entregué v0.71.0 a v0.74.0 sin correr nunca la suite de integración.** El instalador cierra con la suite pura, y la pura estaba verde las cuatro veces. Al correr integración aparecieron dos tests rojos, y uno no era una aserción caducada: v0.71.0 había **contradicho en silencio una guardia que v0.66.0 puso a propósito**.
+
+El detalle importa. v0.71.0 emite `revisar` desde el motor para el `aria-controls` de un widget cerrado y vuelve antes de tiempo; así, un botón de menú que además está en `display:none` llegaba a `render-analyze` ya como `revisar` y se salía por el `if (f.verdict !== "falla") return` — el informe **perdía la nota de que ese elemento no se pinta**. Son dos hechos distintos y los dos hacen falta: «este control está cerrado» y «a este ancho no lo ve nadie». La nota se añade ahora a cualquier veredicto, y la rebaja sigue siendo solo para `falla`: ningún veredicto se mueve.
+
+El otro test cambió de expectativa a propósito, y el comentario dice por qué: el marcado que usaba es exactamente el idioma del widget colapsado que v0.71.0 dejó en `revisar` tras adjudicar las 26 acusaciones del banco. Lo que seguía guardando —que a un elemento pintado no se le añada la nota del estado— sigue guardado.
+
+**Y el arreglo de proceso:** el instalador corre ahora también los tests de integración de los ficheros que la propia entrega toca, y no commitea si están rojos. Son segundos, no minutos, porque es un fichero y no la suite entera.
+
+847 tests unitarios (842 + 5) y los 18 de `render-real` en verde. Lleva los dos bundles.
+
 ### v0.74.0 — ochenta y cinco filas eran un defecto
 
 La pasada `ja6` —la primera sobre el sitio de verdad: 124 páginas rastreadas, 9 plantillas, muestra de 12— dio **134 barreras**, de las que **113 eran 2.5.3 y 93 estaban en `/blog`**. Reducidas a su esqueleto de selector son cuatro patrones:

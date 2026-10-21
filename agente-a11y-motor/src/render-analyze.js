@@ -516,10 +516,28 @@ export async function analyzeRendered(target, opts) {
       return motivos[0];
     };
     (analysis.findings || []).forEach(function (f) {
-      if (f.verdict !== "falla") return;
+      /* LA NOTA VA AUNQUE EL VEREDICTO YA NO SEA `falla`.
+       *
+       * Antes esta pasada empezaba con `if (f.verdict !== "falla") return;`, y
+       * eso bastaba mientras el motor solo mandaba aquí barreras firmadas. Desde
+       * v0.71.0 el motor ya baja a `revisar` por su cuenta el `aria-controls`
+       * colgante de un widget CERRADO, así que un botón de menú que además está
+       * en `display:none` llegaba aquí como `revisar` y se salía por este
+       * `return`: el informe perdía la nota de que ese elemento no se pinta.
+       *
+       * Lo encontró la suite de INTEGRACIÓN, que no corrí al entregar v0.71.0 a
+       * v0.74.0 — el instalador cierra con la suite pura. Cuatro versiones con
+       * una guardia de v0.66.0 contradicha en silencio.
+       *
+       * Son dos cosas distintas y las dos hacen falta: «este control está
+       * cerrado, su destino puede aparecer al abrirlo» y «este elemento no se
+       * pinta a este ancho, así que aquí no lo ve nadie». Así que la nota se
+       * añade a cualquier veredicto, y la REBAJA sigue siendo solo para `falla`:
+       * nada que ya estuviera en `revisar` se mueve, y nada que estuviera
+       * conforme se toca. */
       const m = motivoOculto(f);
       if (!m) return;
-      f.verdict = "revisar";
+      if (f.verdict === "falla") f.verdict = "revisar";
       f.evid = (f.evid || []).concat([
         "OJO AL ESTADO: en esta pasada ese elemento NO SE PINTA (" + m + "), así que el árbol de " +
         "accesibilidad del navegador no lo contiene y ningún lector llega a él. No se afirma como barrera " +

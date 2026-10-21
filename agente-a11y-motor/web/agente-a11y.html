@@ -3703,6 +3703,22 @@
       decoracion: (cs.textDecorationLine || "") + " " + (cs.textDecorationThickness || "")
     };
   }
+  function porQueEseColor(base, foc) {
+    if (!foc) return "";
+    const notas = [];
+    const igual = base && base.outlineStyle === foc.outlineStyle &&
+      base.outlineWidth === foc.outlineWidth && base.outlineColor === foc.outlineColor;
+    if (igual) {
+      notas.push("el contorno es IDÉNTICO en reposo y con el foco puesto (" + foc.outlineWidth + "px " +
+        foc.outlineStyle + " " + foc.outlineColor + "), así que la regla de foco del marcado NO está aplicando");
+    }
+    if (foc.color && foc.outlineColor === foc.color) {
+      notas.push("y ese color es exactamente el `color` del elemento, la firma de un `currentColor` sin resolver: " +
+        "lo que queda cuando la regla que debía fijar el color del contorno no llega al CSS. Comprueba que las clases " +
+        "o reglas de `:focus-visible` del marcado están de verdad en la hoja compilada");
+    }
+    return notas.length ? ". " + notas.join(", ").replace(/, y /, " y ") : "";
+  }
   function indicadorDeFoco(base, foc, el, win) {
     if (!foc) return { visible: false, via: "", motivo: "no se pudo leer el estado con el foco puesto" };
     // Fondo contra el que se dibuja el indicador: el del PADRE, porque el contorno
@@ -3737,7 +3753,7 @@
     const hayContorno = foc.outlineStyle !== "none" && foc.outlineStyle !== "hidden" && foc.outlineWidth > 0;
     if (hayContorno) {
       if (!oc || oc.a === 0) nulos.push("el contorno es transparente (" + foc.outlineColor + ")");
-      else if (fondoFiable && mismoColor(oc, detras)) nulos.push("el contorno es del mismo color que el fondo de detrás (" + foc.outlineColor + ")");
+      else if (fondoFiable && mismoColor(oc, detras)) nulos.push("el contorno es del mismo color que el fondo de detrás (" + foc.outlineColor + ")" + porQueEseColor(base, foc));
       else return { visible: true, via: "contorno",
         motivo: "contorno de " + foc.outlineWidth + "px en " + foc.outlineColor +
           (fondoFiable ? "" : " (no se ha podido medir contra qué fondo se dibuja: comprueba a ojo que contrasta)") };
@@ -4433,7 +4449,15 @@
               ? { crit: "2.4.7", label: "Foco visible", node: loc, path: ruta, verdict: "pasa", detail: "indicador visible al enfocar: " + ind.motivo }
               : cambioInvisible
                 ? { crit: "2.4.7", label: "Foco visible", node: loc, path: ruta, verdict: "falla",
-                    detail: "al enfocar cambia el estilo pero el indicador NO se ve: " + ind.motivo + ". Tabulando hasta aquí no se sabe dónde está el foco" }
+                    /* Antes empezaba con «al enfocar cambia el estilo». `cambioInvisible`
+                     * compara el snapshot ENTERO, así que basta con que cambie el
+                     * borde, la sombra o un color en transición para que la frase se
+                     * emita — y en los botones con `transition-all` de
+                     * jesusaccesible.com el contorno era idéntico en reposo y con
+                     * foco. Afirmaba un cambio que en el indicador no existía. Lo que
+                     * el agente sí ha medido es que el indicador no se ve, y `motivo`
+                     * dice por qué. */
+                    detail: "al enfocar el indicador NO se ve: " + ind.motivo + ". Tabulando hasta aquí no se sabe dónde está el foco" }
                 : { crit: "2.4.7", label: "Foco visible", node: loc, path: ruta, verdict: "revisar", detail: "sin cambio medible (revisar a ojo / :focus-visible)" });
           } else {
             const rf = reglasDeFoco(el, doc);

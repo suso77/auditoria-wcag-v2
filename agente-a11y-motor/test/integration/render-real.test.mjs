@@ -494,19 +494,42 @@ test("1.3.1 real: un aria-controls roto en un elemento display:none baja a revis
   // El defecto del marcado se sigue diciendo: no se borra, se encuadra.
   // (La evidencia lleva etiquetas HTML: `aria-controls` va dentro de <code>.)
   const plano = f.evid.join(" ").replace(/<[^>]+>/g, "");
-  assert.match(plano, /aria-controls.*apunta a IDs inexistentes/);
+  /* La redacción la cambió v0.71.0: el `aria-controls` de un widget CERRADO ya no
+   * se firma como barrera, se dan las dos lecturas. Lo que este test fija es que
+   * LAS DOS notas estén — la del widget cerrado y la de que el elemento no se
+   * pinta —, porque son hechos distintos y los dos hacen falta. */
+  assert.match(plano, /aria-controls.*no existen en este estado/);
+  assert.match(plano, /CERRADO/);
   assert.match(plano, /NO SE PINTA \(display:none\)/);
   assert.match(plano, /tampoco se descarta/);
   assert.match(plano, /otro ancho de ventana/);
 });
 
-test("1.3.1 real: si el elemento SÍ se pinta, la barrera no se toca", { skip }, async () => {
+test("1.3.1 real: si el elemento SÍ se pinta, NO se añade la nota del estado", { skip }, async () => {
+  /* ESTE TEST CAMBIÓ DE EXPECTATIVA EN v0.75.0, y conviene decir por qué en vez
+   * de dejar una aserción volteada sin explicación.
+   *
+   * Lo escribió v0.66.0 para que la rebaja por «elemento no pintado» no se
+   * comiera una barrera de un elemento que SÍ se ve, y para eso exigía `falla`.
+   * Pero el marcado que usa —un botón con `aria-controls` a un id inexistente y
+   * `aria-expanded="false"`— es exactamente el que v0.71.0 dejó en `revisar`
+   * después de adjudicar las 26 acusaciones del banco contra el marcado real de
+   * jesusaccesible.com: SIETE de ellas eran este idioma, el del widget colapsado
+   * que crea su panel al abrirse, y el nombre de ese botón llega perfectamente a
+   * la API. Así que `revisar` es la respuesta medida, no una relajación.
+   *
+   * Lo que este test sigue guardando, que es lo que v0.66.0 quería guardar: a un
+   * elemento que se pinta NO se le añade la nota del estado. Esa parte no se
+   * toca, y el test de debajo —nodo oculto y nodo visible a la vez— sigue
+   * exigiendo que una barrera real no se rebaje por el oculto. */
   const html = '<header><button id="service-trigger" aria-controls="service-listbox" aria-expanded="false">Servicio</button></header>' +
     '<main><h1>T</h1><p>contenido</p></main>';
   const out = await analyzeRendered({ html }, { viewport: false, axe: false });
   const f = (out.findings || []).filter((x) => x.c.n === "1.3.1")[0];
-  assert.equal(f.verdict, "falla", JSON.stringify(f && f.evid));
+  assert.equal(f.verdict, "revisar", JSON.stringify(f && f.evid));
   assert.doesNotMatch(f.evid.join(" "), /NO SE PINTA/);
+  // Y la razón de que esté en `revisar` es la del widget cerrado, no otra.
+  assert.match(f.evid.join(" ").replace(/<[^>]+>/g, ""), /CERRADO/);
 });
 
 test("1.3.1 real: con un nodo oculto y otro visible, la barrera se mantiene", { skip }, async () => {
