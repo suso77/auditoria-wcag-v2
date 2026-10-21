@@ -32,14 +32,26 @@ const SEV_MEDICION = { "2.1.1": "crítica", "1.4.3": "grave", "1.4.1": "grave", 
 
 // Convierte las mediciones del render real en hallazgos con forma de criterio.
 // `__meta` no es un criterio WCAG: es el aviso de cobertura de la medición.
-function measurementFindings(measurements) {
+export function measurementFindings(measurements) {
   return (measurements || []).filter(function (m) { return m.crit !== "__meta"; }).map(function (m) {
     return {
       c: { n: m.crit, t: (WIX[m.crit] ? WIX[m.crit].t : m.label), lvl: (WIX[m.crit] ? WIX[m.crit].lvl : "AA") },
       verdict: m.verdict,
       sev: m.verdict === "falla" ? (SEV_MEDICION[m.crit] || "grave") : null,
-      // El locator viaja también como nodo: la columna "Elemento" del IRA lo necesita.
-      nodes: [{ locator: m.node, name: "", path: m.path || "" }],
+      /* El locator viaja también como nodo: la columna "Elemento" del IRA lo
+       * necesita.
+       *
+       * Y CUANDO LA AFIRMACIÓN ES SOBRE UN CONJUNTO, viaja la secuencia. Hay
+       * mediciones —2.4.11 cuando nada tapa el foco, el orden de foco de
+       * 2.4.3— que no hablan de un elemento sino de todos los controles de la
+       * página, así que emiten `rutas` en vez de `path`. Este mapeo solo leía
+       * `m.path`, de modo que esas filas llegaban al informe con la casilla del
+       * selector VACÍA: el comentario que emite 2.4.11 dice que eso «sería peor
+       * que decir qué se recorrió», y era exactamente lo que pasaba. Con varias
+       * rutas se emite un nodo por cada una; el primero conserva el locator. */
+      nodes: Array.isArray(m.rutas) && m.rutas.length
+        ? m.rutas.map(function (r, i) { return { locator: i === 0 ? m.node : r, name: "", path: r }; })
+        : [{ locator: m.node, name: "", path: m.path || "" }],
       evid: [m.node + ": " + m.detail],
       scope: "render", origen: "medición"
     };

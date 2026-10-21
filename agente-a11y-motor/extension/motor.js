@@ -2928,6 +2928,118 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     return (x * y) / area;
   }
   /**
+   * Quién tapa al control AHORA MISMO, en la posición en la que está la página.
+   *
+   * No mueve nada: mide. Mantiene las tres cautelas que ya había y que cada una
+   * costó una regresión: un control DENTRO del flotante no lo tapa, un velo a
+   * pantalla completa se dice una vez y aparte, y quién se pinta encima lo decide
+   * `elementFromPoint` y no la aritmética de rectángulos —una marca de agua
+   * `fixed; inset:0; z-index:-1` cruza su rectángulo con todo y no tapa nada—.
+   */
+  function tapadoAhora(doc, win, el, flotantes) {
+    const out = { peor: null, frac: 0, atenua: null, fracAt: 0 };
+    const rc = el.getBoundingClientRect();
+    if (!(rc.width > 0 && rc.height > 0)) return out;
+    flotantes.forEach(function (f) {
+      if (f.el === el || f.el.contains(el)) return;   // está DENTRO del flotante: no lo tapa
+      if (f.velo) return;                             // cubre la pantalla entera: se dice aparte
+      const fr = refrescar(f);
+      const t = fraccionTapada(rc, fr);
+      if (t <= 0.02) return;
+      const ix = Math.min(Math.max(rc.left, fr.left) + 2, Math.min(rc.right, fr.right) - 1);
+      const iy = Math.min(Math.max(rc.top, fr.top) + 2, Math.min(rc.bottom, fr.bottom) - 1);
+      if (ix < 0 || iy < 0 || ix >= (win.innerWidth || 0) || iy >= (win.innerHeight || 0)) return;
+      let arriba = null;
+      try { arriba = doc.elementFromPoint(ix, iy); } catch (e) { arriba = null; }
+      if (!arriba) return;
+      if (arriba !== f.el && !f.el.contains(arriba)) return;
+      /* Y tiene que OCULTAR, no solo atenuar: un velo translúcido deja ver el foco
+       * a través, y acusarlo es inventar la barrera en toda la página. */
+      if (f.opaco != null && f.opaco < 0.9) { if (t > out.fracAt) { out.fracAt = t; out.atenua = f; } }
+      else if (t > out.frac) { out.frac = t; out.peor = f; }
+    });
+    return out;
+  }
+  /**
+   * 2.4.11: recorre el ORDEN DE TABULACIÓN enfocando de verdad, y mide dónde deja
+   * el navegador cada control.
+   *
+   * LO QUE HABÍA ERA UN DECORADO, Y ESTO ES LO QUE SE MIDIÓ. Lo anterior sacaba
+   * cada control de la ventana (`scrollTo(absTop + alto + 1)`) y lo traía con
+   * `scrollIntoView({block:"nearest"})`, apoyándose en que «nearest es lo que hace
+   * el navegador al tabular». No lo es. Chromium, al enfocar, no desplaza si el
+   * control ya se ve, y si no se ve lo CENTRA; nunca lo pega al borde. Con una
+   * cabecera pegajosa de 96 px y 40 enlaces, medido con pulsaciones de teclado de
+   * verdad contra el modelo que había:
+   *
+   *     Tab bajando .................  0 de 40 tapados
+   *     Mayús+Tab subiendo ..........  9 de 39 tapados   ← la barrera es REAL
+   *     el modelo «nearest» .........  34 de 40, todos en top=0
+   *
+   * Veinticinco acusaciones inventadas en una página, y la misma cuenta en una con
+   * barra de cookies fija al pie (10 reales, 35 acusadas). El `top=0` de todas
+   * ellas era la firma del decorado: una posición que el navegador no produce.
+   *
+   * Así que no se simula el desplazamiento: se enfoca en el orden en que llega el
+   * tabulador y se mira dónde quedó. Eso aplica solo el `scroll-padding` del sitio
+   * —quien reserva el hueco no sale acusado—, respeta el centrado, y mide las dos
+   * direcciones, que es lo que de verdad importaba del bloque anterior: bajando no
+   * se tapa nada y subiendo se tapa, porque al subir el control entra por arriba,
+   * donde está la cabecera. Contra el teclado real, en tres montajes:
+   *
+   *     cabecera pegajosa ....  teclado 9  · este modelo 9   · el anterior 34
+   *     con scroll-padding ...  teclado 0  · este modelo 0   · el anterior 0
+   *     barra al pie .........  teclado 10 · este modelo 10  · el anterior 35
+   *
+   * Ni uno perdido ni uno inventado en los tres.
+   */
+  function oscurecimientoAlTabular(doc, win, focusables, flotantes, anota) {
+    if (!focusables.length || !flotantes.length) return 0;
+    const x0 = win.scrollX, y0 = win.scrollY;
+    /* El orden de tabulación de verdad: primero los `tabindex` positivos en orden
+     * ascendente y después el orden del documento. Importa porque la posición en
+     * la que queda un control depende de dónde estaba la página al llegar a él. */
+    const con = [];
+    for (let i = 0; i < focusables.length; i++) if (focusables[i].el) con.push({ f: focusables[i], i: i });
+    con.sort(function (a, b) {
+      const pa = a.f.ti > 0 ? 0 : 1, pb = b.f.ti > 0 ? 0 : 1;
+      if (pa !== pb) return pa - pb;
+      if (pa === 0 && a.f.ti !== b.f.ti) return a.f.ti - b.f.ti;
+      return a.i - b.i;
+    });
+    const sec = con.map(function (c) { return c.f; });
+    const peor = sec.map(function () { return { t: 0, f: null, at: 0, fat: null }; });
+    [false, true].forEach(function (subiendo) {
+      /* Cada dirección empieza donde empezaría de verdad: arriba para bajar, al
+       * final del documento para subir con Mayús+Tab. */
+      let fondo = 0;
+      try { fondo = (doc.documentElement && doc.documentElement.scrollHeight) || 0; } catch (e) {}
+      try { win.scrollTo(0, subiendo ? fondo : 0); } catch (e) {}
+      for (let n = 0; n < sec.length; n++) {
+        const k = subiendo ? sec.length - 1 - n : n;
+        const el = sec[k].el;
+        // SIN `preventScroll`: que desplace el navegador, que es de quien se mide.
+        try { el.focus(); } catch (e) { continue; }
+        const r = tapadoAhora(doc, win, el, flotantes);
+        if (r.peor && r.frac > peor[k].t) { peor[k].t = r.frac; peor[k].f = r.peor; }
+        if (r.atenua && r.fracAt > peor[k].at) { peor[k].at = r.fracAt; peor[k].fat = r.atenua; }
+      }
+    });
+    let n = 0;
+    for (let k = 0; k < sec.length; k++) {
+      const p = peor[k], loc = sec[k].loc;
+      // Lo peor de las dos direcciones es UN hallazgo del mismo control, no dos.
+      if (p.f && p.t >= 0.999) { anota(p.f, "tapa", loc, p.t); n++; }
+      else if (p.f && p.t > 0.02) { anota(p.f, "parcial", loc, p.t); n++; }
+      else if (p.fat) { anota(p.fat, "atenua", loc, p.at); n++; }
+    }
+    /* El suelo se devuelve donde estaba: lo que se mide después mide sobre la misma
+     * página, y moverla por debajo sería medir otra cosa. */
+    try { win.scrollTo(x0, y0); } catch (e) {}
+    try { if (doc.activeElement && doc.activeElement.blur) doc.activeElement.blur(); } catch (e) {}
+    return n;
+  }
+  /**
    * 2.2.2 Poner en pausa, detener u ocultar.
    *
    * El criterio habla de contenido que se mueve, parpadea o se desplaza **más de
@@ -3153,118 +3265,17 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         if (focusable) {
           // El RECT viaja con el control: sin él no se puede comparar el orden de
           // tabulación con el orden visual, que es de lo que habla 2.4.3.
-          focusables.push({ loc: loc, ti: ti, path: ruta, rect: el.getBoundingClientRect(), texto: (el.textContent || "").replace(/[\s\u00a0]+/g, " ").trim().slice(0, 24) });
-          // 2.4.11: con el foco puesto, ¿lo tapa algo fijo?
-          if (flotantes.length) {
-            /* El rect se lee CON la página desplazada, como cuando se tabula.
-             *
-             * El foco se ponía con `preventScroll: true` y el rect se leía en la
-             * posición de scroll de la carga, así que los controles de más abajo se
-             * medían con unas coordenadas que no son las que tendrán cuando el foco
-             * llegue a ellos: la intersección con la barra fija salía 0 y la barrera no
-             * se emitía. Medido: el último enlace de una página de 2000 px queda tapado
-             * al 100 % por la barra de cookies al tabular hasta él, y no se decía nada.
-             *
-             * Aquí sí se desplaza —es lo que hace el navegador al tabular— y después se
-             * devuelve el scroll a donde estaba, para no mover el suelo de las demás
-             * comprobaciones. */
-            const scrollX0 = win.scrollX, scrollY0 = win.scrollY;
-            /* Y se mide en las DOS direcciones de tabulación, no solo bajando.
-             *
-             * La alineación «nearest» deja el control pegado al borde por el que entra:
-             * tabulando hacia abajo, al borde INFERIOR —donde está la barra de cookies—;
-             * con Mayús+Tab hacia arriba, al borde SUPERIOR, que es donde está la
-             * cabecera pegajosa, el ejemplo de manual de 2.4.11. Midiendo solo hacia
-             * abajo, una cabecera `sticky` que oculta el foco al subir se escapaba
-             * entera: comprobado con una cabecera de 120 px, un único control acusado
-             * (el que ya nacía debajo de ella) de los veinticuatro que oculta al subir.
-             * 2.4.11 no habla de la dirección: habla de recibir el foco.
-             *
-             * El control se saca de la ventana por el lado del que vendría el foco y se
-             * deja que el navegador lo traiga. Así se aplica el `scroll-padding` del
-             * sitio, que es quien de verdad decide dónde queda: una página que reserva
-             * el hueco no sale acusada, y eso no se puede simular a mano. */
-            const r0 = el.getBoundingClientRect();
-            const absTop = r0.top + win.scrollY, altoEl = r0.height;
-            /* Lo peor de las dos pasadas, por flotante: el mismo control tapado en las
-             * dos direcciones es UN hallazgo, no dos. */
-            const porFlotante = [];
-            const apunta = function (f, t, atenua) {
-              for (let i = 0; i < porFlotante.length; i++) {
-                if (porFlotante[i].f === f) {
-                  if (t > porFlotante[i].t) { porFlotante[i].t = t; porFlotante[i].atenua = atenua; }
-                  return;
-                }
-              }
-              porFlotante.push({ f: f, t: t, atenua: atenua });
-            };
-            [true, false].forEach(function (haciaAbajo) {
-              try {
-                win.scrollTo(0, haciaAbajo ? Math.max(0, absTop - (win.innerHeight || 0) - 1) : absTop + altoEl + 1);
-              } catch (e) {}
-              try { if (el.scrollIntoView) el.scrollIntoView({ block: "nearest", inline: "nearest" }); } catch (e) {}
-              const rc = el.getBoundingClientRect();
-              if (!(rc.width > 0 && rc.height > 0)) return;
-              /* Primero se descarta lo que NO se pinta encima, y después se elige el peor.
-               *
-               * Al revés no sirve: una marca de agua `fixed; inset:0; z-index:-1` tapa el
-               * 100 % de cualquier rectángulo, así que ganaba siempre la elección del
-               * «peor» y se llevaba por delante la comprobación de pintado —el hallazgo
-               * salía culpando a la marca incluso donde había un tapado de verdad—.
-               *
-               * Quién se pinta encima lo dice `elementFromPoint` en un punto DENTRO de
-               * la intersección, que es donde el tapado ocurriría. */
-              flotantes.forEach(function (f) {
-                if (f.el === el || f.el.contains(el)) return;   // está DENTRO del flotante: no lo tapa
-                const fr = refrescar(f);
-                const t = fraccionTapada(rc, fr);
-                if (t <= 0.02) return;
-                const ix = Math.min(Math.max(rc.left, fr.left) + 2, Math.min(rc.right, fr.right) - 1);
-                const iy = Math.min(Math.max(rc.top, fr.top) + 2, Math.min(rc.bottom, fr.bottom) - 1);
-                if (ix < 0 || iy < 0 || ix >= (win.innerWidth || 0) || iy >= (win.innerHeight || 0)) return;
-                let arriba = null;
-                try { arriba = doc.elementFromPoint(ix, iy); } catch (e) { arriba = null; }
-                // Solo cuenta si lo que se pinta ahí es el flotante (o algo suyo).
-                if (!arriba) return;
-                if (arriba !== f.el && !f.el.contains(arriba)) return;
-                /* Y tiene que OCULTAR, no solo atenuar. Un velo translúcido deja ver
-                 * el foco a través; acusarlo es inventar la barrera en toda la página. */
-                if (f.velo) return;   // cubre la pantalla entera: se dice una vez, abajo
-                apunta(f, t, !!(f.opaco != null && f.opaco < 0.9));
-              });
-            });
-            {
-              let peor = null, frac = 0;
-              porFlotante.forEach(function (x) { if (!x.atenua && x.t > frac) { frac = x.t; peor = x.f; } });
-              const atenuan = porFlotante.filter(function (x) { return x.atenua; });
-              /* Y que de verdad se pinte ENCIMA, no solo que los rectángulos se cruzen.
-               *
-               * El comentario de `elementosFlotantes` decía que se comprobaba «que de
-               * verdad se pinta por encima», y no se comprobaba: `z` se recogía y no se
-               * leía nunca. Una marca de agua `position:fixed; inset:0; z-index:-1`
-               * —que se pinta DETRÁS de todo— cruzaba su rectángulo con cualquier
-               * control y producía un 2.4.11 `falla` grave por cada uno. Medido: tres
-               * barreras graves inventadas en una página correcta, y
-               * `document.elementFromPoint` devolviendo el propio enlace.
-               *
-               * El orden de pintado real lo dice `elementFromPoint`, y es lo que hay
-               * que creer, no la aritmética de rectángulos. */
-              /* Aquí solo se ANOTA quién tapa a quién; el hallazgo se emite al final
-               * del barrido, agrupado por el elemento que tapa. */
-              if (peor && frac >= 0.999) anotaOscurecido(peor, "tapa", loc, frac);
-              else if (peor && frac > 0.02) anotaOscurecido(peor, "parcial", loc, frac);
-              else if (atenuan.length) {
-                // Encima hay algo translúcido. No oculta —2.4.11 pide «entirely
-                // hidden»— pero baja el contraste de todo lo que está debajo, foco
-                // incluido, y eso se dice en vez de callarlo o de acusar al criterio.
-                const peorAt = atenuan.reduce(function (m, x) { return x.t > m.t ? x : m; }, atenuan[0]);
-                anotaOscurecido(peorAt.f, "atenua", loc, peorAt.t);
-              }
-            }
-            // El suelo se devuelve donde estaba: las demás comprobaciones miden sobre
-            // la misma página, y moverla por debajo sería medir otra cosa.
-            try { win.scrollTo(scrollX0, scrollY0); } catch (e) {}
-          }
+          /* El ELEMENTO viaja con la entrada, y no es cosmética.
+           *
+           * Se guardaba `{loc, ti, path, rect, texto}` SIN `el`, y el veredicto
+           * conforme de 2.4.11 pedía `rutaM(f.el)` para declarar qué se había
+           * recorrido: `f.el` era `undefined`, `rutaM` no devolvía nada y el
+           * `.filter(Boolean)` lo borraba, así que `rutas` salía siempre vacío.
+           * El comentario de ese bloque dice que dejar la casilla del selector
+           * vacía «sería peor que decir qué se recorrió», y llevaba así desde
+           * v0.37.0. Medido: el hallazgo que llega al informe trae `path: ""`.
+           * El recorrido de 2.4.11 lo necesita además para enfocar de verdad. */
+          focusables.push({ el: el, loc: loc, ti: ti, path: ruta, rect: el.getBoundingClientRect(), texto: (el.textContent || "").replace(/[\s\u00a0]+/g, " ").trim().slice(0, 24) });
           const ind = indicadorDeFoco(base, foc, el, win);
           const changed = ind.visible;
           if (docEnfocado || changed) {
@@ -3377,6 +3388,13 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       }
       for (let k = desde; k < res.length; k++) if (!res[k].path) res[k].path = ruta;
     });
+    /* ── 2.4.11, una vez recorrido el orden de tabulación completo ──
+     *
+     * Va aquí y no dentro del bucle a propósito: dónde queda un control al recibir
+     * el foco depende de dónde estaba la página al llegar a él, y eso solo se sabe
+     * recorriendo la secuencia. Dentro del bucle había que inventarse el
+     * desplazamiento, y lo inventado acusaba a 34 de 40 donde el teclado acusa a 9. */
+    oscurecimientoAlTabular(doc, win, focusables, flotantes, anotaOscurecido);
     /* ── 2.2.2 Poner en pausa, detener u ocultar ── */
     const animadas = animacionesPersistentes(doc, win, 25);
     animadas.forEach(function (a) {
@@ -3819,7 +3837,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   }
 
   const FNS = [parseColor, over, lum, contrastRatio, rgbStr, apcaContrast, apcaMin,
-    animacionesPersistentes, distintivoDeEnlace, enTextoCorrido, elementosFlotantes, fraccionTapada, ratioTxt, refrescar, todosM, enfocadoM, shadowCerrados, resolverColor, ownText, opacidadAcumulada, coloresDe, mismoColor, aparienciaFoco, porQueEseColor, indicadorDeFoco, fondoRealCoincide, bgBehind, contrastOf, boundaryContrastOf, ordenReordenado, literalesDeContent, tienePalabra, contrasteGenerado, isInteractiveM, locatorM, rutaM, renderedM, disabledM, managedM, decoracionDeclarada, textTargets,
+    animacionesPersistentes, distintivoDeEnlace, enTextoCorrido, elementosFlotantes, fraccionTapada, ratioTxt, refrescar, tapadoAhora, oscurecimientoAlTabular, todosM, enfocadoM, shadowCerrados, resolverColor, ownText, opacidadAcumulada, coloresDe, mismoColor, aparienciaFoco, porQueEseColor, indicadorDeFoco, fondoRealCoincide, bgBehind, contrastOf, boundaryContrastOf, ordenReordenado, literalesDeContent, tienePalabra, contrasteGenerado, isInteractiveM, locatorM, rutaM, renderedM, disabledM, managedM, decoracionDeclarada, textTargets,
     pinta, sinPseudoFoco, coincideSinFoco, hojasLegibles, reglasDeFoco, runChecksReal];
   const FN_SRC = "var MANAGED_PARENT = " + JSON.stringify(MANAGED_PARENT) + ";\nvar NATIVOS = " + JSON.stringify(NATIVOS) + ";\n" +
     "var PROP_INDICADOR = " + JSON.stringify(PROP_INDICADOR) + ";\nvar NULOS = " + JSON.stringify(NULOS) + ";\n" +
@@ -3869,6 +3887,8 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   NS.enTextoCorrido = enTextoCorrido;
   NS.elementosFlotantes = elementosFlotantes;
   NS.fraccionTapada = fraccionTapada;
+  NS.tapadoAhora = tapadoAhora;
+  NS.oscurecimientoAlTabular = oscurecimientoAlTabular;
   NS.ratioTxt = ratioTxt;
   NS.resolverColor = resolverColor;
   NS.opacidadAcumulada = opacidadAcumulada;

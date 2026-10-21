@@ -1001,6 +1001,28 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.76.0 — el 2.4.11 medía un decorado
+
+**La medición de 2.4.11 se apoyaba en una premisa falsa, y estaba escrita en su propio comentario.** Para saber si un elemento fijo tapa al control que recibe el foco, el motor sacaba cada control fuera de la ventana y lo traía con `scrollIntoView({block:"nearest"})`, «que es lo que hace el navegador al tabular». No lo es. Chromium, al enfocar, **no desplaza si el control ya se ve, y si no se ve lo centra**; nunca lo pega al borde. Medido sobre una página de 40 enlaces con cabecera pegajosa de 96 px, con pulsaciones de teclado de verdad:
+
+| | tapados del todo |
+|---|---|
+| Tab bajando | 0 de 40 |
+| Mayús+Tab subiendo | **9 de 39** — la barrera es REAL |
+| el modelo «nearest» | **34 de 40**, todos en `top=0` |
+
+Veinticinco acusaciones inventadas en una página, y la misma cuenta con una barra de cookies fija al pie (10 reales, 35 acusadas). El `top=0` de todas ellas era la firma del decorado: una posición que el navegador no produce.
+
+Ahora no se simula el desplazamiento. Se recorre el **orden de tabulación** —`tabindex` positivos primero, después el del documento— enfocando de verdad, sin `preventScroll`, en las dos direcciones, y se mide dónde quedó el control. Eso aplica solo el `scroll-padding` del sitio, respeta el centrado, y conserva las tres cautelas que cada una costó una regresión: un control dentro del flotante no se acusa a sí mismo, un velo a pantalla completa se dice una vez y aparte, y quién se pinta encima lo decide `elementFromPoint` y no la aritmética de rectángulos. Contra el teclado real, en cuatro montajes: **9/9, 0/0, 10/10 y 5/5. Ni uno perdido ni uno inventado.**
+
+**Y el veredicto conforme de 2.4.11 llegaba al informe con la casilla del selector vacía**, que es lo que su propio comentario dice que «sería peor que decir qué se recorrió». Dos defectos, uno tapando al otro: el barrido guardaba los enfocables sin el elemento, así que `rutaM(f.el)` recibía `undefined` y `rutas` salía siempre `[]`; y el mapeo de `render-analyze` solo leía `m.path`, de modo que ni aun llena habría llegado. Medido antes del arreglo: `path: ""`. Una afirmación sobre el conjunto viaja ahora con la secuencia recorrida, un nodo por ruta.
+
+**Las dos guardias de integración que pedían `n >= 10` guardaban el número inflado.** Su intención —que el recuento se diga, y que la dirección de subida cuente— sigue en pie y es la que importa, pero ya no se guarda con un umbral a dedo: se guarda **contra el teclado**, pulsando Tab y Mayús+Tab en el test y exigiendo que la cuenta del agente sea la misma. Más un tercer test que reconstruye el modelo «nearest» a mano y exige que acuse a más que el teclado: si alguien volviera a él, la diferencia reaparece.
+
+**Y el rojo permanente de `hojas-externas` era un defecto del proyecto, no del contenedor.** Lo tenía apuntado como «ese test lanza el navegador sin pasar por `playwright-launch.js`». Al mirarlo: el test hace `sonda.launchOptions` seis veces y `chromiumDisponible` devolvía `{ok, motivo}` sin `launchOptions` — valía `undefined`, y el navegador se lanzaba con `{}` ignorando `PW_CHROMIUM`. El defecto estaba en el módulo que existe justo para evitar eso. La sonda devuelve ahora las opciones con las que ha lanzado, y un rojo permanente menos: tapaba los otros tres tests de su fichero.
+
+**863 tests unitarios** (de 847) y, por primera vez, **la suite de integración entera**: 20 ficheros, todo en verde, incluido el que llevaba versiones en rojo.
+
 ### v0.75.0 — el informe afirmaba un cambio que no hubo, y cuatro versiones sin correr integración
 
 Dos cosas, y la segunda importa más que la primera.

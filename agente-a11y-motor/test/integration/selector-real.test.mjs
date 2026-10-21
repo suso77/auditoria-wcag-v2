@@ -276,38 +276,129 @@ const ALTA = (extra) => `<!doctype html><html lang="es"><head><meta charset="utf
 ${Array.from({ length: 24 }, (_, i) => `<a href="/p${i}" id="e${i}">Enlace ${i}</a>`).join("")}
 </body></html>`;
 
-test("2.4.11 real: una barra que tapa a 17 controles es UN hallazgo con el recuento", { skip }, async () => {
+/**
+ * LA CUENTA DEL AGENTE TIENE QUE SER LA DEL TECLADO, y esto la mide pulsando.
+ *
+ * Las dos aserciones que había aquí pedían `n >= 10`, y el 10 venía de un modelo
+ * equivocado: el bloque anterior sacaba el control de la ventana y lo traía con
+ * `scrollIntoView({block:"nearest"})`, apoyado en que «nearest es lo que hace el
+ * navegador al tabular». No lo es. Chromium no desplaza si el control ya se ve, y
+ * si no se ve lo CENTRA. Medido sobre esta misma página de 24 enlaces, con
+ * pulsaciones de Tab y Mayús+Tab de verdad contra el modelo que había:
+ *
+ *     barra fija al pie ......  teclado  5  ·  modelo «nearest» 17
+ *     cabecera pegajosa ......  teclado  4  ·  modelo «nearest» 17
+ *
+ * Así que lo que aquí se guardaba era el número inflado. La INTENCIÓN de las dos
+ * sigue en pie y es la que importa —que el recuento se diga, y que la dirección
+ * de subida cuente (midiendo solo hacia abajo se acusaba UN control)—, pero no se
+ * guarda con un umbral a dedo: se guarda contra el teclado. Si un cambio futuro
+ * vuelve a inflar la cuenta o deja de ver la subida, esto se pone rojo.
+ */
+async function tapadosConTeclado(b, html, flotSel) {
+  const vistos = new Set();
+  for (const arriba of [false, true]) {
+    /* La MISMA ventana que `medir`, sin viewport explícito. Con 1280×1024 aquí y
+     * el 1280×720 de ahí la cuenta no puede coincidir: cuántos controles tapa un
+     * elemento fijo depende del alto de la ventana. Costó un rojo que parecía del
+     * agente y era de este helper. */
+    const p = await b.newPage();
+    await p.setContent(html, { waitUntil: "load" });
+    if (arriba) await p.evaluate(() => { const l = document.querySelectorAll("a[href]"); l[l.length - 1].focus(); });
+    for (let i = 0; i < 30; i++) {
+      await p.keyboard.press(arriba ? "Shift+Tab" : "Tab");
+      await p.waitForTimeout(20);
+      const r = await p.evaluate((sel) => {
+        const el = document.activeElement;
+        if (!el || el.tagName !== "A") return null;
+        const fl = document.querySelector(sel);
+        if (!fl) return null;
+        const f = fl.getBoundingClientRect(), c = el.getBoundingClientRect();
+        if (!(c.width > 0 && c.height > 0)) return null;
+        const s = Math.max(0, Math.min(c.bottom, f.bottom) - Math.max(c.top, f.top));
+        return { id: el.id, frac: c.height ? s / c.height : 0 };
+      }, flotSel);
+      if (r && r.frac >= 0.999) vistos.add(r.id);
+    }
+    await p.close();
+  }
+  return vistos.size;
+}
+
+test("2.4.11 real: una barra fija es UN hallazgo y la cuenta es la del teclado", { skip }, async () => {
   const { chromium } = await import("playwright");
   const b = await chromium.launch(launchOptions);
   try {
-    const m = await medir(b, ALTA());
+    const html = ALTA();
+    const m = await medir(b, html);
     const f = m.filter((x) => x.crit === "2.4.11");
     assert.equal(f.length, 1, "una causa, una fila; salieron " + f.length);
     assert.equal(f[0].verdict, "falla");
     assert.equal(f[0].node, "div#barra");
     // El recuento está en la evidencia: es lo que mide la gravedad.
     const n = Number(/: (\d+) control/.exec(f[0].detail)[1]);
-    assert.ok(n >= 10, "tiene que decir a cuántos controles afecta, dijo " + n);
+    const real = await tapadosConTeclado(b, html, "#barra");
+    assert.ok(real > 0, "el montaje tiene que tapar de verdad al tabular; el teclado dijo " + real);
+    assert.equal(n, real, "el agente dice " + n + " y el teclado " + real);
     assert.match(f[0].detail, /Es UNA causa, no \d+ barreras distintas/);
     assert.match(f[0].detail, /scroll-padding-bottom` mayor que los 150 px/);
   } finally { await b.close(); }
 });
 
 test("2.4.11 real: una cabecera pegajosa tapa el foco al subir con Mayús+Tab", { skip }, async () => {
-  /* Midiendo solo hacia abajo esto se escapaba casi entero: la alineación
-   * «nearest» deja el control pegado al borde por el que entra, y hacia arriba ese
-   * borde es el de la cabecera. Con 120 px de cabecera se acusaba UN control —el
-   * que ya nacía debajo— de los veinticuatro que oculta al subir. */
+  /* Bajando no se tapa NADA en este montaje: el navegador centra el control al
+   * traerlo. Lo que tapa es subir, porque entonces el control entra por arriba,
+   * que es donde está la cabecera. Si la pasada de subida se perdiera, la cuenta
+   * caería a cero y esto se pondría rojo. */
   const { chromium } = await import("playwright");
   const b = await chromium.launch(launchOptions);
   try {
-    const m = await medir(b, ALTA("#barra { inset: 0 0 auto; height: 120px; }"));
+    const html = ALTA("#barra { inset: 0 0 auto; height: 120px; }");
+    const m = await medir(b, html);
     const f = m.filter((x) => x.crit === "2.4.11");
     assert.equal(f.length, 1, JSON.stringify(f));
     assert.equal(f[0].verdict, "falla");
     const n = Number(/: (\d+) control/.exec(f[0].detail)[1]);
-    assert.ok(n >= 10, "la dirección de subida tiene que contar, dijo " + n);
+    const real = await tapadosConTeclado(b, html, "#barra");
+    assert.ok(real > 0, "la cabecera tiene que tapar al subir; el teclado dijo " + real);
+    assert.equal(n, real, "el agente dice " + n + " y el teclado " + real);
     assert.match(f[0].detail, /scroll-padding-top/, "y el hueco se reserva por arriba");
+  } finally { await b.close(); }
+});
+
+test("2.4.11 real: el modelo «nearest» que había inflaba la cuenta (regresión v0.76.0)", { skip }, async () => {
+  /* Esta es la medición que motivó el cambio, puesta como guardia para que no
+   * vuelva. El modelo anterior dejaba todos los controles en `top=0` —una
+   * posición que el navegador no produce— y de ahí salía el recuento. Aquí se
+   * reconstruye ese modelo a mano y se comprueba que acusa a MÁS de los que
+   * acusa el teclado: si alguien volviera a él, la diferencia reaparecería. */
+  const { chromium } = await import("playwright");
+  const b = await chromium.launch(launchOptions);
+  try {
+    const html = ALTA("#barra { inset: 0 0 auto; height: 120px; }");
+    const real = await tapadosConTeclado(b, html, "#barra");
+    const p = await b.newPage();   // la misma ventana que `medir` y que el teclado
+    await p.setContent(html, { waitUntil: "load" });
+    const nearest = await p.evaluate(() => {
+      const flot = () => document.querySelector("#barra").getBoundingClientRect();
+      let n = 0;
+      document.querySelectorAll("a[href]").forEach(function (el) {
+        const r0 = el.getBoundingClientRect(), absTop = r0.top + window.scrollY, alto = r0.height;
+        let peor = 0;
+        [true, false].forEach(function (abajo) {
+          window.scrollTo(0, abajo ? Math.max(0, absTop - window.innerHeight - 1) : absTop + alto + 1);
+          el.scrollIntoView({ block: "nearest", inline: "nearest" });
+          const c = el.getBoundingClientRect(), f = flot();
+          const s = Math.max(0, Math.min(c.bottom, f.bottom) - Math.max(c.top, f.top));
+          const fr = c.height ? s / c.height : 0;
+          if (fr > peor) peor = fr;
+        });
+        if (peor >= 0.999) n++;
+      });
+      return n;
+    });
+    await p.close();
+    assert.ok(nearest > real, "el modelo «nearest» acusaba a " + nearest + " y el teclado a " + real + ": si esto deja de cumplirse, revisa la premisa, no el test");
   } finally { await b.close(); }
 });
 
