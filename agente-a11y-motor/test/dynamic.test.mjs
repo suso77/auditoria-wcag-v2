@@ -621,3 +621,67 @@ test("3.3.3: sin envío o sin campos en error, no se dice nada", () => {
   assert.deepEqual(analyzeSuggestions({ submitted: false, fields: [campo()] }), []);
   assert.deepEqual(sug([campo({ invalid: false, nativoInvalido: false, required: false, vacio: false })]), []);
 });
+
+/* ── 2.1.4: lo acusado se confirma repitiéndolo (v0.78.0) ────────────────── */
+
+/**
+ * EL TESTIGO EMPAREJADO SABE VER UNA PÁGINA QUE SE MUEVE SIEMPRE Y NO VE UNA QUE
+ * SE MUEVE UNA VEZ.
+ *
+ * `ruido` se acumula de los testigos vistos hasta ese momento, así que un cambio
+ * de un solo disparo que caiga dentro de la ventana con tecla no lo ha visto
+ * ningún testigo y se le atribuía a la tecla. Medido, y determinista: una página
+ * SIN UN SOLO manejador de teclado que añade seis elementos a los 400 ms sale con
+ * «la tecla "/" cambia qué se ve (+6 elementos visibles)», ruido [], activas 1.
+ * A los 350 ms sale limpia; a los 450 y 600 vuelve a salir acusada.
+ *
+ * Es el falso positivo que la prueba de integración de v0.60.0 llevaba cazando en
+ * el Mac del autor —5 de 6 pasadas, y 6 de 6 con el código anterior— y pasando 6
+ * de 6 en el contenedor: depende de dónde caiga la ventana, o sea de la velocidad
+ * de la máquina. La unión de TODOS los testigos no lo arreglaría, porque ninguno
+ * ve esa mutación. Lo único que distingue un atajo de una página que se mueve
+ * sola es que el atajo SE REPITE.
+ */
+test("2.1.4: una tecla cuyo cambio no se repite no acusa… y tampoco absuelve", () => {
+  const f = analyzeCharKeyShortcuts({
+    probadas: ["/", "s", "f", "j"], activas: [], descartadas: [], fueraDelCuerpo: [],
+    limpias: ["s", "f", "j"], ruido: [],
+    dudosas: [{ tecla: "/", cambios: ["cambia qué se ve (+6 elemento(s) visibles)"], senales: [] }]
+  });
+  assert.equal(f[0].c.n, "2.1.4");
+  assert.equal(f[0].verdict, "revisar", "con un cambio sin dueño no se puede firmar conformidad");
+  const ev = f[0].evid.join(" ");
+  assert.match(ev, /NO se ha podido comprobar/);
+  assert.match(ev, /no se repitió al volver a pulsarlas/);
+  assert.match(ev, /«\/»/, "tiene que decir qué tecla, para poder ir a mirarla");
+  assert.match(ev, /No se acusan.*y no se absuelven/s);
+});
+
+test("2.1.4: sin dudosas y con todo limpio se sigue absolviendo", () => {
+  // El arreglo no puede convertir toda página en «revisar»: eso sería cambiar un
+  // falso positivo por un informe que no dice nada.
+  const f = analyzeCharKeyShortcuts({
+    probadas: ["/", "s"], activas: [], descartadas: [], fueraDelCuerpo: [],
+    limpias: ["/", "s"], ruido: [], dudosas: []
+  });
+  assert.equal(f[0].verdict, "cumple-parcial");
+});
+
+test("2.1.4: una tecla confirmada sigue acusando, y la dudosa viaja al lado", () => {
+  const f = analyzeCharKeyShortcuts({
+    probadas: ["/", "j"], activas: [{ tecla: "j", cambios: ["navega a otra página"] }],
+    descartadas: [], fueraDelCuerpo: [], limpias: [], ruido: [],
+    dudosas: [{ tecla: "/", cambios: ["cambia el texto de la página"], senales: [] }]
+  });
+  assert.equal(f[0].verdict, "revisar");
+  const ev = f[0].evid.join(" ");
+  assert.match(ev, /«j» navega a otra página/);
+  assert.match(ev, /«\/».*no se repitió/s);
+});
+
+test("2.1.4: `dudosas` ausente no rompe nada (trazas viejas)", () => {
+  const f = analyzeCharKeyShortcuts({
+    probadas: ["/"], activas: [], descartadas: [], fueraDelCuerpo: [], limpias: ["/"], ruido: []
+  });
+  assert.equal(f[0].verdict, "cumple-parcial");
+});

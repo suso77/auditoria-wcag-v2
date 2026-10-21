@@ -195,7 +195,19 @@ function __huellaTeclado(){
      antes de que llegue la tecla, y entonces lo que se mide es otra cosa. */
   return { url: location.href, foco: a?__loc(a):null, y: Math.round(window.scrollY||0),
     enCuerpo: (!a || a===document.body || a===document.documentElement),
-    visibles: n, texto: (document.body?(document.body.innerText||''):'').replace(/\\s+/g,' ').length };
+    /* «texto» ERA UNA LONGITUD, y eso hace invisible un cambio de contenido del
+       mismo tamaño. Medido: un atajo real que reescribe un párrafo con un texto de
+       largo parecido no se detectaba la segunda vez, así que la confirmación por
+       repetición lo degradaba a «dudosa». Ahora va longitud + huella del contenido:
+       cualquier cambio de texto cuenta. Más sensible no significa más acusaciones,
+       porque el testigo emparejado recoge también lo que la página cambia sola —un
+       reloj que corre sale como ruido y se descarta—; significa que el cambio que
+       la tecla sí provoca deja de pasar desapercibido. */
+    visibles: n, texto: (function(){
+      var t=(document.body?(document.body.innerText||''):'').replace(/\\s+/g,' ');
+      var h=0; for (var i=0;i<t.length;i++){ h=((h<<5)-h+t.charCodeAt(i))|0; }
+      return t.length+':'+h;
+    })() };
 }
 /* El foco al cuerpo, sin tocar el marcado: basta con quitárselo a quien lo tenga.
    Poner tabindex="-1" en el body para poder enfocarlo cambiaría la página que se está
@@ -523,6 +535,13 @@ export async function dynamicAnalyze(target, opts) {
 
     const reached = []; let trapped = false;
     let atrapadoEn = null;
+    /* `mismoControl` distingue las dos formas de trampa, porque la frase que las
+     * describe no puede ser la misma: una se queda en UN control y la otra cicla
+     * entre varios. Y `marcosAtravesados` anota los marcos por los que pasó el
+     * foco: dentro de ellos esta sonda no ve, y eso hay que declararlo en vez de
+     * acusar o de callar. */
+    let mismoControl = false;
+    const marcosAtravesados = [];
     /* `tabulacionMedida` distingue «he tabulado y no llegué» de «no he tabulado».
      * Si la fase lanza —la página se cierra, un timeout de CDP, una navegación
      * abortada—, `reached` se queda vacío y el análisis emitía `falla` GRAVE para
@@ -537,13 +556,48 @@ export async function dynamicAnalyze(target, opts) {
       const ciclo = [];
       for (let i = 0; i < maxTabs; i++) {
         await page.keyboard.press("Tab");
-        const cur = await evalIn(page, "var el=document.activeElement; return (el && el!==document.body && el!==document.documentElement)? { locator:__loc(el), uid:__uid(el) } : null;");
+        const cur = await evalIn(page, "var el=document.activeElement; return (el && el!==document.body && el!==document.documentElement)? { locator:__loc(el), uid:__uid(el), marco: /^(IFRAME|FRAME|OBJECT|EMBED)$/.test(el.tagName) } : null;");
         const k = cur ? cur.uid : null;
         if (k && k === last) {
           sameCount++;
-          // Trampa solo si hay más de un control y quedan controles sin alcanzar:
-          // con un único control enfocable, repetirse es el comportamiento normal.
-          if (sameCount >= 3 && focusables.length > 1 && seen.size < focusables.length) { trapped = true; break; }
+          /* UN MARCO REPETIDO NO ES UNA TRAMPA: ES EL PUNTO CIEGO DE ESTA SONDA.
+           *
+           * Desde el documento padre, mientras el foco recorre los controles de
+           * DENTRO de un `<iframe>`, `document.activeElement` sigue siendo el
+           * iframe. Con cuatro lecturas iguales seguidas esto declaraba
+           * `trapped` y emitía una barrera CRÍTICA —«el foco queda atrapado, no
+           * se puede salir del componente solo con teclado»— sobre un marco del
+           * que la tabulación sale con toda normalidad.
+           *
+           * Medido: un iframe con 6 controles dentro, con dos enlaces antes y
+           * tres controles después. El caminante para en la tabulación nº 6
+           * diciendo TRAMPA, y pulsando Tab se sale del marco y se llega a los
+           * tres de después sin problema. Con 3 controles dentro no disparaba
+           * —hacen falta cuatro lecturas iguales— así que el defecto dependía de
+           * cuántos controles tuviera el embed: un mapa, un captcha o un reproductor
+           * bastan. Barrera crítica inventada, y encima sin localizador, porque
+           * esta rama nunca rellenaba `atrapadoEn`.
+           *
+           * Lo honesto es no acusar y seguir andando: si de verdad hay una
+           * trampa DENTRO del marco, el recorrido no terminará y saldrá por
+           * `exhausted`, que es `revisar` —«no he podido recorrerlo entero»— y no
+           * una afirmación que esta sonda no puede hacer. */
+          if (cur && cur.marco) {
+            if (marcosAtravesados.indexOf(cur.locator) === -1) marcosAtravesados.push(cur.locator);
+            sameCount = 0;
+          } else if (sameCount >= 3 && focusables.length > 1 && seen.size < focusables.length) {
+            // Trampa solo si hay más de un control y quedan controles sin alcanzar:
+            // con un único control enfocable, repetirse es el comportamiento normal.
+            trapped = true;
+            /* Y SE DICE CUÁL. Esta rama dejaba `atrapadoEn` en `null`, así que la
+             * fila llegaba al informe con `elemento` y `selector` vacíos —una
+             * barrera Crítica a la que nadie puede ir— y la evidencia perdía su
+             * segunda frase. Medido en un sitio real: una fila de 2.1.2 Crítica
+             * con las dos casillas en blanco. El dato estaba aquí al lado. */
+            atrapadoEn = cur ? [cur.locator] : [];
+            mismoControl = true;
+            break;
+          }
         } else sameCount = 0;
         last = k;
         if (k && !seen.has(k)) { seen.add(k); reached.push(cur); ciclo.length = 0; }
@@ -565,7 +619,27 @@ export async function dynamicAnalyze(target, opts) {
           const vuelta = seen.size;
           if (vuelta > 1 && ciclo.length >= vuelta * 2 && seen.size < focusables.length) {
             trapped = true;
-            atrapadoEn = reached.slice(-vuelta).map(function (r) { return r.locator; });
+            /* EL CICLO SON LOS CONTROLES QUE SE REPITEN, no los últimos que se
+             * alcanzaron. Esto era `reached.slice(-vuelta)`, y en un modal de dos
+             * botones con dos enlaces delante salía «cicla entre 4 control(es)
+             * —a → a → button#m1 → button#m2—»: nombraba como parte de la trampa
+             * dos enlaces por los que el foco pasó antes y de los que sí se sale.
+             * La barrera era cierta, pero la evidencia mandaba a quien la lea al
+             * sitio equivocado, y los dos «a» no distinguen nada. Los que de
+             * verdad ciclan están en `ciclo`, que es donde se anotan las pisadas
+             * repetidas; se traducen a locator con lo ya alcanzado. */
+            const porUid = {};
+            reached.forEach(function (r) { if (r && r.uid) porUid[r.uid] = r.locator; });
+            const vistos = {};
+            atrapadoEn = [];
+            ciclo.forEach(function (u) {
+              if (vistos[u]) return;
+              vistos[u] = true;
+              if (porUid[u]) atrapadoEn.push(porUid[u]);
+            });
+            // Si por lo que sea no se pudo traducir ninguno, antes que una lista
+            // vacía vale la última pisada: algo a lo que señalar.
+            if (!atrapadoEn.length && cur) atrapadoEn = [cur.locator];
             break;
           }
         }
@@ -578,6 +652,8 @@ export async function dynamicAnalyze(target, opts) {
       focusables: focusables, reached: reached, trapped: trapped, exhausted: exhausted, tabs: maxTabs,
       medida: tabulacionMedida,
       atrapadoEn: atrapadoEn,
+      mismoControl: mismoControl,
+      marcos: marcosAtravesados,
       // Los interactivos que no son enfocables: el 2.1.1 que nadie enumeraba.
       interactivos: interactivosNoEnf
     });
@@ -951,12 +1027,13 @@ export async function dynamicAnalyze(target, opts) {
           if (antes.foco !== despues.foco) cambios.push({ senal: "foco", frase: "mueve el foco a «" + (despues.foco || "?") + "»" });
           if (Math.abs(antes.y - despues.y) > 8) cambios.push({ senal: "scroll", frase: "desplaza la página " + Math.round(despues.y - antes.y) + " px" });
           if (antes.visibles !== despues.visibles) cambios.push({ senal: "pintura", frase: "cambia qué se ve (" + (despues.visibles - antes.visibles > 0 ? "+" : "") + (despues.visibles - antes.visibles) + " elemento(s) visibles)" });
-          else if (Math.abs(antes.texto - despues.texto) > 20) cambios.push({ senal: "pintura", frase: "cambia el texto de la página" });
+          // `texto` ya no es un número: es «longitud:huella», así que se compara igual.
+          else if (antes.texto !== despues.texto) cambios.push({ senal: "pintura", frase: "cambia el texto de la página" });
           return { antes: antes, cambios: cambios };
         }
 
         const probadas = [], activas = [], descartadas = [], fueraDelCuerpo = [], limpiasSinCambio = [];
-        const ruido = [], testigos = [];
+        const ruido = [], testigos = [], dudosas = [];
         function anotaRuido(cambios) {
           for (const c of cambios) if (ruido.indexOf(c.senal) < 0) ruido.push(c.senal);
         }
@@ -991,8 +1068,58 @@ export async function dynamicAnalyze(target, opts) {
             try { await page.evaluate(function (y) { window.scrollTo(0, y); }, v.antes.y); } catch (e) {}
           }
         }
+
+        /* ── LO ACUSADO SE CONFIRMA REPITIÉNDOLO, O NO SE ACUSA ──────────────
+         *
+         * El testigo emparejado arregló el caso de v0.60.0 —una página que se
+         * mueve CONTINUAMENTE— y deja pasar entero el que se mueve UNA VEZ. El
+         * `ruido` se acumula de los testigos vistos hasta ese momento, así que
+         * un cambio de un solo disparo que caiga dentro de la ventana con tecla
+         * no lo ha visto ningún testigo y se le atribuye a la tecla.
+         *
+         * Medido, y determinista: una página sin UN SOLO manejador de teclado
+         * que añade seis `<li>` a los 400 ms sale con «la tecla "/" cambia qué
+         * se ve (+6 elementos visibles)», ruido `[]`, activas 1. A los 350 ms
+         * sale limpia, a los 450 y 600 vuelve a salir acusada. Es el falso
+         * positivo que la prueba de integración de v0.60.0 llevaba cazando en el
+         * Mac del autor —5 de 6 pasadas— y pasando en el contenedor, porque
+         * depende de dónde caiga la ventana, o sea de la velocidad de la máquina.
+         *
+         * Y la unión de TODOS los testigos tampoco lo arreglaría: ninguno ve esa
+         * mutación. Lo único que distingue un atajo de una página que se mueve
+         * sola es que el atajo SE REPITE. Así que cada tecla acusada se vuelve a
+         * pulsar, con su testigo delante, y solo sigue acusada si la misma señal
+         * reaparece.
+         *
+         * La dirección del fail-safe importa: una tecla cuyo cambio NO se repite
+         * no se absuelve —podría ser un atajo de un solo uso, un modal que se
+         * abre y se queda abierto—, pasa a `dudosas`, y eso impide que 2.1.4
+         * salga conforme. No acusar sin pruebas, y no absolver tampoco. */
+        if (activas.length) {
+          const confirmadas = [];
+          for (const a of activas) {
+            let repite = false, senalesVistas = null;
+            for (let intento = 0; intento < 2 && !repite; intento++) {
+              const t2 = await ventana(null);
+              anotaRuido(t2.cambios);
+              const v2 = await ventana(a.tecla);
+              const limpias2 = v2.cambios.filter(function (c) { return ruido.indexOf(c.senal) < 0; });
+              senalesVistas = limpias2.map(function (c) { return c.senal; });
+              if (limpias2.length) repite = true;
+              if (v2.cambios.length) {
+                try { await page.keyboard.press("Escape"); await page.waitForTimeout(120); } catch (e) {}
+                try { await page.evaluate(function (y) { window.scrollTo(0, y); }, v2.antes.y); } catch (e) {}
+              }
+            }
+            if (repite) confirmadas.push(a);
+            else dudosas.push({ tecla: a.tecla, cambios: a.cambios, senales: senalesVistas || [] });
+          }
+          activas.length = 0;
+          confirmadas.forEach(function (a) { activas.push(a); });
+        }
         return { probadas: probadas, activas: activas, descartadas: descartadas,
-          fueraDelCuerpo: fueraDelCuerpo, limpias: limpiasSinCambio, ruido: ruido, testigos: testigos };
+          fueraDelCuerpo: fueraDelCuerpo, limpias: limpiasSinCambio, ruido: ruido,
+          testigos: testigos, dudosas: dudosas };
       }, null);
     }
 
@@ -1255,7 +1382,9 @@ export async function dynamicAnalyze(target, opts) {
         movimiento: movimiento ? { ms: movimiento.ms, movidos: (movimiento.movidos || []).length, controlesDePausa: (movimiento.controles || []).length } : null,
         teclas: teclado ? { probadas: teclado.probadas.length, activas: teclado.activas.length,
           descartadas: (teclado.descartadas || []).length, fueraDelCuerpo: (teclado.fueraDelCuerpo || []).length,
-          limpias: (teclado.limpias || []).length, ruido: teclado.ruido || [] } : null,
+          limpias: (teclado.limpias || []).length, ruido: teclado.ruido || [],
+          // Teclas cuyo cambio no se repitió: ni acusadas ni absueltas.
+          dudosas: (teclado.dudosas || []).length } : null,
         mensajesDeEstado: estadoEventos.length,
         expandibles: estadoCenso.expandibles, regionesDeEstado: estadoCenso.regiones
       },

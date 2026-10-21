@@ -369,3 +369,164 @@ test("2.2.2 real: una página quieta SIN carrusel sigue en cumple-parcial", { sk
   assert.equal(f.verdict, "cumple-parcial", f.evid.join(" | "));
   assert.match(f.evid.join(" "), /no hay ningún carrusel declarado/);
 });
+
+/* ── 2.1.2: un marco no es una trampa (regresión v0.77.0) ────────────────── */
+
+/**
+ * EL FALSO POSITIVO MÁS CARO QUE HA TENIDO ESTE AGENTE: una barrera CRÍTICA
+ * inventada, y sin elemento al que ir.
+ *
+ * Desde el documento padre, mientras el foco recorre los controles de DENTRO de
+ * un `<iframe>`, `document.activeElement` sigue siendo el iframe. El caminante
+ * de tabulación leía cuatro veces el mismo elemento y declaraba trampa de foco:
+ *
+ *     2.1.2 · Crítica · «El foco queda atrapado con Tab: no se puede salir del
+ *     componente solo con teclado.» · elemento: "" · selector: ""
+ *
+ * Medido: con 6 controles dentro del marco el caminante para en la tabulación
+ * nº 6 diciendo TRAMPA, y pulsando Tab se sale del marco y se llega a los tres
+ * controles de después sin problema. Con 3 controles dentro NO disparaba —hacen
+ * falta cuatro lecturas iguales seguidas—, así que el defecto dependía de cuántos
+ * controles tuviera el embed: un mapa, un captcha o un reproductor bastan.
+ *
+ * Este test usa 6 a propósito: con menos no reproduce nada.
+ */
+const CON_MARCO = (dentro) => '<a href="/a" id="p1">antes uno</a><a href="/b" id="p2">antes dos</a>' +
+  '<iframe id="mapa" title="Mapa" width="300" height="120" srcdoc="' +
+  Array.from({ length: dentro }, (_, i) => '<button>dentro ' + i + '</button>').join(" ") +
+  '"></iframe><a href="/c" id="p3">después uno</a><a href="/d" id="p4">después dos</a><button id="p5">enviar</button>';
+
+test("2.1.2 real: un iframe con 6 controles dentro NO es una trampa de foco", { skip }, async () => {
+  const out = await dynamicAnalyze({ html: CON_MARCO(6) }, { launchOptions, movimientoMs: 0, teclas: false });
+  const f = out.findings.filter((x) => x.c.n === "2.1.2");
+  assert.equal(f.length, 1, JSON.stringify(f.map((x) => x.verdict)));
+  assert.notEqual(f[0].verdict, "falla", "barrera CRÍTICA inventada: " + (f[0].evid || []).join(" "));
+  assert.notEqual(f[0].sev, "crítica");
+  // Y el punto ciego se declara: no se ha mirado dentro del marco.
+  assert.match((f[0].evid || []).join(" "), /marco/i, "el interior del marco no se ha visto y hay que decirlo");
+});
+
+test("2.1.2 real: con pocos controles dentro tampoco, y sigue declarando el marco", { skip }, async () => {
+  // El caso que antes pasaba por casualidad, para que no se arregle solo uno.
+  const out = await dynamicAnalyze({ html: CON_MARCO(2) }, { launchOptions, movimientoMs: 0, teclas: false });
+  const f = out.findings.filter((x) => x.c.n === "2.1.2")[0];
+  assert.notEqual(f.verdict, "falla");
+  assert.match((f.evid || []).join(" "), /marco/i);
+});
+
+/**
+ * Y LAS TRAMPAS DE VERDAD, QUE NO TENÍAN NINGUNA PRUEBA DE INTEGRACIÓN.
+ *
+ * Eso se vio al escribir la de arriba: la detección de `trapped` nunca se había
+ * comprobado de punta a punta contra una trampa real en un navegador, solo con
+ * trazas de mentira en la suite pura. Arreglar un falso positivo sin esta red
+ * es arreglar a ciegas.
+ *
+ * La trampa tiene que ser SINCRÓNICA para reproducirse: un `onblur` que
+ * redevuelve el foco con `setTimeout` llega tarde —el caminante ya ha leído el
+ * control siguiente— y la página sale limpia. La trampa real del mundo es un
+ * `keydown` que intercepta Tab con `preventDefault`, que es lo que hace el
+ * guardián de foco de cualquier modal.
+ */
+test("2.1.2 real: la trampa en UN control se ve y dice en cuál", { skip }, async () => {
+  const html = '<a href="/a">uno</a>' +
+    '<button id="pega" onkeydown="if(event.key===\'Tab\'){event.preventDefault();this.focus();}">pegajoso</button>' +
+    '<a href="/b">dos</a><a href="/c">tres</a><a href="/d">cuatro</a>';
+  const out = await dynamicAnalyze({ html }, { launchOptions, movimientoMs: 0, teclas: false });
+  const f = out.findings.filter((x) => x.c.n === "2.1.2")[0];
+  assert.equal(f.verdict, "falla", JSON.stringify(f));
+  assert.equal(f.sev, "crítica");
+  assert.ok(f.nodes && f.nodes.length, "una barrera crítica sin elemento no es reportable");
+  assert.equal(f.nodes[0].locator, "button#pega");
+  assert.match((f.evid || []).join(" "), /atrapado con Tab en «button#pega»/);
+});
+
+test("2.1.2 real: el ciclo de un modal nombra SOLO los controles que ciclan", { skip }, async () => {
+  /* La lista salía de `reached.slice(-vuelta)`, los últimos alcanzados, no los
+   * que se repiten: con dos enlaces delante del modal decía «cicla entre 4
+   * control(es) —a → a → button#m1 → button#m2—». La barrera era cierta y la
+   * evidencia mandaba al sitio equivocado, con dos locators «a» que no
+   * distinguen nada. */
+  const html = '<a href="/a">fuera uno</a><a href="/b">fuera dos</a>' +
+    '<div id="modal">' +
+    '<button id="m1" onkeydown="if(event.key===\'Tab\'){event.preventDefault();document.getElementById(\'m2\').focus();}">Cerrar</button>' +
+    '<button id="m2" onkeydown="if(event.key===\'Tab\'){event.preventDefault();document.getElementById(\'m1\').focus();}">Aceptar</button>' +
+    '</div><a href="/c">fuera tres</a><a href="/d">fuera cuatro</a>';
+  const out = await dynamicAnalyze({ html }, { launchOptions, movimientoMs: 0, teclas: false });
+  const f = out.findings.filter((x) => x.c.n === "2.1.2")[0];
+  assert.equal(f.verdict, "falla", JSON.stringify(f));
+  assert.deepEqual((f.nodes || []).map((n) => n.locator), ["button#m1", "button#m2"]);
+  assert.match((f.evid || []).join(" "), /cicla entre 2 control\(es\) —button#m1 → button#m2—/);
+  assert.doesNotMatch((f.evid || []).join(" "), /→ a →/, "los enlaces de fuera no son parte del ciclo");
+});
+
+/* ── 2.1.4: una página que se mueve UNA VEZ no convierte una tecla en atajo ── */
+
+/**
+ * ESTE ES EL DEFECTO QUE LA PRUEBA DE «crece sola» LLEVABA CAZANDO, y que en el
+ * contenedor no se veía.
+ *
+ * `ruido` se acumula de los testigos vistos hasta ese momento, así que un cambio
+ * de un solo disparo que caiga dentro de la ventana con tecla no lo ha visto
+ * ningún testigo y se le atribuye a la tecla. En el Mac del autor, «crece sola»
+ * fallaba 6 de 6 pasadas con el código de v0.76.0 y 5 de 6 con el de v0.77.0; en
+ * el contenedor pasaba 6 de 6. O sea que dependía de dónde cayera la ventana, es
+ * decir de la velocidad de la máquina — y un falso positivo que depende de la
+ * máquina es el peor de todos, porque no sale en los tests de quien lo escribió.
+ *
+ * Esta página lo reproduce EN CUALQUIER MÁQUINA sin depender de la suerte: muta
+ * UNA SOLA VEZ a los 450 ms, que es después del primer testigo (0-260 ms) y
+ * dentro de la primera ventana con tecla. Medido antes del arreglo: «la tecla "/"
+ * cambia qué se ve (+6 elemento(s) visibles)», ruido [], activas 1, en una página
+ * sin un solo manejador de teclado. A los 400 y a los 600 ms, igual.
+ */
+const MUTA_UNA_VEZ = (ms) => `<main><h1>Portada</h1><ul id="l"><li>fila</li></ul></main>
+<script>setTimeout(function(){
+  var l=document.getElementById('l');
+  for (var i=0;i<6;i++){ var e=document.createElement('li'); e.textContent='fila nueva '+i+' con bastante texto para que cuente'; l.appendChild(e); }
+},${ms});</script>`;
+
+for (const ms of [400, 450, 600]) {
+  test("2.1.4 real: una mutación única a los " + ms + " ms NO convierte una tecla en atajo", { skip }, async () => {
+    const out = await dynamicAnalyze({ html: MUTA_UNA_VEZ(ms) }, { launchOptions, forms: "off", movimientoMs: 0, teclas: ["/", "s", "f", "j"] });
+    const t = out.trace.teclas;
+    const f = out.findings.filter((x) => x.c.n === "2.1.4")[0];
+    assert.equal(t.activas, 0, "la página no escucha el teclado: " + JSON.stringify(t) + " / " + (f ? f.evid.join(" ") : ""));
+    // Y no se absuelve: hubo un cambio y no se sabe de quién.
+    assert.notEqual(f.verdict, "cumple", "nunca `cumple`");
+    assert.match(f.verdict, /revisar|cumple-parcial/);
+  });
+}
+
+test("2.1.4 real: un atajo REPETIBLE que reescribe texto sigue acusándose", { skip }, async () => {
+  /* Y el arreglo no puede comprarse perdiendo detección. Este caso se perdió en
+   * el primer intento: «texto» era una LONGITUD en la huella, así que reescribir
+   * un párrafo con un texto de largo parecido no se detectaba la segunda vez y la
+   * confirmación por repetición lo degradaba a «dudosa». Ahora la huella lleva
+   * también un hash del contenido. */
+  const html = `<main><h1>Portada</h1><p id="p">nada</p></main>
+    <script>var k=0;document.addEventListener('keydown',function(e){
+      if(e.key==='/'&&!e.ctrlKey&&!e.altKey&&!e.metaKey){ k++; document.getElementById('p').textContent='BUSCADOR ABIERTO numero '+k; }
+    });</script>`;
+  const out = await dynamicAnalyze({ html }, { launchOptions, forms: "off", movimientoMs: 0, teclas: ["/", "s", "f", "j"] });
+  const t = out.trace.teclas;
+  assert.equal(t.activas, 1, JSON.stringify(t));
+  assert.equal(t.dudosas, 0, "es repetible: no puede quedar en duda");
+  const f = out.findings.filter((x) => x.c.n === "2.1.4")[0];
+  assert.equal(f.verdict, "revisar");
+  assert.match(f.evid.join(" "), /«\/»/);
+});
+
+test("2.1.4 real: un atajo de UN SOLO USO no se acusa pero tampoco se absuelve", { skip }, async () => {
+  /* El modal que se abre y se queda abierto: al segundo intento ya no cambia
+   * nada. No hay prueba para acusar, y no haberla no es una absolución. */
+  const html = `<main><h1>Portada</h1><div id="m" hidden>modal con bastante texto dentro para que cuente como cambio</div></main>
+    <script>document.addEventListener('keydown',function(e){ if(e.key==='s'){ document.getElementById('m').hidden=false; } });</script>`;
+  const out = await dynamicAnalyze({ html }, { launchOptions, forms: "off", movimientoMs: 0, teclas: ["/", "s", "f", "j"] });
+  const t = out.trace.teclas;
+  const f = out.findings.filter((x) => x.c.n === "2.1.4")[0];
+  assert.equal(t.activas, 0);
+  assert.equal(t.dudosas, 1, JSON.stringify(t));
+  assert.equal(f.verdict, "revisar", "no se absuelve lo que no se ha podido descartar");
+  assert.match(f.evid.join(" "), /no se repitió/);
+});

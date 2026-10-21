@@ -63,14 +63,30 @@ export function analyzeTabTrace(trace) {
    *    prueba pulsa Tab, y dentro de un widget compuesto (tablist, listbox,
    *    menú) se navega con flechas, que es justo donde viven las trampas que
    *    Tab no ve. Se dice cuántos controles se recorrieron. */
+  /* Los marcos atravesados se declaran SIEMPRE que los haya, pase lo que pase
+   * con la trampa: dentro de un `<iframe>` esta sonda no ve —desde el documento
+   * padre, mientras el foco recorre los controles de dentro, `activeElement`
+   * sigue siendo el iframe—, así que lo que se afirme de 2.1.2 no cubre su
+   * interior. Callarlo es firmar como comprobado lo que no se ha mirado. */
+  const marcos = (trace.marcos || []).filter(Boolean);
   if (trace.trapped) {
+    /* LAS DOS FORMAS DE TRAMPA NO SE CUENTAN IGUAL. Una se queda en UN control
+     * —Tab vuelve una y otra vez al mismo— y la otra cicla entre varios. La
+     * frase decía siempre «cicla entre N control(es)», y en la forma degenerada
+     * `atrapadoEn` llegaba vacío, así que la segunda mitad desaparecía y la fila
+     * se quedaba sin elemento al que señalar. */
+    const donde = (trace.atrapadoEn || []).filter(Boolean);
     out.push(F("2.1.2", "falla", "crítica", [
-      "El foco queda atrapado con Tab: no se puede salir del componente solo con teclado." +
-      (trace.atrapadoEn && trace.atrapadoEn.length
-        ? " El recorrido cicla entre " + trace.atrapadoEn.length + " control(es) —" + trace.atrapadoEn.slice(0, 6).join(" → ") +
-          "— y no vuelve a salir, con " + unreached.length + " control(es) del resto de la página sin alcanzar."
-        : "")
-    ], (trace.atrapadoEn || []).slice(0, 8).map(function (l) { return { locator: l, name: "" }; })));
+      (trace.mismoControl && donde.length === 1
+        ? "El foco queda atrapado con Tab en «" + donde[0] + "»: pulsando Tab se vuelve una y otra vez al mismo control y no se puede salir de él solo con teclado, con " +
+          unreached.length + " control(es) del resto de la página sin alcanzar."
+        : "El foco queda atrapado con Tab: no se puede salir del componente solo con teclado." +
+          (donde.length
+            ? " El recorrido cicla entre " + donde.length + " control(es) —" + donde.slice(0, 6).join(" → ") +
+              "— y no vuelve a salir, con " + unreached.length + " control(es) del resto de la página sin alcanzar."
+            : "")) +
+      (marcos.length ? " Además el recorrido pasó por " + marcos.length + " marco(s) (" + marcos.slice(0, 3).join(", ") + ") cuyo interior esta prueba no ve." : "")
+    ], donde.slice(0, 8).map(function (l) { return { locator: l, name: "" }; })));
   } else if (!focusables.length) {
     out.push(F("2.1.2", "no-aplica", null, [
       "La página no tiene ningún control enfocable, así que no hay foco que pueda quedar atrapado."
@@ -79,7 +95,14 @@ export function analyzeTabTrace(trace) {
     out.push(F("2.1.2", "revisar", null, [
       "El recorrido con Tab se cortó antes de terminar: el presupuesto de " + (trace.tabs || 0) +
       " tabulación(es) no llegaba para los " + focusables.length + " control(es) enfocables de la página. " +
-      "No se ha visto ninguna trampa, pero no verla sin haber recorrido el camino entero no es haber comprobado que no la hay."
+      "No se ha visto ninguna trampa, pero no verla sin haber recorrido el camino entero no es haber comprobado que no la hay." +
+      /* Y si el recorrido se agotó habiendo pasado por un marco, eso es
+       * justamente lo que hay que ir a mirar: una trampa DENTRO del marco es
+       * indistinguible, desde fuera, de un marco con muchos controles. */
+      (marcos.length
+        ? " El recorrido pasó por " + marcos.length + " marco(s) (" + marcos.slice(0, 3).join(", ") +
+          ") y esta prueba no ve dentro de ellos: desde el documento padre, mientras el foco va por los controles de dentro, el elemento activo sigue siendo el marco. Si el recorrido se agotó ahí, una trampa dentro del marco y un marco con muchos controles se parecen desde fuera. Compruébalo a mano tabulando dentro."
+        : "")
     ]));
   } else {
     /* «94 de 93 control(es) alcanzados.»
@@ -95,6 +118,13 @@ export function analyzeTabTrace(trace) {
      * interesa, porque dice que la página cambia al tabularla. */
     const alcanzados = (trace.reached || []).length;
     const aparecidos = alcanzados - focusables.length;
+    /* Un marco atravesado LIMITA ESTA AFIRMACIÓN, y es la afirmación peligrosa:
+     * aquí se dice «el foco sale de todos ellos: no hay trampa». De los controles
+     * de dentro del marco no se ha salido ni se ha entrado — no se han visto. */
+    const avisoMarcos = marcos.length
+      ? "Y no cubre el interior de " + marcos.length + " marco(s) por los que pasó el foco (" + marcos.slice(0, 3).join(", ") +
+        "): desde el documento padre, mientras el foco recorre los controles de dentro, el elemento activo sigue siendo el marco, así que de ahí no se ha comprobado nada. Tabula dentro a mano."
+      : null;
     out.push(F("2.1.2", "cumple-parcial", null, [
       "Se ha recorrido la página con Tab —" + alcanzados + (aparecidos > 0
         ? " control(es) alcanzados, " + aparecidos + " más de los " + focusables.length +
@@ -103,7 +133,7 @@ export function analyzeTabTrace(trace) {
         : " de " + focusables.length + " control(es) alcanzados") +
       " en " + (trace.tabs || 0) + " tabulación(es)— y el foco sale de todos ellos: no hay trampa en el recorrido de tabulación.",
       "Queda lo que esta prueba no toca: dentro de un widget compuesto (pestañas, listbox, menú) se navega con las FLECHAS, y una trampa ahí no la ve el Tab. Si la página tiene alguno, compruébalo a mano."
-    ]));
+    ].concat(avisoMarcos ? [avisoMarcos] : [])));
   }
 
   /* 2.1.1 sobre los controles INTERACTIVOS que no son enfocables.
@@ -736,25 +766,44 @@ export function analyzeCharKeyShortcuts(res) {
     ? " Y " + fuera.length + " tecla(s) (" + fuera.map(function (f) { return "«" + f.tecla + "»"; }).join(", ") +
       ") se pulsaron con el foco en «" + fuera[0].quien + "» y no en el cuerpo del documento: ahí el campo se come la tecla, así que no dicen nada del ámbito del atajo."
     : "";
+  /* LAS DUDOSAS: parecieron hacer algo UNA VEZ y no lo repitieron.
+   *
+   * El testigo emparejado sabe ver una página que se mueve continuamente y no ve
+   * una que se mueve una sola vez: si ese único cambio cae dentro de la ventana
+   * con tecla, ningún testigo lo ha visto y se le atribuía a la tecla. Medido con
+   * una página sin un solo manejador de teclado que añade seis elementos a los
+   * 400 ms: «la tecla "/" cambia qué se ve». Ahora lo acusado se vuelve a pulsar,
+   * y si la señal no reaparece la tecla cae aquí: ni acusada —no hay prueba— ni
+   * absuelta, porque un atajo de un solo uso (un modal que se abre y se queda
+   * abierto) también deja de producir cambios al segundo intento. */
+  const dudosas = res.dudosas || [];
+  const notaDudosas = dudosas.length
+    ? " Y " + dudosas.length + " tecla(s) (" + dudosas.map(function (d) { return "«" + d.tecla + "»"; }).join(", ") +
+      ") produjeron un cambio UNA VEZ que no se repitió al volver a pulsarlas (" +
+      dudosas[0].cambios.join(" y ") + "): puede ser la página moviéndose sola justo en ese instante, o un atajo de un solo uso que ya no vuelve a cambiar nada. No se acusan, porque un cambio que no se repite no prueba un atajo; y no se absuelven, porque tampoco lo descarta. Pulsa esas teclas a mano con el foco fuera de cualquier campo."
+    : "";
 
   if (activas.length) {
     return [F("2.1.4", "revisar", null, [
       activas.length + " tecla(s) suelta(s) actúan con el foco COMPROBADO en el cuerpo del documento, sin exigir Ctrl, Alt, Cmd ni Mayúsculas, y con un cambio que no ocurre sin pulsarlas: " +
       activas.slice(0, 6).map(function (a) { return "«" + a.tecla + "» " + a.cambios.join(" y "); }).join(" · ") + ".",
-      "Eso descarta una de las tres salidas que da 2.1.4: el atajo no está limitado al foco de un control, actúa en toda la página. Quedan las otras dos —que se pueda desactivar o reasignar—, y eso vive en las preferencias del sitio: compruébalo ahí. Si no hay ni interruptor ni reasignación, es una falla de nivel A." + cola + notaRuido + notaFoco
+      "Eso descarta una de las tres salidas que da 2.1.4: el atajo no está limitado al foco de un control, actúa en toda la página. Quedan las otras dos —que se pueda desactivar o reasignar—, y eso vive en las preferencias del sitio: compruébalo ahí. Si no hay ni interruptor ni reasignación, es una falla de nivel A." + cola + notaRuido + notaFoco + notaDudosas
     ], activas.slice(0, 8).map(function (a) { return { locator: "tecla «" + a.tecla + "»", name: a.cambios.join("; ") }; }))];
   }
 
   /* Ninguna tecla actúa de forma atribuible. Eso solo vale como «no hay atajos de un
    * carácter» si la medida se pudo hacer en condiciones; si no, se dice que no se pudo. */
-  if (ruido.length || fuera.length || !limpias.length) {
+  if (ruido.length || fuera.length || dudosas.length || !limpias.length) {
     const porque = [];
     if (ruido.length) porque.push("la página cambia " + comoEsElRuido + " por su cuenta, así que un cambio al pulsar no se le puede atribuir a la tecla");
     if (fuera.length) porque.push("el foco no estaba en el cuerpo del documento al pulsar " + fuera.length + " de las " + res.probadas.length + " teclas");
+    /* Una dudosa no puede acabar en conforme: hubo un cambio y no se sabe de
+     * quién. Esta es la rama de «no se ha podido comprobar», que es la verdad. */
+    if (dudosas.length) porque.push(dudosas.length + " tecla(s) produjeron un cambio que no se repitió, y un cambio que no se repite no prueba un atajo ni lo descarta");
     if (!limpias.length) porque.push("ninguna tecla llegó a probarse en condiciones limpias");
     return [F("2.1.4", "revisar", null, [
       "NO se ha podido comprobar si la página tiene atajos de un solo carácter: " + porque.join("; ") + ".",
-      "Y no haber podido medirlo no es haberlo medido bien: por eso esto no sale como conforme. Compruébalo a mano —pulsa «/», «s» o «f» con el foco fuera de cualquier campo y mira si pasa algo— o repite la pasada sobre un estado quieto de la página." + cola + notaRuido + notaFoco
+      "Y no haber podido medirlo no es haberlo medido bien: por eso esto no sale como conforme. Compruébalo a mano —pulsa «/», «s» o «f» con el foco fuera de cualquier campo y mira si pasa algo— o repite la pasada sobre un estado quieto de la página." + cola + notaRuido + notaFoco + notaDudosas
     ])];
   }
 
