@@ -84,3 +84,46 @@ test("2.1.2: una trampa real que además atravesó un marco menciona las dos cos
   assert.match(ev(f), /atrapado con Tab en «button#x»/);
   assert.match(ev(f), /pasó por 1 marco\(s\) \(iframe#video\)/);
 });
+
+/* ── La fila Crítica tiene que llevar SELECTOR, no solo nombre ──────────── */
+
+/**
+ * Medido en una auditoría real: 2.1.2 llegaba al informe con `elemento:
+ * "button#service-trigger"` y `selector: ""`. El dato estaba a mano —`__uid` del
+ * caminante construye la MISMA ruta CSS que `buildPath` del motor— y solo se
+ * usaba como identidad interna. La guía de capturas resalta por selector, así
+ * que una barrera Crítica sin él no puede llevar evidencia visual.
+ */
+test("2.1.2: la trampa lleva la ruta CSS al informe, no solo el locator", () => {
+  const f = uno({
+    focusables: ctr(6), reached: ctr(2), trapped: true, mismoControl: true, tabs: 60,
+    atrapadoEn: [{ loc: "button#service-trigger", ruta: "html > body > form:nth-of-type(1) > button:nth-of-type(1)" }]
+  });
+  assert.equal(f.verdict, "falla");
+  assert.equal(f.nodes.length, 1);
+  assert.equal(f.nodes[0].locator, "button#service-trigger");
+  assert.equal(f.nodes[0].path, "html > body > form:nth-of-type(1) > button:nth-of-type(1)");
+  assert.match(ev(f), /atrapado con Tab en «button#service-trigger»/);
+});
+
+test("2.1.2: un ciclo lleva la ruta de cada control del ciclo", () => {
+  const f = uno({
+    focusables: ctr(9), reached: ctr(3), trapped: true, tabs: 60,
+    atrapadoEn: [{ loc: "button#m1", ruta: "html > body > div:nth-of-type(1) > button:nth-of-type(1)" },
+                 { loc: "button#m2", ruta: "html > body > div:nth-of-type(1) > button:nth-of-type(2)" }]
+  });
+  assert.deepEqual(f.nodes.map((n) => n.locator), ["button#m1", "button#m2"]);
+  assert.deepEqual(f.nodes.map((n) => n.path),
+    ["html > body > div:nth-of-type(1) > button:nth-of-type(1)", "html > body > div:nth-of-type(1) > button:nth-of-type(2)"]);
+  assert.match(ev(f), /cicla entre 2 control\(es\) —button#m1 → button#m2—/);
+});
+
+test("2.1.2: la forma antigua —cadenas sueltas— sigue funcionando", () => {
+  /* Una capa que se rompe al cambiarle la forma de un campo es una capa frágil,
+   * y la suite tiene trazas escritas con la forma de antes. */
+  const f = uno({ focusables: ctr(5), reached: ctr(2), trapped: true, mismoControl: true, atrapadoEn: ["button#x"], tabs: 60 });
+  assert.equal(f.verdict, "falla");
+  assert.equal(f.nodes[0].locator, "button#x");
+  assert.equal(f.nodes[0].path, "", "sin ruta no se inventa una");
+  assert.match(ev(f), /atrapado con Tab en «button#x»/);
+});

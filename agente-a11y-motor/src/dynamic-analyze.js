@@ -594,7 +594,12 @@ export async function dynamicAnalyze(target, opts) {
              * barrera Crítica a la que nadie puede ir— y la evidencia perdía su
              * segunda frase. Medido en un sitio real: una fila de 2.1.2 Crítica
              * con las dos casillas en blanco. El dato estaba aquí al lado. */
-            atrapadoEn = cur ? [cur.locator] : [];
+            /* CON SU RUTA. `__uid` ya construye la misma ruta CSS que `buildPath`
+             * del motor y aquí solo se usaba como identidad interna, así que la
+             * fila de 2.1.2 llegaba al informe con `selector` vacío —medido en una
+             * auditoría real: una barrera CRÍTICA con la casilla en blanco— aunque
+             * el dato estaba a mano. */
+            atrapadoEn = cur ? [{ loc: cur.locator, ruta: cur.uid }] : [];
             mismoControl = true;
             break;
           }
@@ -635,11 +640,11 @@ export async function dynamicAnalyze(target, opts) {
             ciclo.forEach(function (u) {
               if (vistos[u]) return;
               vistos[u] = true;
-              if (porUid[u]) atrapadoEn.push(porUid[u]);
+              if (porUid[u]) atrapadoEn.push({ loc: porUid[u], ruta: u });
             });
             // Si por lo que sea no se pudo traducir ninguno, antes que una lista
             // vacía vale la última pisada: algo a lo que señalar.
-            if (!atrapadoEn.length && cur) atrapadoEn = [cur.locator];
+            if (!atrapadoEn.length && cur) atrapadoEn = [{ loc: cur.locator, ruta: cur.uid }];
             break;
           }
         }

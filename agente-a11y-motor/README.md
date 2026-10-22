@@ -1001,6 +1001,24 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.79.0 — seis filas a las que nadie podía ir
+
+Esta entrega no arregla veredictos: arregla que el informe sirva para trabajar, que es lo que decide si se puede poner delante de un cliente. El instrumento que ya tenía el proyecto (`scripts/medir-informe.mjs`) sobre una auditoría real de 12 páginas: **140 filas, 0 indistinguibles, 0 avisos de CSS ilegible y 6 filas SIN SELECTOR**. La guía de capturas resalta el elemento por selector y el cotejo entre dos pasadas sigue las barreras por selector, así que una fila sin él es una barrera que existe y a la que nadie puede ir. Las seis tenían tres causas distintas.
+
+**La capa de página no construía rutas. Ninguna.** `page-audit.js` es la que más criterios cubre y emitía nodos con `locator` y sin `path` en sus **29 sitios**. El locator es legible pero no identifica: cuatro de las seis filas eran «Hay 2 landmarks main» con los elementos perfectamente nombrados —`main#main-content` y `main#main`— y la casilla del selector vacía. Ahora todas pasan por un helper único que usa el MISMO constructor que el motor, no otro: una ruta que no coincide con la del motor rompería el cotejo entre capas. `cuaderno.js` ya lo hacía bien y era esta capa la que tiraba su `path` al mapear.
+
+**Y al ponérselas salió el defecto de debajo: `buildPath` prefijaba siempre `html > body`.** Así que todo lo que vive en el `<head>` salía con una ruta que selecciona **0 elementos**: medido, `<title>` → «html > body > head:nth-of-type(1) > title:nth-of-type(1)», y lo mismo el `meta` de viewport y el de refresco. No son criterios menores —el viewport es 1.4.4 y 1.4.10 (`user-scalable=no`), el `<title>` es 2.4.2, el refresco es 2.2.1—: cosas por las que se sanciona, señalando a ningún sitio. Las rutas de dentro del `<body>` y las de los fragmentos salen byte a byte iguales que antes.
+
+**Una barrera Grave sin elemento: el texto que no cabe y no tiene dónde cortar.** La detección del culpable de 1.4.10 exigía que el RECTÁNGULO del elemento sobresaliera de la ventana, y la causa más común en sitios reales no lo hace: un correo, una URL o una línea de código sin puntos de corte dentro de un `<p>` —el `<p>` mide lo que su contenedor y el texto se sale igual—. Medido y determinista: una URL de 70 caracteres a 320 px da «falla, 279 px de exceso» con la lista de culpables vacía. Ahora el texto se mide con `Range` sobre los nodos de texto propios, que da el borde real —599 px con la ventana en 320, o sea los mismos 279— y la fila nombra el elemento y cómo se arregla (`overflow-wrap`). Con la cautela que este proyecto ya pagó una vez: un texto dentro de un contenedor con su propio `overflow-x` no arrastra el documento y no se acusa.
+
+**Y un falso positivo que me introduje arreglando lo anterior, dejado guardado:** los `td` de una tabla ancha salían acusados como «texto que no cabe» —son consecuencia de que la tabla desborde— y como `td` no está en la lista de exentos, una tabla que WCAG puede eximir pasaba de `revisar` a `falla`. La regla de «solo el desbordante más externo» ya estaba en la otra pasada y a la nueva le faltaba.
+
+**La fila Crítica de 2.1.2 llevaba el elemento y no el selector**, teniendo el dato a mano: `__uid` del caminante de tabulación construye la misma ruta CSS que `buildPath` y solo se usaba como identidad interna.
+
+**Y la guardia que faltaba, que vale más que revisar 29 sitios a mano:** un test mecánico que barre los emisores y exige ruta en todos, con una lista explícita y corta de los locators que legítimamente no tienen elemento (`script (en línea)`, `(texto)`, `(CSS)`). Más la comprobación en navegador de que cada ruta de la capa de página SELECCIONA un único elemento y es el que dice ser, que es lo único que lo prueba.
+
+**882 tests unitarios** (de 878) y **la suite de integración entera en verde**: 18 ficheros, 170 tests.
+
 ### v0.78.0 — una página que se mueve una vez convertía una tecla en atajo
 
 (Esta entrega **sustituye a v0.77.0**, que nunca llegó a commitearse: su instalador se paró en rojo, y con razón. Lleva las dos cosas.)

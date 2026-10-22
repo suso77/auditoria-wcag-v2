@@ -1315,12 +1315,28 @@ function revisaAutocomplete(el, tag, tipo) {
   if (malo) return { ok: false, motivo: '<code>autocomplete="' + crudo + '"</code>: «' + malo + "» no es un modificador válido" };
   return { ok: true, motivo: '<code>autocomplete="' + crudo + '"</code>' };
 }
+/**
+ * La ruta CSS de un elemento, para la columna «Elemento» del informe y para que
+ * la guía de capturas pueda resaltarlo.
+ *
+ * EL PREFIJO SE DECIDE, NO SE SUPONE. Esto prefijaba siempre `html > body`, así
+ * que todo lo que vive en el `<head>` salía con una ruta que no selecciona
+ * NADA. Medido: `title` → «html > body > head:nth-of-type(1) > title:nth-of-type(1)»,
+ * 0 elementos; igual el `meta` de refresco y el de viewport. Y no son criterios
+ * menores: el viewport es 1.4.4 y 1.4.10 (`user-scalable=no`), el `<title>` es
+ * 2.4.2 y el refresco es 2.2.1 — cosas por las que se sanciona, con el selector
+ * apuntando a ningún sitio.
+ *
+ * Las rutas de dentro de `<body>` y las de los fragmentos salen EXACTAMENTE
+ * iguales que antes: el prefijo solo cambia cuando el camino pasa por `<head>`.
+ */
 function buildPath(el) {
   const parts = [];
-  let n = el;
+  let n = el, enCabeza = false;
   while (n && n.nodeType === 1) {
     const t = n.tagName.toLowerCase();
     if (t === "html" || t === "body") break;
+    if (t === "head") { enCabeza = true; break; }
     if (n.id === "__root__") break;
     const p = n.parentElement;
     if (!p) { parts.unshift(t); break; }
@@ -1329,7 +1345,7 @@ function buildPath(el) {
     parts.unshift(t + ":nth-of-type(" + i + ")");
     n = p;
   }
-  return parts.length ? "html > body > " + parts.join(" > ") : "body";
+  return parts.length ? "html > " + (enCabeza ? "head > " : "body > ") + parts.join(" > ") : "body";
 }
 function buildLocator(el, tag) {
   if (el.id) return tag + "#" + el.id;

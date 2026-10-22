@@ -75,18 +75,25 @@ export function analyzeTabTrace(trace) {
      * frase decía siempre «cicla entre N control(es)», y en la forma degenerada
      * `atrapadoEn` llegaba vacío, así que la segunda mitad desaparecía y la fila
      * se quedaba sin elemento al que señalar. */
-    const donde = (trace.atrapadoEn || []).filter(Boolean);
+    /* `atrapadoEn` viaja ahora como `{loc, ruta}` para que la fila lleve
+     * SELECTOR y no solo un nombre legible: una barrera Crítica a la que nadie
+     * puede ir no es reportable. Se acepta también la forma antigua —cadenas
+     * sueltas— porque la usan las trazas de la suite pura y porque una capa que
+     * se rompe al cambiarle la forma de un campo es una capa frágil. */
+    const donde = (trace.atrapadoEn || []).filter(Boolean).map(function (x) {
+      return typeof x === "string" ? { loc: x, ruta: "" } : { loc: x.loc || x.locator || "", ruta: x.ruta || x.path || "" };
+    }).filter(function (x) { return x.loc; });
     out.push(F("2.1.2", "falla", "crítica", [
       (trace.mismoControl && donde.length === 1
-        ? "El foco queda atrapado con Tab en «" + donde[0] + "»: pulsando Tab se vuelve una y otra vez al mismo control y no se puede salir de él solo con teclado, con " +
+        ? "El foco queda atrapado con Tab en «" + donde[0].loc + "»: pulsando Tab se vuelve una y otra vez al mismo control y no se puede salir de él solo con teclado, con " +
           unreached.length + " control(es) del resto de la página sin alcanzar."
         : "El foco queda atrapado con Tab: no se puede salir del componente solo con teclado." +
           (donde.length
-            ? " El recorrido cicla entre " + donde.length + " control(es) —" + donde.slice(0, 6).join(" → ") +
+            ? " El recorrido cicla entre " + donde.length + " control(es) —" + donde.slice(0, 6).map(function (x) { return x.loc; }).join(" → ") +
               "— y no vuelve a salir, con " + unreached.length + " control(es) del resto de la página sin alcanzar."
             : "")) +
       (marcos.length ? " Además el recorrido pasó por " + marcos.length + " marco(s) (" + marcos.slice(0, 3).join(", ") + ") cuyo interior esta prueba no ve." : "")
-    ], donde.slice(0, 8).map(function (l) { return { locator: l, name: "" }; })));
+    ], donde.slice(0, 8).map(function (x) { return { locator: x.loc, path: x.ruta, name: "" }; })));
   } else if (!focusables.length) {
     out.push(F("2.1.2", "no-aplica", null, [
       "La página no tiene ningún control enfocable, así que no hay foco que pueda quedar atrapado."

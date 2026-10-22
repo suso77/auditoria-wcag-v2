@@ -93,6 +93,62 @@ async function resolver(page, rutas) {
   }, rutas);
 }
 
+/**
+ * LA CAPA DE PÁGINA TAMBIÉN, que es la que más criterios cubre y la que no tenía
+ * ni rutas. Emitía nodos con `locator` y sin `path` en sus 29 sitios: medido
+ * sobre una auditoría real de 12 páginas, 6 de 140 filas sin selector, 4 de
+ * ellas suyas. Y al ponérselas salió el defecto de debajo: `buildPath`
+ * prefijaba siempre `html > body`, así que el `<title>`, el meta de viewport y
+ * el de refresco salían con rutas que seleccionan 0 elementos.
+ *
+ * Aquí se comprueba lo único que vale: que cada ruta SELECCIONE, en un navegador
+ * de verdad, un único elemento, y que sea el que dice ser.
+ */
+test("selector real: cada ruta de la capa de PÁGINA selecciona un único elemento", { skip }, async () => {
+  const { chromium } = await import("playwright");
+  const b = await chromium.launch(launchOptions);
+  try {
+    const { auditPageHtml } = await import("../../src/index.js");
+    const CON_CABEZA = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Prueba</title>
+<meta http-equiv="refresh" content="30"><meta name="viewport" content="width=device-width,user-scalable=no">
+</head><body>
+<a href="#main">Saltar al contenido principal</a>
+<header><nav><ul><li><a href="/">Inicio</a></li></ul></nav></header>
+<header><p>segundo banner</p></header>
+<main id="main-content"><h1>T</h1><h4>salto</h4><h2></h2>
+  <p>Texto con <strong id="f1">una palabra fuerte</strong>.</p>
+  <video src="/v.mp4"></video><audio src="/a.mp3" autoplay></audio>
+</main>
+<main id="main">segundo main</main>
+<footer>uno</footer><footer>dos</footer></body></html>`;
+    const p = await b.newPage();
+    await p.setContent(CON_CABEZA, { waitUntil: "load" });
+    const fs = auditPageHtml(CON_CABEZA, DOMParser);
+    const nodos = [];
+    fs.forEach(function (f) { (f.nodes || []).forEach(function (nd) { if (nd.path) nodos.push({ nd: nd, crit: f.c.n }); }); });
+    assert.ok(nodos.length >= 8, "la capa de página debería producir varios nodos con ruta, hay " + nodos.length);
+
+    const res = await resolver(p, nodos.map(function (x) { return x.nd.path; }));
+    const malos = [];
+    res.forEach(function (r, i) {
+      const x = nodos[i];
+      if (r.n !== 1) malos.push(x.crit + " · " + x.nd.locator + " → «" + r.ruta + "» selecciona " + r.n);
+      else {
+        // Y que sea el elemento que dice ser: el locator lleva la etiqueta delante.
+        const etiqueta = String(x.nd.locator).split(/[#.[\s]/)[0];
+        if (etiqueta && /^[a-z]+$/.test(etiqueta) && r.tag !== etiqueta) {
+          malos.push(x.crit + " · dice «" + x.nd.locator + "» y la ruta cae en <" + r.tag + ">");
+        }
+      }
+    });
+    assert.deepEqual(malos, [], malos.join("  |  "));
+    // Y al menos una ruta del <head>, que es el caso que estaba roto.
+    assert.ok(res.some(function (r) { return /^html > head/.test(r.ruta); }),
+      "el fixture tiene meta de refresco y viewport: alguna ruta tiene que ser del <head>");
+    await p.close();
+  } finally { await b.close(); }
+});
+
 test("selector real: cada ruta del motor selecciona un único elemento", { skip }, async () => {
   const { chromium } = await import("playwright");
   const b = await chromium.launch(launchOptions);

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { understand, analyze, announcement } from "./helpers.mjs";
 import { etiquetaEnNombre, textoDeEtiqueta, normalizaEtiqueta, accionDeContexto,
-  funcionSoloConRaton, accionNativaDeTeclado } from "../src/engine.js";
+  funcionSoloConRaton, accionNativaDeTeclado, buildPath } from "../src/engine.js";
 import { literalesDeContent } from "../src/measure.browser.js";
 import { DOMParser } from "linkedom";
 
@@ -520,4 +520,37 @@ test("ref colgante: un aria-expanded ABIERTO con destino ausente sí es barrera"
   const m = understand('<button type="button" aria-expanded="true" aria-controls="panel-que-deberia-estar" aria-label="Cerrar">c</button>');
   const f = analyze(m).findings.find((x) => x.c.n === "1.3.1" && !["cumple", "pasa"].includes(x.verdict));
   assert.equal(f.verdict, "falla", "abierto y sin destino es una barrera de verdad");
+});
+
+/* ── buildPath: la ruta del <head> no vive dentro del <body> (v0.79.0) ───── */
+
+test("buildPath: los elementos del <head> salen con una ruta que SELECCIONA", () => {
+  /**
+   * Prefijaba siempre `html > body`, así que `<title>` salía como
+   * «html > body > head:nth-of-type(1) > title:nth-of-type(1)» y seleccionaba 0
+   * elementos. Igual el meta de viewport y el de refresco. Y no son criterios
+   * menores: viewport es 1.4.4 y 1.4.10 (`user-scalable=no`), `<title>` es 2.4.2
+   * y el refresco 2.2.1. Las rutas de dentro del `<body>` no se tocaron.
+   */
+  const doc = new DOMParser().parseFromString(
+    '<!doctype html><html><head><meta charset="utf-8"><title>T</title>' +
+    '<meta http-equiv="refresh" content="30"><meta name="viewport" content="width=device-width">' +
+    '</head><body><main><p>x</p></main></body></html>', "text/html");
+  const casos = ["title", "meta[http-equiv=refresh]", "meta[name=viewport]", "main", "p"];
+  casos.forEach(function (sel) {
+    const el = doc.querySelector(sel);
+    assert.ok(el, sel + " tiene que existir en el fixture");
+    const ruta = buildPath(el);
+    assert.doesNotMatch(ruta, /body > head(?![a-z])/, sel + ": " + ruta);
+    assert.equal(doc.querySelectorAll(ruta).length, 1, sel + " → «" + ruta + "» selecciona " + doc.querySelectorAll(ruta).length);
+  });
+});
+
+test("buildPath: las rutas del <body> no han cambiado de forma", () => {
+  // El arreglo del <head> no puede mover las que ya funcionaban: el cotejo entre
+  // dos pasadas sigue las barreras por selector.
+  const doc = new DOMParser().parseFromString(
+    '<!doctype html><html><head><title>T</title></head><body><main><p>a</p><p>b</p></main></body></html>', "text/html");
+  assert.equal(buildPath(doc.querySelectorAll("p")[1]), "html > body > main:nth-of-type(1) > p:nth-of-type(2)");
+  assert.equal(buildPath(doc.querySelector("main")), "html > body > main:nth-of-type(1)");
 });

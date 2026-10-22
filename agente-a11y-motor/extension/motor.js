@@ -1501,12 +1501,28 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     if (malo) return { ok: false, motivo: '<code>autocomplete="' + crudo + '"</code>: «' + malo + "» no es un modificador válido" };
     return { ok: true, motivo: '<code>autocomplete="' + crudo + '"</code>' };
   }
+  /**
+   * La ruta CSS de un elemento, para la columna «Elemento» del informe y para que
+   * la guía de capturas pueda resaltarlo.
+   *
+   * EL PREFIJO SE DECIDE, NO SE SUPONE. Esto prefijaba siempre `html > body`, así
+   * que todo lo que vive en el `<head>` salía con una ruta que no selecciona
+   * NADA. Medido: `title` → «html > body > head:nth-of-type(1) > title:nth-of-type(1)»,
+   * 0 elementos; igual el `meta` de refresco y el de viewport. Y no son criterios
+   * menores: el viewport es 1.4.4 y 1.4.10 (`user-scalable=no`), el `<title>` es
+   * 2.4.2 y el refresco es 2.2.1 — cosas por las que se sanciona, con el selector
+   * apuntando a ningún sitio.
+   *
+   * Las rutas de dentro de `<body>` y las de los fragmentos salen EXACTAMENTE
+   * iguales que antes: el prefijo solo cambia cuando el camino pasa por `<head>`.
+   */
   function buildPath(el) {
     const parts = [];
-    let n = el;
+    let n = el, enCabeza = false;
     while (n && n.nodeType === 1) {
       const t = n.tagName.toLowerCase();
       if (t === "html" || t === "body") break;
+      if (t === "head") { enCabeza = true; break; }
       if (n.id === "__root__") break;
       const p = n.parentElement;
       if (!p) { parts.unshift(t); break; }
@@ -1515,7 +1531,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       parts.unshift(t + ":nth-of-type(" + i + ")");
       n = p;
     }
-    return parts.length ? "html > body > " + parts.join(" > ") : "body";
+    return parts.length ? "html > " + (enCabeza ? "head > " : "body > ") + parts.join(" > ") : "body";
   }
   function buildLocator(el, tag) {
     if (el.id) return tag + "#" + el.id;
@@ -5510,7 +5526,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
 
 /* ── page-audit.js ── */
 (function (NS) {
-  const { WCAG22, enClause, EMBEBIDOS, NO_MEDIOS, alternativaCerca } = NS;
+  const { WCAG22, enClause, buildPath, EMBEBIDOS, NO_MEDIOS, alternativaCerca } = NS;
   /**
    * Auditoría de ÁMBITO DE PÁGINA.
    *
@@ -5557,6 +5573,25 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     return false;
   }
   function visibles(list) { return Array.prototype.slice.call(list).filter(function (el) { return !ocultoEl(el); }); }
+  /**
+   * UN NODO PARA EL INFORME: locator legible Y RUTA QUE SELECCIONA.
+   *
+   * Esta capa emitía nodos con `locator` y sin `path` en los 29 sitios donde
+   * nombra elementos. El locator es legible pero NO identifica —dos `<main>` sin
+   * id se llaman igual— y la guía de capturas resalta POR SELECTOR, así que una
+   * barrera sin ruta no puede llevar evidencia visual ni seguirse entre dos
+   * pasadas. Medido sobre una auditoría real de 12 páginas: 6 de 140 filas sin
+   * selector, 4 de ellas de aquí —«Hay 2 landmarks main», con el elemento
+   * perfectamente identificado como `main#main-content`—. En un sitio de cliente
+   * con más problemas salen muchas más, y es la capa que más criterios cubre.
+   *
+   * Se usa el MISMO constructor que el motor (`buildPath`) y no otro: una ruta que
+   * no coincide con la del motor rompe el cotejo entre capas. `cuaderno.js` ya lo
+   * hacía bien y era esta capa la que tiraba su `path` al mapear.
+   */
+  function nodo(el, name) {
+    return { locator: loc(el), path: buildPath(el), name: name || "" };
+  }
   function loc(el) {
     const t = tag(el);
     if (el.id) return t + "#" + el.id;
@@ -5646,7 +5681,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         return (t.getAttribute("kind") || "subtitles").toLowerCase();
       });
       propios.push({
-        tag: tag, locator: loc(el),
+        tag: tag, locator: loc(el), path: buildPath(el),
         subtitulos: pistas.indexOf("captions") !== -1 || pistas.indexOf("subtitles") !== -1,
         descripciones: pistas.indexOf("descriptions") !== -1,
         pistas: pistas,
@@ -5667,7 +5702,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     Array.prototype.forEach.call(doc.querySelectorAll("iframe[src],embed[src],object[data]"), function (el) {
       const src = el.getAttribute("src") || el.getAttribute("data") || "";
       if (ocultoEl(el) || !src) return;
-      const ficha = { locator: loc(el), src: src.slice(0, 120), nombre: (el.getAttribute("title") || "").slice(0, 60) };
+      const ficha = { locator: loc(el), path: buildPath(el), src: src.slice(0, 120), nombre: (el.getAttribute("title") || "").slice(0, 60) };
       if (EMBEBIDOS.test(src)) externos.push(ficha);
       else if (!NO_MEDIOS.test(src)) dudosos.push(ficha);
     });
@@ -5688,7 +5723,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       if (!href || ocultoEl(el)) return;
       if (!EMBEBIDOS.test(href) && !ARCHIVO_MEDIA.test(href)) return;
       enlaces.push({
-        locator: loc(el), src: href.slice(0, 120),
+        locator: loc(el), path: buildPath(el), src: href.slice(0, 120),
         nombre: (el.getAttribute("aria-label") || el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 60),
         archivo: ARCHIVO_MEDIA.test(href)
       });
@@ -5814,7 +5849,12 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       if (String(m.getAttribute("http-equiv") || "").toLowerCase() !== "refresh") return;
       const c = String(m.getAttribute("content") || "");
       const seg = parseFloat(c);
-      out.push({ segundos: isNaN(seg) ? null : seg, contenido: c.slice(0, 80), redirige: /url\s*=/i.test(c) });
+      /* La RUTA del propio `<meta>`, no una escrita a mano. Yo había puesto
+       * «meta[http-equiv=refresh]» como selector: funciona, pero no tiene la forma
+       * de las demás —y con dos metas de refresco señalaría las dos—. `buildPath`
+       * las distingue por posición. */
+      out.push({ segundos: isNaN(seg) ? null : seg, contenido: c.slice(0, 80), redirige: /url\s*=/i.test(c),
+        locator: "meta[http-equiv=refresh]", path: buildPath(m) });
     });
     return out;
   }
@@ -5835,7 +5875,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         const code = el.getAttribute(a);
         if (!code) return;
         if (TECLA_SUELTA.test(code) && !CON_MODIFICADOR.test(code)) {
-          out.push({ locator: loc(el), attr: a, code: code.replace(/\s+/g, " ").slice(0, 70) });
+          out.push({ locator: loc(el), path: buildPath(el), attr: a, code: code.replace(/\s+/g, " ").slice(0, 70) });
         }
       });
     });
@@ -5843,7 +5883,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     Array.prototype.forEach.call(doc.querySelectorAll("script:not([src])"), function (sc) {
       const code = String(sc.textContent || "");
       if (/addEventListener\s*\(\s*["']key(down|press|up)["']/.test(code) && TECLA_SUELTA.test(code) && !CON_MODIFICADOR.test(code)) {
-        out.push({ locator: "script (en línea)", attr: "addEventListener", code: (TECLA_SUELTA.exec(code) || [""])[0].slice(0, 70) });
+        out.push({ locator: "script (en línea)", path: "", attr: "addEventListener", code: (TECLA_SUELTA.exec(code) || [""])[0].slice(0, 70) });
       }
     });
     return out;
@@ -5870,11 +5910,11 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       const attrs = el.attributes || [];
       for (let i = 0; i < attrs.length; i++) {
         const n = attrs[i].name.toLowerCase();
-        if (n.indexOf("on") === 0 || n === "draggable") fuentes.push({ locator: loc(el), texto: n + "=" + String(attrs[i].value || "").slice(0, 40) });
+        if (n.indexOf("on") === 0 || n === "draggable") fuentes.push({ locator: loc(el), path: buildPath(el), texto: n + "=" + String(attrs[i].value || "").slice(0, 40) });
       }
     });
     Array.prototype.forEach.call(doc.querySelectorAll("script:not([src])"), function (sc) {
-      fuentes.push({ locator: "script (en línea)", texto: String(sc.textContent || "").slice(0, 4000) });
+      fuentes.push({ locator: "script (en línea)", path: "", texto: String(sc.textContent || "").slice(0, 4000) });
     });
     SONDAS_PUNTERO.forEach(function (sonda) {
       const hits = fuentes.filter(function (f) { return sonda.re.test(f.texto); });
@@ -5966,11 +6006,11 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     // 1.3.1 Landmarks: exactamente un main; banner/contentinfo no duplicados
     const mains = landmarks(doc, "main", ["main"]);
     if (mains.length === 0) out.push(F("1.3.1", "revisar", null, ["No hay landmark <main>: dificulta ir directo al contenido principal."]));
-    else if (mains.length > 1) out.push(F("1.3.1", "falla", "moderada", ["Hay " + mains.length + " landmarks main: debe haber solo uno."], mains.map(function (e) { return { locator: loc(e) }; })));
+    else if (mains.length > 1) out.push(F("1.3.1", "falla", "moderada", ["Hay " + mains.length + " landmarks main: debe haber solo uno."], mains.map(function (e) { return nodo(e); })));
     const banners = landmarks(doc, "banner", ["header"]);
     const infos = landmarks(doc, "contentinfo", ["footer"]);
-    if (banners.length > 1) out.push(F("1.3.1", "revisar", null, ["Hay " + banners.length + " landmarks banner: normalmente debe haber uno."], banners.map(function (e) { return { locator: loc(e) }; })));
-    if (infos.length > 1) out.push(F("1.3.1", "revisar", null, ["Hay " + infos.length + " landmarks contentinfo: normalmente debe haber uno."], infos.map(function (e) { return { locator: loc(e) }; })));
+    if (banners.length > 1) out.push(F("1.3.1", "revisar", null, ["Hay " + banners.length + " landmarks banner: normalmente debe haber uno."], banners.map(function (e) { return nodo(e); })));
+    if (infos.length > 1) out.push(F("1.3.1", "revisar", null, ["Hay " + infos.length + " landmarks contentinfo: normalmente debe haber uno."], infos.map(function (e) { return nodo(e); })));
 
     /* 2.4.1 Saltar bloques.
      *
@@ -6045,12 +6085,12 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       return { lvl: lvl, text: (h.textContent || "").trim().slice(0, 40), el: h };
     });
     if (salto && alContenido) {
-      out.push(F("2.4.1", "cumple-parcial", null, ["Hay un enlace de salto al contenido principal (" + salto.a.getAttribute("href") + "), entre los primeros controles enfocables; se ahorra " + saltados + " control(es). Confirma que sea visible al recibir el foco."], [{ locator: loc(salto.a) }]));
+      out.push(F("2.4.1", "cumple-parcial", null, ["Hay un enlace de salto al contenido principal (" + salto.a.getAttribute("href") + "), entre los primeros controles enfocables; se ahorra " + saltados + " control(es). Confirma que sea visible al recibir el foco."], [nodo(salto.a)]));
     } else if (salto) {
       out.push(F("2.4.1", "revisar", null, [
         "Hay un ancla interna entre los primeros controles enfocables (" + salto.a.getAttribute("href") + ", se salta " + saltados + " control(es)), pero su destino no es el landmark `main` ni está dentro de él.",
         "Puede ser un enlace de salto a un contenedor sin landmark —y entonces vale— o un control que despliega algo, que no tiene nada que ver con 2.4.1. Míralo: es lo único que separa las dos cosas."
-      ], [{ locator: loc(salto.a) }]));
+      ], [nodo(salto.a)]));
     } else if (mains.length || navs.length || headings.length) {
       /* `revisar`, y con los datos puestos para que se pueda decidir en diez
        * segundos. La evidencia decía «hay landmarks/encabezados» juntando las dos
@@ -6091,8 +6131,8 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       for (const h of headings) { if (prev && h.lvl > prev + 1) { skip = prev + "→" + h.lvl; skipEl = h.el; break; } prev = h.lvl; }
       const vacios = headings.filter(function (h) { return !h.text; });
       if (!hasH1) out.push(F("2.4.6", "revisar", null, ["No hay un encabezado de nivel 1 (h1) en la página."]));
-      if (skip) out.push(F("1.3.1", "revisar", null, ["Salto en la jerarquía de encabezados (" + skip + "): revisa que el orden de niveles sea correcto."], skipEl ? [{ locator: loc(skipEl) }] : null));
-      if (vacios.length) out.push(F("2.4.6", "falla", "moderada", [vacios.length + " encabezado(s) sin texto: anuncian un nivel vacío."], vacios.map(function (h) { return { locator: loc(h.el) }; })));
+      if (skip) out.push(F("1.3.1", "revisar", null, ["Salto en la jerarquía de encabezados (" + skip + "): revisa que el orden de niveles sea correcto."], skipEl ? [nodo(skipEl)] : null));
+      if (vacios.length) out.push(F("2.4.6", "falla", "moderada", [vacios.length + " encabezado(s) sin texto: anuncian un nivel vacío."], vacios.map(function (h) { return nodo(h.el); })));
       if (hasH1 && !skip && !vacios.length) out.push(F("2.4.6", "cumple-parcial", null, [headings.length + " encabezados con jerarquía sin saltos; la calidad del texto exige juicio."]));
     }
 
@@ -6171,7 +6211,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       out.push(F("4.1.2", "falla", "grave", [fuertes.slice(0, 8).map(function (r) {
         return "<code>" + r.attr + "=\"" + r.id + "\"</code> apunta a un ID que no existe, así que " +
           (APORTAN_NOMBRE[r.attr] || "la etiqueta del campo") + " NO llega a la API de accesibilidad.";
-      }).join(" ")], fuertes.slice(0, 8).map(function (r) { return { locator: loc(r.el), name: r.id }; })));
+      }).join(" ")], fuertes.slice(0, 8).map(function (r) { return nodo(r.el, r.id); })));
     }
     if (flojas.length) {
       out.push(F("4.1.2", "revisar", "moderada", [flojas.slice(0, 8).map(function (r) {
@@ -6184,7 +6224,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
               "Lo que hay que comprobar es si <code>#" + r.id + "</code> aparece AL EXPANDIR. Si aparece, no es barrera; si no aparece nunca, sí lo es."
             : "El nombre, el rol y el estado de ese elemento NO dependen de esta relación y llegan igual a la API. " +
               "Es ARIA inválida según la especificación y puede ser reportable en una auditoría formal, pero no es una barrera que el agente pueda firmar.");
-      }).join(" ")], flojas.slice(0, 8).map(function (r) { return { locator: loc(r.el), name: r.id }; })));
+      }).join(" ")], flojas.slice(0, 8).map(function (r) { return nodo(r.el, r.id); })));
     }
 
     /* ── 1.2.x Medios ── */
@@ -6201,7 +6241,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
           sinSub.length + " vídeo(s) no declaran ninguna pista de subtítulos (<track kind=\"captions\">): " +
           sinSub.slice(0, 5).map(function (m) { return m.locator; }).join(", ") +
           ". La ausencia de pista sí es determinable; que los subtítulos existentes sean correctos, no."
-        ], sinSub.slice(0, 8).map(function (m) { return { locator: m.locator, name: "sin subtítulos" }; })));
+        ], sinSub.slice(0, 8).map(function (m) { return { locator: m.locator, path: m.path || "", name: "sin subtítulos" }; })));
       } else if (videos.length) {
         out.push(F("1.2.2", "cumple-parcial", null, [
           "Los " + videos.length + " vídeo(s) declaran pista de subtítulos. Que estén completos, sincronizados y en el idioma correcto exige verlos."
@@ -6227,7 +6267,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
               conTexto.slice(0, 4).map(function (x) { return x.m.locator + " → «" + x.alt.texto + "»"; }).join("; ") +
               "): 1.2.3 se satisface con una alternativa en texto completa, así que lee eso y comprueba que cuenta lo que pasa en el vídeo."
             : null
-        ].filter(Boolean), sinDesc.slice(0, 8).map(function (m) { return { locator: m.locator, name: m.alternativa ? "alternativa anunciada al lado" : "sin audiodescripción" }; })));
+        ].filter(Boolean), sinDesc.slice(0, 8).map(function (m) { return { locator: m.locator, path: m.path || "", name: m.alternativa ? "alternativa anunciada al lado" : "sin audiodescripción" }; })));
       }
       if (audios.length) {
         const sinTranscripcion = audios.filter(function (m) { return !m.alternativa; });
@@ -6239,14 +6279,14 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
             : "Todos tienen al lado algo que se anuncia como transcripción (" +
               audios.slice(0, 4).map(function (m) { return m.locator + " → «" + m.alternativa.texto + "»"; }).join("; ") +
               "): léela y comprueba que es equivalente."
-        ], audios.slice(0, 8).map(function (m) { return { locator: m.locator, name: "solo audio" }; })));
+        ], audios.slice(0, 8).map(function (m) { return { locator: m.locator, path: m.path || "", name: "solo audio" }; })));
       }
       if (medios.externos.length) {
         out.push(F("1.2.2", "revisar", null, [
           medios.externos.length + " medio(s) incrustados de terceros (" +
           medios.externos.slice(0, 4).map(function (m) { return m.locator + " → " + m.src.replace(/^https?:\/\//, "").slice(0, 45); }).join(", ") +
           "): su contenido no se ve desde aquí. Ábrelos y comprueba subtítulos y audiodescripción en el propio reproductor."
-        ], medios.externos.slice(0, 8).map(function (m) { return { locator: m.locator, name: m.nombre || "medio incrustado" }; })));
+        ], medios.externos.slice(0, 8).map(function (m) { return { locator: m.locator, path: m.path || "", name: m.nombre || "medio incrustado" }; })));
       }
 
       /* Lo que aplica a los tres criterios se dice en los TRES.
@@ -6263,7 +6303,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
           dudosos.length + " marco(s) no se reconocen ni como reproductor ni como otra cosa (" +
           dudosos.slice(0, 4).map(function (m) { return m.locator + " → " + m.src.replace(/^https?:\/\//, "").slice(0, 45); }).join(", ") +
           "): pueden ser reproductores que no están en la lista. Ábrelos: si llevan vídeo o audio, 1.2.1, 1.2.2 y 1.2.3 aplican y hay que comprobarlos ahí.",
-          dudosos.slice(0, 8).map(function (m) { return { locator: m.locator, name: m.nombre || "marco sin reconocer" }; }));
+          dudosos.slice(0, 8).map(function (m) { return { locator: m.locator, path: m.path || "", name: m.nombre || "marco sin reconocer" }; }));
       }
       if (enlazados.length) {
         const conArchivo = enlazados.filter(function (m) { return m.archivo; });
@@ -6273,7 +6313,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
           (enlazados.length > 4 ? ", …" : "") + "). " +
           (conArchivo.length ? conArchivo.length + " apuntan a un archivo de medios directamente. " : "") +
           "Son medios que la página ofrece aunque no haya ningún `<video>` en el DOM —se abren al pulsarlos—, así que 1.2.1, 1.2.2 y 1.2.3 aplican: ábrelos y comprueba ahí subtítulos, audiodescripción y transcripción.",
-          enlazados.slice(0, 8).map(function (m) { return { locator: m.locator, name: m.nombre || "enlace a medio" }; }));
+          enlazados.slice(0, 8).map(function (m) { return { locator: m.locator, path: m.path || "", name: m.nombre || "enlace a medio" }; }));
       }
 
       /* 1.4.2 Control del audio: lo que suena solo y no se puede parar.
@@ -6312,10 +6352,10 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
               sinControl.length + " medio(s) con <code>autoplay</code>, sin silenciar y SIN controles: " +
               sinControl.map(function (m) { return m.locator; }).join(", ") +
               ". Si suena más de 3 segundos no hay forma de pararlo, que es justo lo que prohíbe 1.4.2."
-            ], sinControl.slice(0, 8).map(function (m) { return { locator: m.locator, name: "autoplay sin control" }; }))
+            ], sinControl.slice(0, 8).map(function (m) { return { locator: m.locator, path: m.path || "", name: "autoplay sin control" }; }))
           : F("1.4.2", "revisar", null, [
               suenanSolos.length + " medio(s) se reproducen solos con sonido pero ofrecen controles: comprueba que el mecanismo de parada esté al principio del orden de tabulación."
-            ], suenanSolos.slice(0, 8).map(function (m) { return { locator: m.locator, name: "autoplay con control" }; })));
+            ], suenanSolos.slice(0, 8).map(function (m) { return { locator: m.locator, path: m.path || "", name: "autoplay con control" }; })));
       }
     }
 
@@ -6329,7 +6369,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         "La página se " + (r.redirige ? "redirige" : "recarga") + " sola con <code>&lt;meta http-equiv=\"refresh\"&gt;</code>" +
         (r.segundos != null ? " a los " + r.segundos + " segundos" : "") +
         " (<code>" + r.contenido + "</code>): no hay forma de apagarlo, ajustarlo ni prorrogarlo, que es lo que exige 2.2.1."
-      ], [{ locator: "meta[http-equiv=refresh]", name: r.contenido }]));
+      ], [{ locator: r.locator, path: r.path, name: r.contenido }]));
     });
 
     /* ── 2.1.4 Atajos de teclado de un carácter ── */
@@ -6339,7 +6379,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         atajos.length + " manejador(es) de teclado comparan una tecla suelta sin exigir Ctrl, Alt, Cmd ni Mayúsculas: " +
         atajos.slice(0, 4).map(function (a) { return a.locator + " (" + a.attr + ": " + a.code + ")"; }).join(" · ") +
         ". 2.1.4 exige poder desactivar el atajo, reasignarlo, o que solo actúe con el foco puesto en su control. Solo se ven los manejadores en línea: los de un bundle externo no se detectan desde aquí."
-      ], atajos.slice(0, 8).map(function (a) { return { locator: a.locator, name: a.attr }; })));
+      ], atajos.slice(0, 8).map(function (a) { return { locator: a.locator, path: a.path || "", name: a.attr }; })));
     }
 
     /* ── 2.5.1 / 2.5.2 / 2.5.4 / 2.5.7: dónde hay que mirar ── */
@@ -6350,7 +6390,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         "Se detectan " + p.hits.length + " indicio(s) de " + p.etiqueta + ": " +
         p.hits.slice(0, 4).map(function (h) { return h.locator; }).join(", ") +
         ". El agente no dictamina este criterio; señala dónde mirar, que en un sitio grande es lo que cuesta."
-      ], p.hits.map(function (h) { return { locator: h.locator, name: "" }; })));
+      ], p.hits.map(function (h) { return { locator: h.locator, path: h.path || "", name: "" }; })));
     });
 
     /* ── 3.1.2 Idioma de las partes ──
@@ -6383,7 +6423,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
         revisados++;
         const idioma = idiomaProbable(txt);
         if (idioma && idioma !== langPagina) {
-          sospechosos.push({ locator: loc(el), idioma: idioma, texto: txt.slice(0, 60) });
+          sospechosos.push({ locator: loc(el), path: buildPath(el), idioma: idioma, texto: txt.slice(0, 60) });
         }
       }
       if (sospechosos.length) {
@@ -6391,7 +6431,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
           sospechosos.length + " bloque(s) parecen estar en un idioma distinto del declarado (<code>lang=\"" + langPagina + "\"</code>) y no lo marcan: " +
           sospechosos.slice(0, 4).map(function (x) { return x.locator + " (¿" + x.idioma + "?) «" + x.texto + "»"; }).join(" · ") +
           ". La detección es por palabras funcionales y puede equivocarse con textos técnicos o con citas: confírmalo antes de anotarlo."
-        ], sospechosos.slice(0, 8).map(function (x) { return { locator: x.locator, name: x.idioma }; })));
+        ], sospechosos.slice(0, 8).map(function (x) { return { locator: x.locator, path: x.path || "", name: x.idioma }; })));
       } else {
         /* `cumple-parcial`, no `cumple`: lo comprobado es que ningún bloque de
          * texto da un perfil de otro idioma, y eso no alcanza a lo que pide el
@@ -7944,18 +7984,25 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
        * frase decía siempre «cicla entre N control(es)», y en la forma degenerada
        * `atrapadoEn` llegaba vacío, así que la segunda mitad desaparecía y la fila
        * se quedaba sin elemento al que señalar. */
-      const donde = (trace.atrapadoEn || []).filter(Boolean);
+      /* `atrapadoEn` viaja ahora como `{loc, ruta}` para que la fila lleve
+       * SELECTOR y no solo un nombre legible: una barrera Crítica a la que nadie
+       * puede ir no es reportable. Se acepta también la forma antigua —cadenas
+       * sueltas— porque la usan las trazas de la suite pura y porque una capa que
+       * se rompe al cambiarle la forma de un campo es una capa frágil. */
+      const donde = (trace.atrapadoEn || []).filter(Boolean).map(function (x) {
+        return typeof x === "string" ? { loc: x, ruta: "" } : { loc: x.loc || x.locator || "", ruta: x.ruta || x.path || "" };
+      }).filter(function (x) { return x.loc; });
       out.push(F("2.1.2", "falla", "crítica", [
         (trace.mismoControl && donde.length === 1
-          ? "El foco queda atrapado con Tab en «" + donde[0] + "»: pulsando Tab se vuelve una y otra vez al mismo control y no se puede salir de él solo con teclado, con " +
+          ? "El foco queda atrapado con Tab en «" + donde[0].loc + "»: pulsando Tab se vuelve una y otra vez al mismo control y no se puede salir de él solo con teclado, con " +
             unreached.length + " control(es) del resto de la página sin alcanzar."
           : "El foco queda atrapado con Tab: no se puede salir del componente solo con teclado." +
             (donde.length
-              ? " El recorrido cicla entre " + donde.length + " control(es) —" + donde.slice(0, 6).join(" → ") +
+              ? " El recorrido cicla entre " + donde.length + " control(es) —" + donde.slice(0, 6).map(function (x) { return x.loc; }).join(" → ") +
                 "— y no vuelve a salir, con " + unreached.length + " control(es) del resto de la página sin alcanzar."
               : "")) +
         (marcos.length ? " Además el recorrido pasó por " + marcos.length + " marco(s) (" + marcos.slice(0, 3).join(", ") + ") cuyo interior esta prueba no ve." : "")
-      ], donde.slice(0, 8).map(function (l) { return { locator: l, name: "" }; })));
+      ], donde.slice(0, 8).map(function (x) { return { locator: x.loc, path: x.ruta, name: "" }; })));
     } else if (!focusables.length) {
       out.push(F("2.1.2", "no-aplica", null, [
         "La página no tiene ningún control enfocable, así que no hay foco que pueda quedar atrapado."

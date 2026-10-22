@@ -413,6 +413,79 @@ export async function viewportAnalyze(target, opts) {
               detalle: Math.round(r.right-cw)+' px fuera' });
           }
         }
+        /* SEGUNDA PASADA: EL TEXTO QUE NO CABE Y NO TIENE DÓNDE CORTAR.
+         *
+         * La pasada de arriba exige que el RECTÁNGULO del elemento sobresalga
+         * («r.right > cw+2»), y hay una causa muy común de 1.4.10 que no lo hace:
+         * un correo, una URL o una línea de código sin puntos de corte dentro de
+         * un «<p>». El «<p>» mide lo que su contenedor —su rect no sobresale— y
+         * el texto se sale igual, arrastrando el documento.
+         *
+         * Medido, y determinista: una URL de 70 caracteres en un «<p>» a 320 px
+         * da «1.4.10 falla, 279 px de exceso» y la lista de culpables VACÍA, así
+         * que el informe decía «no se ha podido señalar el elemento concreto».
+         * Una barrera Grave sin elemento al que ir: en un informe de cliente, una
+         * fila que nadie puede arreglar. El texto se mide con «Range» sobre los
+         * nodos de texto propios, que da el borde real: en ese caso 599 px con la
+         * ventana en 320, o sea los mismos 279 px del exceso.
+         *
+         * LA CAUTELA QUE ESTO NECESITA: un texto largo dentro de un contenedor
+         * con su propio «overflow-x» NO desborda el documento —el contenedor lo
+         * recorta o lo desplaza—, y acusarlo sería inventar la barrera. Ese error
+         * ya se cometió una vez en este proyecto, con una miga de pan en
+         * «overflow-x:auto». Así que se mira la cadena de antepasados. */
+        if (sw > cw+2) {
+          var all2 = document.body ? document.body.querySelectorAll('*') : [];
+          for (var j=0; j<all2.length && offenders.length<25; j++){
+            var e3 = all2[j];
+            if (!__pintado(e3) || __ocultoALaVista(e3)) continue;
+            // ¿Tiene texto PROPIO? Si no, el culpable está más adentro.
+            var tieneTexto = false;
+            for (var k=0; k<e3.childNodes.length; k++){
+              var nd = e3.childNodes[k];
+              if (nd.nodeType === 3 && String(nd.nodeValue||'').trim().length > 3) { tieneTexto = true; break; }
+            }
+            if (!tieneTexto) continue;
+            /* Ya acusado, o DENTRO de algo ya acusado: no se repite.
+             *
+             * La comprobación miraba solo el propio elemento y eso rompió el caso
+             * de la tabla ancha: sus «td» salían acusados como texto que no cabe
+             * —son consecuencia de que la tabla desborde— y como «td» no está en
+             * la lista de exentos, una tabla que WCAG puede eximir pasaba de
+             * «revisar: confirma que la excepción aplica» a «falla». Un falso
+             * positivo introducido al arreglar un falso negativo, que es la forma
+             * más fácil de empeorar un agente. La regla de «solo el desbordante
+             * más externo» ya estaba en la pasada de arriba; aquí faltaba. */
+            var yaEsta = false, sube = e3;
+            while (sube && sube !== document.documentElement && !yaEsta) {
+              for (var q=0; q<offenders.length; q++) if (offenders[q].uid === __uid(sube)) { yaEsta = true; break; }
+              sube = sube.parentElement;
+            }
+            if (yaEsta) continue;
+            // ¿Lo recorta o lo desplaza algún antepasado? Entonces no arrastra el documento.
+            var anc = e3, recortado2 = false;
+            while (anc && anc !== document.documentElement) {
+              var ox = getComputedStyle(anc).overflowX;
+              if (anc !== e3 && ox && ox !== 'visible') { recortado2 = true; break; }
+              anc = anc.parentElement;
+            }
+            if (recortado2) continue;
+            var der = 0;
+            for (var k2=0; k2<e3.childNodes.length; k2++){
+              var nd2 = e3.childNodes[k2];
+              if (nd2.nodeType !== 3) continue;
+              try {
+                var rg = document.createRange(); rg.selectNodeContents(nd2);
+                var crs = rg.getClientRects();
+                for (var c2=0; c2<crs.length; c2++) if (crs[c2].right > der) der = crs[c2].right;
+              } catch (e4) {}
+            }
+            if (der <= cw+2) continue;
+            offenders.push({ locator:__loc(e3), uid:__uid(e3), tag:e3.tagName.toLowerCase(),
+              role:(e3.getAttribute('role')||'').split(/\\s+/)[0],
+              detalle: Math.round(der-cw)+' px fuera: su texto no cabe y no tiene dónde cortar (usa overflow-wrap:anywhere o word-break)' });
+          }
+        }
         /* Y el contenido RECORTADO, que es la otra mitad del criterio.
          *
          * Dictaminando solo por \`scrollWidth > clientWidth\`, un desbordamiento

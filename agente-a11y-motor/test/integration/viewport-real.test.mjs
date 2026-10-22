@@ -440,3 +440,81 @@ test("1.4.10 real: el mismo idioma con clip-path tampoco se acusa", { skip }, as
     .flatMap((x) => (x.nodes || []).map((n) => n.locator || "")).join(" ");
   assert.doesNotMatch(todos, /\.vh/, todos);
 });
+
+/* ── 1.4.10: el texto que no cabe y no tiene dónde cortar (v0.79.0) ─────── */
+
+/**
+ * UNA BARRERA GRAVE SIN ELEMENTO AL QUE IR.
+ *
+ * La detección del culpable exigía que el RECTÁNGULO del elemento sobresaliera
+ * de la ventana, y la causa más común de 1.4.10 en sitios reales no lo hace: un
+ * correo, una URL o una línea de código sin puntos de corte dentro de un `<p>`.
+ * El `<p>` mide lo que su contenedor —su rect no sobresale— y el texto se sale
+ * igual, arrastrando el documento.
+ *
+ * Medido antes del arreglo, y determinista: una URL de 70 caracteres en un `<p>`
+ * a 320 px da «1.4.10 falla, 279 px de exceso» con la lista de culpables VACÍA,
+ * así que el informe decía «No se ha podido señalar el elemento concreto». En una
+ * auditoría real de 12 páginas era una de las 6 filas sin selector, Grave y en la
+ * adaptación: una fila que nadie puede arreglar.
+ *
+ * El texto se mide con `Range` sobre los nodos de texto propios, que da el borde
+ * real: 599 px con la ventana en 320, o sea los mismos 279 px del exceso.
+ */
+const CON_TEXTO = (cuerpo, estilo) => `<!doctype html><html lang="es"><head><meta charset="utf-8">
+<title>Texto</title><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{margin:0;font:16px system-ui}main{padding:0 16px}${estilo || ""}</style>
+</head><body><main>${cuerpo}</main></body></html>`;
+const URL_LARGA = "https://ejemplo.com/una/ruta/absurdamente/larga/que/no/cabe/nunca/jamas";
+
+const una1410 = async (html) => {
+  const out = await viewportAnalyze({ html }, { launchOptions: sonda.launchOptions || {} });
+  return (out.findings || []).filter((f) => f.c.n === "1.4.10")[0];
+};
+
+test("1.4.10 real: una URL sin cortes señala el elemento que la contiene", { skip }, async () => {
+  const f = await una1410(CON_TEXTO('<p id="u">' + URL_LARGA + "</p>"));
+  assert.equal(f.verdict, "falla");
+  assert.ok(f.nodes && f.nodes.length, "una barrera Grave sin elemento no es reportable");
+  assert.equal(f.nodes[0].locator, "p#u");
+  const ev = f.evid.join(" ");
+  assert.doesNotMatch(ev, /No se ha podido señalar el elemento concreto/);
+  assert.match(ev, /su texto no cabe y no tiene dónde cortar/);
+  assert.match(ev, /overflow-wrap/, "y dice cómo se arregla");
+});
+
+test("1.4.10 real: con overflow-wrap puesto, la misma URL ya no desborda", { skip }, async () => {
+  // El consejo que da el agente tiene que ser el que arregla. Si esto sale
+  // `falla`, el consejo está mal y la fila manda a quien la lea a un sitio
+  // equivocado.
+  const f = await una1410(CON_TEXTO('<p id="u">' + URL_LARGA + "</p>", "#u{overflow-wrap:anywhere}"));
+  assert.equal(f.verdict, "cumple", JSON.stringify(f.evid));
+});
+
+test("1.4.10 real: un texto largo dentro de overflow-x:auto NO se acusa", { skip }, async () => {
+  /* LA CAUTELA. Un texto que su contenedor desplaza no arrastra el documento, y
+   * acusarlo sería inventar la barrera. Este error ya se cometió una vez en este
+   * proyecto, con una miga de pan en `overflow-x:auto`. */
+  const f = await una1410(CON_TEXTO('<div id="caja"><p id="u">' + URL_LARGA + "</p></div>", "#caja{overflow-x:auto}"));
+  assert.notEqual(f.verdict, "falla", JSON.stringify(f.evid));
+});
+
+test("1.4.10 real: el texto oculto a la vista no cuenta", { skip }, async () => {
+  const f = await una1410(CON_TEXTO('<p id="u" class="sr">' + URL_LARGA + '</p><p>normal</p>',
+    ".sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}"));
+  assert.equal(f.verdict, "cumple", JSON.stringify(f.evid));
+});
+
+test("1.4.10 real: una tabla ancha sigue siendo EXENTA, no una falla", { skip }, async () => {
+  /* Esto se rompió al arreglar lo de arriba y hay que dejarlo guardado: los `td`
+   * de una tabla que desborda salían acusados como «texto que no cabe» —son
+   * consecuencia de que la tabla desborde— y como `td` no está en la lista de
+   * exentos, una tabla que WCAG puede eximir pasaba de `revisar` a `falla`. Un
+   * falso positivo introducido al arreglar un falso negativo. */
+  const f = await una1410(CON_TEXTO(
+    '<table id="t"><tr><td>una celda</td><td>otra celda</td><td>y otra celda mas</td><td>y una cuarta</td></tr></table>',
+    "table{border-collapse:collapse}td{padding:12px;white-space:nowrap;border:1px solid #000}"));
+  assert.equal(f.verdict, "revisar", JSON.stringify(f.evid));
+  assert.match(f.evid.join(" "), /uso esencial/);
+  assert.deepEqual((f.nodes || []).map((n) => n.locator), ["table#t"], "solo la tabla, no sus celdas");
+});
