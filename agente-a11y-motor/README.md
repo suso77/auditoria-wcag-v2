@@ -1001,6 +1001,38 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.81.0 — el suelo de espera lo mide el agente, no lo elijo yo
+
+(Esta entrega **sustituye a v0.80.0**, que nunca llegó a commitearse: su instalador se paró en rojo porque dos guardias nuevas arrancaban el navegador con una variable que su fichero no define. Lleva lo de v0.80.0, lo que faltaba, y el arreglo de mi propio arreglo.)
+
+**El problema, medido y no leído:** dos muestreos del sitio del autor, seguidos y con la misma semilla, daban muestras distintas. La muestra y su justificación van **dentro del IRA**, y el propio ejemplo promete que «con la misma semilla sale la misma muestra, que es lo que permite defender el informe».
+
+**Causa 1, el censo: un fallo transitorio de carga.** 123 páginas contra 124 por un único `page.goto: Timeout 20000ms exceeded`, y de ahí una plantilla distinta, otro recorte y otras dos páginas aleatorias. Ahora la página se **reintenta una vez** con la mitad más de plazo, pasando antes por `about:blank` —sin eso la navegación del primer intento sigue pendiente y el segundo se engancha a ella: medido, el Mac del autor hacía UNA sola petición y el contenedor dos, o sea un reintento que no reintenta visible en una máquina y no en la otra—. Y si el segundo intento también falla, **se dice en los avisos** con lo que le hace a la muestra: antes se guardaba en el JSON y la justificación seguía imprimiendo «reproducible» sobre un censo incompleto.
+
+**Causa 2, la lectura — y aquí mi primer arreglo era inútil.** Con el censo ya estable, cinco pasadas seguidas dieron 124 candidatas y 0 errores… y la muestra cambió en cuatro, con las plantillas bailando 9/8/9/8/9. Puse una convergencia que relee hasta que dos lecturas coincidan, con un **suelo de 1 s elegido por mí**. El sitio del autor lo desmintió, y está reproducido de forma determinista con una página que muta a los 1400 ms, trece páginas:
+
+| | ms/página | qué lee |
+|---|---|---|
+| v0.79.0, una relectura | 586 | `div.min-h-screen` ← la de antes de hidratarse |
+| suelo fijo de 1000 ms | 1093 | `div.min-h-screen` ← **la misma, mal** |
+| calibrando (esta entrega) | 2846 | `div.bg-white\|nav:12`, suelo medido 2250 |
+
+Es decir: **mi suelo fijo costaba el 85 % más y leía exactamente igual de mal**, y encima en silencio —`asentado: null`, `sinAsentar: null`—. Dos lecturas iguales a 500 y 1000 ms no son una página acabada, y es literalmente lo que salió en el sitio real: `div.min-h-screen` en una pasada y `div.bg-white` en las otras cuatro.
+
+**Lo que lo arregla es medir en el sitio.** Ninguna constante escrita aquí vale para una red y una máquina que no son estas, así que el rastreo **calibra**: observa hasta el techo, sin salida anticipada, la primera página, la primera de **cada plantilla nueva** y una de cada diez; mira en qué milisegundo ocurrió la última mutación; y pone el suelo en eso más un margen, redondeado a 250 ms —medido: la calibración daba 2018 y 2020 ms en dos pasadas, y un suelo que baila vuelve dos pasadas incomparables por el reloj y no por el sitio—. La observación por plantilla no es un adorno: el hueco de calibrar «una de cada diez» se vio en el banco con una portada quieta y una ficha que se hidrata tarde —la ficha se leía temprana, salían dos plantillas donde hay una y el enlace que la ficha pinta tarde se quedaba fuera del censo—, y las plantillas son justo lo que agrupa la muestra. Al observarla **estando en ella**, lo que aparece tarde no solo sube el suelo: corrige su propia lectura.
+
+**Y un censo corto SIN UN SOLO ERROR, que desmintió mi explicación de v0.80.0.** En esas cinco pasadas la primera dio **117** candidatas contra 124 de las otras cuatro, con cero errores de carga. Atribuir el censo corto a los *timeouts* era incompleto: basta leer la portada antes de que pinte sus enlaces para que falten siete páginas. El censo se construye con los enlaces leídos, así que ahora, cuando lo que llegó tarde fueron **enlaces**, el aviso lo dice con ese número y advierte de que este censo puede no ser el del sitio entero. Un censo corto que nadie declara es la regla de oro del proyecto incumplida en el sitio más caro: el informe presumiría de reproducible sobre un sitio al que le faltan páginas.
+
+**Lo que se dice, porque un suelo que el agente se pone solo es un dato del informe:** qué midió y dónde, con qué suelo se leyó el sitio, qué páginas no se estabilizaron dentro del techo (`rastreo.inquietas`, en el JSON y no solo en la prosa), y —si el suelo subió a mitad del rastreo— **qué páginas se leyeron con menos margen** y con qué valor hay que volver a rastrear. Todo eso viaja en `rastreo.calibracion`, porque dos pasadas con suelos distintos no son comparables y sin el dato no hay forma de saberlo.
+
+**Lo que cuesta, medido:** en un sitio quieto, 633 ms/página antes y 1556 con calibración; en uno que se hidrata tarde, 586 → 2846, que es el precio de leerlo bien. Sobre 124 páginas eso va de unos dos minutos por pasada a del orden de cinco o seis. Se puede abaratar (`asentarTechoMs` más bajo, `calibrarCada` más alto) o apagar (`calibrarAsentado: false`, `asentarSueloMs` a mano), y el informe dirá con qué suelo se leyó.
+
+**Y dos pruebas de integración que llevaban meses saltándose en silencio.** `test/integration/crawl-real.test.mjs` importaba `"../src/playwright-launch.js"` desde `test/integration/` —o sea `test/src/`, que no existe— y el `catch` lo convertía en «sin Chromium». Un salto silencioso es peor que un rojo, porque el rojo se mira. Y vigilaban exactamente el rastreo que esta versión arregla. Ahora el motivo del salto se dice y el fichero va con **16 pruebas**: el reintento que se recupera y el que se declara, la huella igual en tres pasadas, el techo que no da tiempo, la página estable que no se marca, las inquietas en el JSON, los enlaces tardíos en el censo, la lectura temprana con suelo fijo, el sitio quieto que no calibra hacia arriba, el suelo que sube a mitad y lo dice, la plantilla nueva observada aunque no le toque, y el suelo igual en dos pasadas. Más las dos direcciones contrarias, porque un aviso que sale siempre deja de leerse.
+
+**Y una guardia del proyecto me cazó a mí otra vez:** al exportar `EXTRAER` —para que los instrumentos de medir usen la lectura del agente y no una copia, error que este proyecto ya pagó una vez— el barrido de plantillas inyectadas dejó de encontrarla, porque su regex no contemplaba `export`. Lo dijo con su propio mensaje. Para eso está.
+
+**882 tests unitarios** y `crawl-real` pasando de **2 saltados a 16 ejecutados**.
+
 ### v0.79.0 — seis filas a las que nadie podía ir
 
 Esta entrega no arregla veredictos: arregla que el informe sirva para trabajar, que es lo que decide si se puede poner delante de un cliente. El instrumento que ya tenía el proyecto (`scripts/medir-informe.mjs`) sobre una auditoría real de 12 páginas: **140 filas, 0 indistinguibles, 0 avisos de CSS ilegible y 6 filas SIN SELECTOR**. La guía de capturas resalta el elemento por selector y el cotejo entre dos pasadas sigue las barreras por selector, así que una fila sin él es una barrera que existe y a la que nadie puede ir. Las seis tenían tres causas distintas.
@@ -1054,10 +1086,12 @@ Un marco repetido ya no es una trampa, es el punto ciego de la sonda, y como tal
 | | tapados del todo |
 |---|---|
 | Tab bajando | 0 de 40 |
-| Mayús+Tab subiendo | **9 de 39** — la barrera es REAL |
+| Mayús+Tab subiendo | **12 de 39** — la barrera es REAL |
 | el modelo «nearest» | **34 de 40**, todos en `top=0` |
 
-Veinticinco acusaciones inventadas en una página, y la misma cuenta con una barra de cookies fija al pie (10 reales, 35 acusadas). El `top=0` de todas ellas era la firma del decorado: una posición que el navegador no produce.
+Veintidós acusaciones inventadas en una página, y la misma cuenta con una barra de cookies fija al pie (35 acusadas). El `top=0` de todas ellas era la firma del decorado: una posición que el navegador no produce.
+
+**Corrección de esta tabla, hecha después de publicarla:** la primera versión decía «9 de 39» y «25 inventadas», y ese 9 salió de un recorrido cortado a 30 pulsaciones por dirección, no del recorrido completo. Con el recorrido entero, la misma página da **12**. La barrera real era mayor de lo publicado y las acusaciones inventadas, 22 en vez de 25; la conclusión no cambia, pero la cifra sí, y el recuento corto afectaba igual al montaje de la barra de cookies, cuyo «10 reales» es por tanto un suelo y no una medida —así que se retira en vez de dejarlo como si fuera exacto—.
 
 Ahora no se simula el desplazamiento. Se recorre el **orden de tabulación** —`tabindex` positivos primero, después el del documento— enfocando de verdad, sin `preventScroll`, en las dos direcciones, y se mide dónde quedó el control. Eso aplica solo el `scroll-padding` del sitio, respeta el centrado, y conserva las tres cautelas que cada una costó una regresión: un control dentro del flotante no se acusa a sí mismo, un velo a pantalla completa se dice una vez y aparte, y quién se pinta encima lo decide `elementFromPoint` y no la aritmética de rectángulos. Contra el teclado real, en cuatro montajes: **9/9, 0/0, 10/10 y 5/5. Ni uno perdido ni uno inventado.**
 

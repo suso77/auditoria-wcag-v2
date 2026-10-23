@@ -126,7 +126,15 @@ function coincide(ruta, patron) {
 
 /* ── Extracción de señales, dentro de la página ──────────────────────────── */
 
-const EXTRAER = `
+/**
+ * LA LECTURA QUE HACE EL RASTREO, EXPORTADA A PROPÓSITO.
+ *
+ * Se exporta para que los instrumentos de medir usen ESTA y no una copia. Ya
+ * pasó una vez en este proyecto: una sonda escrita a mano con una regla más
+ * débil que la del agente «encontró» un falso negativo que no existía. Un
+ * instrumento que reimplementa lo que mide no mide nada.
+ */
+export const EXTRAER = `
 /* «Pintado» tiene que mirar también la OPACIDAD, y la acumulada.
    Esta funcion miraba visibility y display y no opacity, al contrario que su gemela
    de la capa de pixeles. Una sola propiedad CSS cambiaba el informe entero, medido en
@@ -265,6 +273,46 @@ export async function crawlSite(inicio, opts) {
   const browser = await chromium.launch(launchOptions(opts.launchOptions));
   const avisos = [];
   const errores = [];
+  // Páginas que hicieron falta DOS intentos: dato del informe, no ruido. Un
+  // sitio donde hay que reintentar es un sitio lento, y eso explica por qué una
+  // pasada puede no ver lo mismo que la siguiente.
+  const reintentadas = [];
+
+  /* ── EL SUELO DE ESPERA NO SE ADIVINA: SE MIDE EN EL SITIO ────────────────
+   *
+   * La convergencia con suelo fijo de 1 s se midió en montajes locales y el
+   * sitio del autor la desmintió. Reproducido aquí de forma determinista, con
+   * una página que muta a los 1400 ms:
+   *
+   *     suelo 1000 → …|div.min-h-screen|nav:1   asentado=null  sinAsentar=null
+   *     suelo 2250 → …|div.bg-white|nav:2       asentado=["plantilla","enlaces"]
+   *
+   * O sea: con el suelo corto se lee la página ANTES de hidratarse, con un
+   * enlace menos, Y NO SE DICE NADA. Dos lecturas iguales a 500 y 1000 ms no
+   * son una página acabada, y es exactamente lo que salió en jesusaccesible.com:
+   * `div.min-h-screen` en una pasada y `div.bg-white` en las otras cuatro, con
+   * 117 candidatas contra 124 y cero errores de carga.
+   *
+   * Cualquier constante que yo ponga aquí es un número elegido en otra máquina y
+   * otra red. Así que el rastreo CALIBRA: en la primera página —y cada N— se
+   * observa hasta el techo SIN salida anticipada, se mira en qué milisegundo
+   * ocurrió la última mutación, y el suelo pasa a ser eso más un margen. Se paga
+   * el techo entero en esas páginas y el suelo medido en las demás.
+   *
+   * Y lo que se midió SE DICE, con el número: un suelo que el agente se puso
+   * solo es un dato del informe, no un detalle de implementación. */
+  const reposoBase = opts.asentarMs != null ? opts.asentarMs : 500;
+  const techoBase = opts.asentarTechoMs != null ? opts.asentarTechoMs : 4000;
+  const margenAsentar = opts.asentarMargenMs != null ? opts.asentarMargenMs : 500;
+  const sueloBase = opts.asentarSueloMs != null ? opts.asentarSueloMs : 1000;
+  let sueloEfectivo = sueloBase;
+  const calibrar = opts.calibrarAsentado !== false && reposoBase > 0;
+  const calibrarCada = opts.calibrarCada != null ? opts.calibrarCada : 10;
+  const calibraciones = [];
+  // Huellas de plantilla ya observadas largo: la primera página de cada una paga
+  // el techo, y las demás de esa plantilla van con el suelo ya medido.
+  const huellasVistas = new Set();
+  let leidas = 0;
 
   try {
     const page = await browser.newPage();
@@ -314,58 +362,239 @@ export async function crawlSite(inicio, opts) {
       if (NO_VISITAR.test(u.pathname + u.search)) { anotar("destructiva", u.href); continue; }
       if (!robots.permite(u.pathname)) { anotar("robots", u.href); continue; }
 
-      let datos = null;
-      try {
-        const resp = await page.goto(u.href, { waitUntil: opts.waitUntil || "load", timeout: opts.timeout || 20000 });
-        if (resp && !resp.ok()) { errores.push({ url: u.href, error: "HTTP " + resp.status() }); continue; }
-        const ct = resp ? (resp.headers()["content-type"] || "") : "";
-        if (ct && ct.indexOf("html") === -1) { saltadas.noHtml++; continue; }
-        if (opts.waitMs) await page.waitForTimeout(opts.waitMs);
-        datos = await page.evaluate(new Function(EXTRAER));
-        /* ── UNA SOLA CAPTURA NO BASTA EN UN SITIO QUE PINTA EN EL CLIENTE ──
-         *
-         * El rastreo iba con `waitUntil: "load"` y SIN espera añadida, mientras
-         * la auditoría va con `load` + 400 ms. En un SPA con enrutado en cliente
-         * —React, Vue, Svelte— a `load` la ruta puede no haberse pintado todavía,
-         * así que lo que se leía era el armazón compartido o menos.
-         *
-         * Medido, y es el defecto más caro que ha dado este banco: en la pasada
-         * `ja4` de jesusaccesible.com, `/contacto` salió con
-         * `tieneFormulario: false` —tiene cuatro campos y un botón de envío— y la
-         * cobertura de la muestra quedó con `formulario: false`. Eso va al
-         * `muestra.json` y de ahí al IRA: la justificación de la muestra decía
-         * «No se ha encontrado ninguna página de la categoría "Página con
-         * formulario": compruébalo a mano» con la página del formulario DENTRO de
-         * la muestra. Una afirmación falsa en el documento que sostiene la
-         * auditoría, y encima mandando al auditor a buscar algo que ya tenía.
-         *
-         * Las huellas lo delataban: cuatro páginas con la MISMA huella —el
-         * armazón— y una con `main|…|nav:0`, sin header ni footer. Dos momentos
-         * de pintado distintos en la misma pasada no son marcado estable, son una
-         * carrera.
-         *
-         * Así que se lee DOS VECES con un reposo entre medias y se comparan. Si
-         * cambia algo, la primera lectura era prematura: vale la segunda y se
-         * anota qué cambió, porque un sitio donde hay que reposar es un dato que
-         * el informe tiene que dar. Si no cambia nada, el coste es una
-         * evaluación más y no se anota nada. No es una espera a ciegas: es una
-         * medición de si hacía falta esperar. */
-        const reposo = opts.asentarMs != null ? opts.asentarMs : 500;
-        if (reposo > 0) {
-          await page.waitForTimeout(reposo);
-          let segunda = null;
-          try { segunda = await page.evaluate(new Function(EXTRAER)); } catch (e2) { segunda = null; }
-          const cambio = diferenciaDeLectura(datos, segunda);
-          if (cambio.length) { datos = segunda; datos.asentado = cambio; }
+      /* UN SEGUNDO INTENTO, porque perder una página del censo descuadra la
+       * muestra entera.
+       *
+       * Medido en el sitio del autor, dos muestreos SEGUIDOS a dos minutos uno
+       * del otro: el primero rastreó 123 páginas y el segundo 124. La diferencia
+       * era un único error —«page.goto: Timeout 20000ms exceeded» en una página—
+       * y de ahí se desmoronó todo lo demás: una plantilla distinta, una página
+       * estructurada menos, otro recorte y, al final, otras dos páginas
+       * aleatorias. La muestra va dentro del IRA, así que eso impide defender el
+       * informe como reproducible.
+       *
+       * Un timeout en un sitio que pinta en el cliente es transitorio y cuesta
+       * una página del censo, así que se reintenta UNA vez con más plazo. Si el
+       * segundo también falla, el error se anota Y SE DICE EN LOS AVISOS: una
+       * página que no cargó, callada, se lee como «el sitio tiene 123 páginas». */
+      let datos = null, errorUlt = null, noEsHtml = false, intentosUsados = 0;
+      /* OJO A LA CONDICIÓN: no puede llevar `errorUlt === null`. La escribí así
+       * y el segundo intento no se ejecutaba NUNCA, porque la condición se
+       * evalúa antes del cuerpo y el error del primer intento ya estaba puesto.
+       * Un reintento que no reintenta es peor que no tenerlo: parece arreglado. */
+      for (let intento = 1; intento <= 2 && datos === null && !noEsHtml; intento++) {
+        intentosUsados = intento;
+        errorUlt = null;
+        try {
+          /* EL SEGUNDO INTENTO SE HACE DESDE CERO, y las dos cosas de aquí son
+           * arreglos de la primera versión de este reintento:
+           *
+           *  · se va antes a `about:blank`. Sin eso, la navegación del primer
+           *    `goto` sigue PENDIENTE y el segundo se engancha a ella en vez de
+           *    pedir de nuevo: medido en el Mac del autor, el servidor de prueba
+           *    recibía UNA sola petición y el reintento no reintentaba. En el
+           *    contenedor sí pedía dos veces, así que el defecto solo salía en
+           *    una de las dos máquinas — y el test lo cazó;
+           *  · y espera la mitad más. Esto YA ESTABA ESCRITO en el instalador
+           *    como si estuviera hecho y no lo estaba: mi reemplazo no casó y no
+           *    lo comprobé. Insistir con el mismo plazo es insistir en lo mismo. */
+          if (intento > 1) {
+            try { await page.goto("about:blank", { timeout: 5000 }); } catch (e0) {}
+          }
+          const plazo = Math.round((opts.timeout || 20000) * (intento === 1 ? 1 : 1.5));
+          const resp = await page.goto(u.href, { waitUntil: opts.waitUntil || "load", timeout: plazo });
+          if (resp && !resp.ok()) { errorUlt = "HTTP " + resp.status(); break; }
+          const ct = resp ? (resp.headers()["content-type"] || "") : "";
+          if (ct && ct.indexOf("html") === -1) { noEsHtml = true; break; }
+          if (opts.waitMs) await page.waitForTimeout(opts.waitMs);
+          datos = await page.evaluate(new Function(EXTRAER));
+          /* ── UNA SOLA CAPTURA NO BASTA EN UN SITIO QUE PINTA EN EL CLIENTE ──
+           *
+           * El rastreo iba con `waitUntil: "load"` y SIN espera añadida, mientras
+           * la auditoría va con `load` + 400 ms. En un SPA con enrutado en cliente
+           * —React, Vue, Svelte— a `load` la ruta puede no haberse pintado todavía,
+           * así que lo que se leía era el armazón compartido o menos.
+           *
+           * Medido, y es el defecto más caro que ha dado este banco: en la pasada
+           * `ja4` de jesusaccesible.com, `/contacto` salió con
+           * `tieneFormulario: false` —tiene cuatro campos y un botón de envío— y la
+           * cobertura de la muestra quedó con `formulario: false`. Eso va al
+           * `muestra.json` y de ahí al IRA: la justificación de la muestra decía
+           * «No se ha encontrado ninguna página de la categoría "Página con
+           * formulario": compruébalo a mano» con la página del formulario DENTRO de
+           * la muestra. Una afirmación falsa en el documento que sostiene la
+           * auditoría, y encima mandando al auditor a buscar algo que ya tenía.
+           *
+           * Las huellas lo delataban: cuatro páginas con la MISMA huella —el
+           * armazón— y una con `main|…|nav:0`, sin header ni footer. Dos momentos
+           * de pintado distintos en la misma pasada no son marcado estable, son una
+           * carrera.
+           *
+           * Así que se lee DOS VECES con un reposo entre medias y se comparan. Si
+           * cambia algo, la primera lectura era prematura: vale la segunda y se
+           * anota qué cambió, porque un sitio donde hay que reposar es un dato que
+           * el informe tiene que dar. Si no cambia nada, el coste es una
+           * evaluación más y no se anota nada. No es una espera a ciegas: es una
+           * medición de si hacía falta esperar. */
+          /* ── UNA SOLA RELECTURA TAMPOCO BASTA: HAY QUE ESPERAR A QUE CONVERJA ──
+           *
+           * Esto leía dos veces con 500 ms entre medias y se quedaba con la
+           * segunda. Si la página sigue pintando a los 500 ms, la «segunda»
+           * también es prematura, y entonces la huella de plantilla sale distinta
+           * de una pasada a otra.
+           *
+           * Medido en el sitio del autor, CINCO muestreos seguidos con el censo
+           * estable —124 páginas y 0 errores en las cinco—:
+           *
+           *     plantillas detectadas:  9 / 8 / 9 / 8 / 9
+           *     muestra final:          cambió en 4 de las 5
+           *
+           * Y la huella guardada decía exactamente qué pasaba. `/blog/wcag-3-1-5`,
+           * la misma página, en dos pasadas:
+           *
+           *     header>navigation>nav>main>contentinfo>nav>nav>nav
+           *     header>navigation>nav>main>main>aside>navigation>contentinfo>nav>nav>nav
+           *
+           * Un segundo `main`, un `aside` y un `navigation` que aparecen tarde.
+           * Eso cambiaba el recuento de plantillas y con él la muestra que va al
+           * IRA. (De paso: ese segundo `<main>` es la barrera 1.3.1 que el agente
+           * ya acusa en esa página, así que la lectura completa es la correcta.)
+           *
+           * Ahora se relee hasta que DOS LECTURAS SEGUIDAS COINCIDAN, con techo.
+           * Una página estable cuesta lo mismo que antes —una espera y una
+           * lectura—; solo las que siguen pintando cuestan más. Es la misma idea
+           * que `esperarAsentado` usa en la auditoría desde v0.73.0, donde ya se
+           * había aprendido que medir una página inquieta no es medir.
+           *
+           * Y SI NO CONVERGE DENTRO DEL TECHO, SE DICE. Quedarse con la última
+           * lectura y callar es justo lo que hacía que dos pasadas no coincidieran
+           * sin que nadie se enterara. */
+          const reposo = reposoBase;
+          /* EL TECHO SOLO SE LEVANTA SI LA CALIBRACIÓN SUBIÓ EL SUELO.
+           *
+           * La primera versión de esto hacía `max(techo, suelo+...)` siempre, y
+           * así un techo puesto A MANO por debajo del suelo quedaba ignorado en
+           * silencio: la guardia que comprueba que una página sin estabilizar SE
+           * DICE pasó a verde en falso, porque con el techo levantado la página
+           * sí se estabilizaba. Un parámetro que el agente se salta sin avisar es
+           * el mismo defecto que esta entrega persigue, cometido en el arreglo.
+           *
+           * Levantarlo cuando la calibración sube el suelo sí hace falta: con un
+           * suelo mayor que el techo, ninguna página podría cumplirlo y TODAS
+           * saldrían «sin asentar», que es un aviso que al salir siempre deja de
+           * leerse. */
+          const techoAsentar = sueloEfectivo > sueloBase
+            ? Math.max(techoBase, sueloEfectivo + reposo + margenAsentar)
+            : techoBase;
+          // Calibra en la primera página leída y cada `calibrarCada` desde ahí.
+          let esCalibracion = calibrar && (leidas % calibrarCada === 0);
+          if (reposo > 0) {
+            /* Y UN SUELO, porque dos lecturas iguales NO son una página acabada.
+             *
+             * La primera versión de esta convergencia aceptaba la estabilidad en
+             * cuanto dos lecturas seguidas coincidían, y eso se le escapa a una
+             * página que está quieta a los 500 ms y cambia a los 900. Medido con
+             * un montaje así: la huella salía incompleta y la convergencia la daba
+             * por buena. Es el mismo error que el testigo de 2.1.4 —una ventana
+             * quieta no es una página asentada— y lo cometí otra vez.
+             *
+             * No hay espera finita que garantice que una página ha terminado. Lo
+             * que sí se puede hacer es no creerse el primer silencio y DECIR
+             * cuándo no se llegó a estabilizar. */
+            /* EN UNA PÁGINA DE CALIBRACIÓN NO HAY SALIDA ANTICIPADA: se observa
+             * hasta el techo y se apunta CUÁNDO fue la última mutación. Eso es
+             * lo que da el suelo, en vez de la constante que yo elegí en otra
+             * máquina. En las demás páginas se sale en cuanto dos lecturas
+             * seguidas coinciden y el suelo está cumplido. */
+            const sueloAsentar = sueloEfectivo;
+            const primera = datos;
+            let previa = datos, ultima = null, estable = false, lecturas = 0;
+            let ultimoCambio = 0;
+            const t0 = Date.now();
+            while (Date.now() - t0 < techoAsentar) {
+              await page.waitForTimeout(reposo);
+              try { ultima = await page.evaluate(new Function(EXTRAER)); } catch (e2) { ultima = null; }
+              lecturas++;
+              if (!ultima) break;
+              const igual = !diferenciaDeLectura(previa, ultima).length;
+              if (!igual) ultimoCambio = Date.now() - t0;
+              previa = ultima;
+              // Dos iguales Y el suelo cumplido: antes del suelo no se cree el silencio.
+              if (!esCalibracion && igual && Date.now() - t0 >= sueloAsentar) { estable = true; break; }
+            }
+            /* ── Y LA PRIMERA PÁGINA DE CADA PLANTILLA TAMBIÉN SE OBSERVA LARGO
+             *
+             * Calibrar una de cada diez deja un hueco, y se vio en el banco: en
+             * un montaje donde la portada está quieta y la página interior se
+             * hidrata a los 1400 ms, la portada calibró 1000 ms y la interior se
+             * leyó temprana sin que nada lo dijera. Mirar una página de cada diez
+             * no cubre una plantilla que solo tiene una página.
+             *
+             * Las plantillas son justo lo que agrupa la muestra, así que la
+             * primera página de cada huella nueva se observa hasta el techo. Y
+             * como se observa estando en ella, lo que aparezca tarde no solo sube
+             * el suelo: corrige SU PROPIA lectura, que es lo que no se podía
+             * hacer con una calibración a posteriori. */
+            const huellaVista = (ultima || primera || {}).plantilla || "";
+            const esHuellaNueva = calibrar && huellaVista && !huellasVistas.has(huellaVista);
+            if (esHuellaNueva && !esCalibracion && ultima) {
+              esCalibracion = true;
+              while (Date.now() - t0 < techoAsentar) {
+                await page.waitForTimeout(reposo);
+                let otra = null;
+                try { otra = await page.evaluate(new Function(EXTRAER)); } catch (e3) { otra = null; }
+                lecturas++;
+                if (!otra) break;
+                if (diferenciaDeLectura(previa, otra).length) ultimoCambio = Date.now() - t0;
+                previa = otra;
+                ultima = otra;
+              }
+            }
+            const transcurrido = Date.now() - t0;
+            if (huellaVista) huellasVistas.add(huellaVista);
+            if (ultima && ultima.plantilla) huellasVistas.add(ultima.plantilla);
+            if (esCalibracion && ultima) {
+              /* «Asentada» en una calibración significa que al final hubo un
+               * tramo de silencio de al menos el margen. Si la última mutación
+               * fue pegada al techo, no se sabe si había más: eso es `sinAsentar`
+               * y lo dice el aviso. */
+              estable = (transcurrido - ultimoCambio) >= margenAsentar;
+              /* REDONDEADO A 250 ms, y no es cosmética: medido dos veces el
+               * mismo sitio, la calibración dio 2018 y 2020 ms. Un suelo que
+               * cambia de una pasada a otra hace que dos pasadas no sean
+               * comparables —y el comparador, con razón, lo avisaba— cuando lo
+               * que cambió fue el reloj y no el sitio. */
+              const pedido = ultimoCambio ? Math.ceil((ultimoCambio + margenAsentar) / 250) * 250 : 0;
+              calibraciones.push({ ruta: u.pathname + (u.search || ""), ultimoCambio: ultimoCambio,
+                                   observado: transcurrido, sueloAntes: sueloEfectivo,
+                                   sueloDespues: Math.max(sueloEfectivo, pedido) });
+              if (pedido > sueloEfectivo) sueloEfectivo = pedido;
+            }
+            if (ultima) {
+              const cambio = diferenciaDeLectura(primera, ultima);
+              datos = ultima;
+              if (cambio.length) datos.asentado = cambio;
+              if (!estable) datos.sinAsentar = { lecturas: lecturas, ms: transcurrido };
+              // Con qué suelo se leyó ESTA página. Si la calibración lo sube más
+              // tarde, esto es lo que permite decir cuáles se leyeron con menos.
+              datos.sueloUsado = sueloAsentar;
+              datos.calibrada = esCalibracion || undefined;
+            }
+          }
+        } catch (e) {
+          errorUlt = (e && e.message) || String(e);
+          // La pausa también después de un error. Sin esto, un sitio que responde
+          // 500 o agota el tiempo se recorría a toda velocidad —justo cuando menos
+          // conviene insistir— y el rastreo dejaba de parecer una auditoría.
+          if (pausa) await page.waitForTimeout(pausa);
         }
-      } catch (e) {
-        errores.push({ url: u.href, error: (e && e.message) || String(e) });
-        // La pausa también después de un error. Sin esto, un sitio que responde
-        // 500 o agota el tiempo se recorría a toda velocidad —justo cuando menos
-        // conviene insistir— y el rastreo dejaba de parecer una auditoría.
-        if (pausa) await page.waitForTimeout(pausa);
+      }
+      if (noEsHtml) { saltadas.noHtml++; continue; }
+      if (datos === null) {
+        errores.push({ url: u.href, error: errorUlt || "sin datos", intentos: intentosUsados });
         continue;
       }
+      if (intentosUsados > 1) reintentadas.push(u.pathname + (u.search || ""));
 
       const ruta = u.pathname + (u.search || "");
       /* La portada no siempre vive en «/». Muchísimos sitios arrancan en /es/ o
@@ -382,8 +611,18 @@ export async function crawlSite(inicio, opts) {
         plantilla: datos.plantilla, "señales": datos["señales"], profundidad: actual.prof,
         // Qué cambió entre la primera lectura y la segunda. Vacío = nada: lo que
         // se leyó a `load` ya era estable.
-        asentado: datos.asentado || null
+        asentado: datos.asentado || null,
+        // El suelo con que se leyó, y si fue una de las páginas de calibración.
+        sueloUsado: datos.sueloUsado != null ? datos.sueloUsado : null,
+        calibrada: !!datos.calibrada,
+        // Y si NO llegó a estabilizarse, también viaja: el aviso lo nombra y el
+        // JSON lo guarda, porque es la explicación de por qué su plantilla puede
+        // salir distinta en la pasada siguiente.
+        sinAsentar: datos.sinAsentar || null
       });
+      // Se cuenta DESPUÉS de leer con éxito: así la primera página que de verdad
+      // se leyó es la que calibra, y no una que falló.
+      leidas++;
       if (opts.onPagina) opts.onPagina(candidatas[candidatas.length - 1]);
 
       if (actual.prof < maxProf) {
@@ -414,6 +653,45 @@ export async function crawlSite(inicio, opts) {
         ". Esa parte del sitio NO está auditada; si entra en el alcance, hay que rastrearla con robots: \"ignorar\" y decirlo en el informe.");
     }
     if (candidatas.length >= max) avisos.push("Se alcanzó el tope de " + max + " páginas rastreadas: puede haber más sitio sin explorar.");
+    /* UNA PÁGINA QUE NO CARGÓ CAMBIA LA MUESTRA, Y ESO HAY QUE DECIRLO ARRIBA.
+     *
+     * Los errores se guardaban en el JSON y NO salían en los avisos, así que la
+     * justificación de la muestra seguía diciendo «semilla reproducible» con una
+     * página menos en el censo. Medido en el sitio del autor: dos muestreos
+     * seguidos, 123 candidatas y 124, por un único timeout, y la muestra final
+     * cambió dos páginas. La muestra va dentro del IRA; afirmar reproducibilidad
+     * sobre un censo que perdió una página es afirmar lo que no se sabe.
+     *
+     * Es la regla de oro del proyecto aplicada al rastreo: el silencio sobre una
+     * página que no cargó se lee como «el sitio no tiene esa página». */
+    /* LAS QUE NO LLEGARON A ESTABILIZARSE, dichas por su nombre.
+     *
+     * Una página que sigue cambiando cuando se agota el techo se ha leído en un
+     * instante cualquiera de su pintado, y su huella de plantilla puede salir
+     * distinta en la pasada siguiente. Eso mueve el recuento de plantillas y con
+     * él la muestra. Callarlo es dejar que el informe diga «reproducible» sobre
+     * una lectura que no lo es. */
+    const inquietas = candidatas.filter(function (c) { return c.sinAsentar; });
+    if (inquietas.length) {
+      avisos.push("NO SE ESTABILIZARON " + inquietas.length + " de " + candidatas.length +
+        " página(s) dentro del techo de espera: " + nombrar(inquietas.map(function (c) { return c.ruta; }), inquietas.length) +
+        ". Se ha usado la última lectura, pero una página que sigue pintando se lee distinta en cada pasada, " +
+        "así que su plantilla —y con ella la muestra— puede cambiar de una auditoría a la siguiente. " +
+        "Si el recuento de plantillas baila entre pasadas, sube el techo con `asentarTechoMs` y dilo en el informe.");
+    }
+    if (errores.length) {
+      avisos.push("NO SE PUDIERON LEER " + errores.length + " página(s), así que NO están en el censo ni pueden entrar en la muestra: " +
+        errores.slice(0, 5).map(function (e) { return (e.url || "") + " (" + String(e.error || "").split("\n")[0].slice(0, 70) + ")"; }).join(" · ") +
+        (errores.length > 5 ? " y " + (errores.length - 5) + " más" : "") +
+        ". Cada una se intentó dos veces. IMPORTANTE para el informe: con una página fuera del censo, la muestra NO es la que " +
+        "saldría con el sitio entero, así que la reproducibilidad por semilla vale para ESTE censo y no para otro. " +
+        "Vuelve a rastrear antes de dar la muestra por buena, y si el error persiste, dilo en el informe.");
+    }
+    if (reintentadas.length) {
+      avisos.push(reintentadas.length + " página(s) necesitaron un SEGUNDO intento para cargar (" +
+        nombrar(reintentadas, reintentadas.length) + "). Cargaron, así que están en el censo, pero un sitio que necesita " +
+        "reintentos es un sitio lento: es lo que hace que dos pasadas puedan no ver lo mismo.");
+    }
     /* Un sitio donde hubo que reposar para leer bien ES UN DATO, y va arriba.
      * Si alguna página cambió entre la primera lectura y la segunda, las señales
      * de ESTE rastreo eran propensas a la carrera, y cualquier «no se ha
@@ -426,16 +704,79 @@ export async function crawlSite(inicio, opts) {
         "Vale la segunda lectura. Lo que cambió: " +
         reposadas.slice(0, 5).map(function (c) { return c.ruta + " (" + c.asentado.join(", ") + ")"; }).join(" · ") +
         (reposadas.length > 5 ? " · …" : "") +
-        ". Importa porque las categorías de la muestra salen de estas señales: un «no se ha encontrado ninguna página de la categoría X» en un sitio así puede ser un hueco de LECTURA del agente y no del sitio.");
+        ". Importa porque las categorías de la muestra salen de estas señales: un «no se ha encontrado ninguna página de la categoría X» en un sitio así puede ser un hueco de LECTURA del agente y no del sitio." +
+        /* Y SI LO QUE LLEGÓ TARDE FUERON LOS ENLACES, EL CENSO MISMO ESTÁ EN
+         * DUDA, no solo las señales. Esto sale de una medición en el sitio del
+         * autor que desmintió mi propia explicación: cinco pasadas seguidas, y
+         * la primera dio 117 candidatas contra 124 de las otras cuatro CON CERO
+         * ERRORES de carga. El mensaje de v0.80.0 atribuía el censo corto a los
+         * timeouts, y con esto queda claro que no hace falta ningún error: basta
+         * leer la portada antes de que pinte sus enlaces para que falten siete
+         * páginas. Un censo corto sin un solo error es precisamente el silencio
+         * que este proyecto persigue: el informe diría «reproducible» sobre un
+         * sitio al que le faltan páginas que nadie declaró. */
+        ((function () {
+          const conEnlaces = reposadas.filter(function (c) {
+            return c.asentado.indexOf("enlaces") !== -1;
+          });
+          if (!conEnlaces.length) return "";
+          return " Y OJO AL CENSO: en " + conEnlaces.length + " página(s) lo que cambió fueron los ENLACES (" +
+            nombrar(conEnlaces.map(function (c) { return c.ruta; }), conEnlaces.length) +
+            "), y el censo se construye con los enlaces leídos. Una página leída antes de pintar sus enlaces " +
+            "deja fuera del censo las páginas a las que apunta, sin un solo error que lo delate: medido en un " +
+            "sitio real, una pasada dio 117 candidatas y las siguientes 124, con 0 errores. Así que este censo " +
+            "puede no ser el del sitio entero, y la reproducibilidad por semilla vale para ESTE censo.";
+        })()));
+    }
+    /* LO QUE LA CALIBRACIÓN MIDIÓ, DICHO CON EL NÚMERO.
+     *
+     * Un suelo que el agente se pone solo es un dato del informe: explica por qué
+     * esta pasada tardó lo que tardó y con qué margen se leyeron las páginas. Y
+     * si el suelo SUBIÓ a mitad del rastreo, las páginas anteriores se leyeron
+     * con menos: eso hay que decirlo y no dejar que el informe presuma de una
+     * lectura que no tuvieron. */
+    const medidas = calibraciones.filter(function (c) { return c.ultimoCambio > 0; });
+    if (calibraciones.length && medidas.length) {
+      const peor = medidas.reduce(function (m, c) { return Math.max(m, c.ultimoCambio); }, 0);
+      avisos.push("ESTE SITIO SE ASIENTA TARDE: medido en " + calibraciones.length +
+        " página(s) de calibración, la última mutación llegó hasta " + peor + " ms después de «load» (" +
+        medidas.slice(0, 4).map(function (c) { return c.ruta + ": " + c.ultimoCambio + " ms"; }).join(" · ") +
+        "). El suelo de espera se ha puesto en " + sueloEfectivo + " ms (de partida, " + sueloBase +
+        "). No es un detalle interno: con un suelo por debajo de eso, la página se lee antes de " +
+        "hidratarse —otra huella de plantilla y, si lo que falta son enlaces, otro censo— y eso mueve la muestra.");
+    }
+    const conSueloMenor = candidatas.filter(function (c) {
+      return c.sueloUsado != null && c.sueloUsado < sueloEfectivo;
+    });
+    if (conSueloMenor.length) {
+      avisos.push("EL SUELO DE ESPERA SUBIÓ A MITAD DEL RASTREO (de " + sueloBase + " a " + sueloEfectivo +
+        " ms), así que " + conSueloMenor.length + " de " + candidatas.length +
+        " página(s) se leyeron con menos margen del que este sitio pide: " +
+        nombrar(conSueloMenor.map(function (c) { return c.ruta; }), 6) +
+        ". Su huella puede ser la de antes de hidratarse. Para dar la muestra por buena, vuelve a rastrear " +
+        "con `asentarSueloMs: " + sueloEfectivo + "` desde el principio.");
+    }
+    const calibSinAsentar = candidatas.filter(function (c) { return c.calibrada && c.sinAsentar; });
+    if (calibSinAsentar.length) {
+      avisos.push("UNA PÁGINA DE CALIBRACIÓN SEGUÍA CAMBIANDO AL LLEGAR AL TECHO (" +
+        nombrar(calibSinAsentar.map(function (c) { return c.ruta; }), 4) +
+        "), así que el suelo medido es un SUELO MÍNIMO y no la medida: puede que el sitio se asiente " +
+        "más tarde de lo que se ha podido observar. Sube `asentarTechoMs` y vuelve a medir antes de " +
+        "defender la muestra como reproducible.");
     }
     return {
       reposadas: reposadas.map(function (c) { return { ruta: c.ruta, cambio: c.asentado }; }),
+      /* La calibración, en el JSON: el aviso lo lee una persona y esto lo lee el
+       * cotejo entre pasadas. Dos pasadas con suelos distintos no son
+       * comparables, y sin este dato no hay forma de saberlo. */
+      calibracion: { suelo: sueloEfectivo, sueloBase: sueloBase, techo: techoBase,
+                     margen: margenAsentar, cada: calibrarCada, medidas: calibraciones },
       inicio: raiz.href,
       candidatas: candidatas,
       saltadas: saltadas,
       saltadasDetalle: detalle,
       avisos: avisos,
-      errores: errores,
+      errores: errores, reintentadas: reintentadas,
       procedencia: {
         fecha: new Date().toISOString(),
         origen: raiz.origin,
@@ -464,7 +805,36 @@ export async function muestrearSitio(inicio, opts) {
   return Object.assign({}, sel, {
     rastreo: { candidatas: r.candidatas.length, saltadas: r.saltadas, saltadasDetalle: r.saltadasDetalle,
                // Dato, no solo prosa: qué páginas hubo que reposar y qué cambió.
-               reposadas: r.reposadas || [], avisos: r.avisos, errores: r.errores },
+               reposadas: r.reposadas || [],
+               // `reintentadas` también: el JSON del rastreo es lo que sostiene
+               // la muestra en el IRA, y «esta página necesitó dos intentos» es
+               // parte de por qué dos pasadas pueden no coincidir.
+               reintentadas: r.reintentadas || [],
+               /* LA HUELLA DE PLANTILLA DE CADA PÁGINA, no solo de las
+                * muestreadas. Dos pasadas del mismo sitio con las MISMAS 124
+                * candidatas dieron 9 plantillas y 8, y eso cambió la muestra.
+                * Sin las huellas guardadas no hay forma de saber qué página se
+                * leyó distinto, así que la pregunta no se podía ni plantear.
+                * Y sirven para el IRA: la justificación dice «N páginas
+                * comparten esta plantilla» y aquí está el porqué. */
+               huellas: (r.candidatas || []).map(function (c) {
+                 return { ruta: c.ruta, huella: String(c.plantilla || "") };
+               }),
+               /* Y LAS QUE NO SE ESTABILIZARON, como dato y no solo como prosa.
+                * El aviso las nombra, pero el aviso lo lee una persona y el
+                * JSON lo lee el cotejo entre pasadas: si la huella de una
+                * página baila, lo primero que hay que poder preguntar es si esa
+                * página llegó a asentarse. Dejarlo solo en el texto es la misma
+                * media verdad que tenía el error de carga antes de v0.81.0. */
+               // La calibración del asentamiento: con qué suelo se leyó este
+               // sitio y qué se midió para elegirlo. Dos pasadas con suelos
+               // distintos no son comparables, y esto es lo que lo dice.
+               calibracion: r.calibracion || null,
+               inquietas: (r.candidatas || []).filter(function (c) { return c.sinAsentar; })
+                 .map(function (c) {
+                   return { ruta: c.ruta, lecturas: c.sinAsentar.lecturas, ms: c.sinAsentar.ms };
+                 }),
+               avisos: r.avisos, errores: r.errores },
     procedencia: r.procedencia,
     justificacion: justificarMuestra(sel),
     avisos: (sel.avisos || []).concat(r.avisos)

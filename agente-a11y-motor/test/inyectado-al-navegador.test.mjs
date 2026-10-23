@@ -31,12 +31,19 @@ const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 function plantillas(fichero) {
   const src = readFileSync(join(SRC, fichero), "utf8");
   const out = [];
-  const re = /^const ([A-Z_]+) = `$/gm;
+  /* `export` incluido. Al exportar `EXTRAER` de `crawl.js` —para que los
+     instrumentos de medir usen la lectura del agente y no una copia— esta regex
+     dejó de encontrarla y la guardia del colapso de `\s` se quedó sin vigilar la
+     plantilla más grande del proyecto. La cazó ella misma, con su propio aviso
+     («crawl.js tiene que seguir teniendo la plantilla EXTRAER»), que es para lo
+     que está. El `export` se quita antes de evaluar: dentro de `new Function` es
+     sintaxis ilegal. */
+  const re = /^(?:export )?const ([A-Z_]+) = `$/gm;
   let m;
   while ((m = re.exec(src))) {
     const fin = src.indexOf("\n`;", m.index);
     assert.notEqual(fin, -1, "la plantilla " + m[1] + " de " + fichero + " no se cierra con `;");
-    const decl = src.slice(m.index, fin + 3);
+    const decl = src.slice(m.index, fin + 3).replace(/^export /, "");
     // Se evalúa igual que al cargar el módulo: aquí es donde `\s` se vuelve `s`.
     out.push({ nombre: m[1], fichero: fichero, codigo: new Function(decl + " return " + m[1] + ";")() });
   }
