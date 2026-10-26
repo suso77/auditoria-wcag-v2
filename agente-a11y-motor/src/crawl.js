@@ -377,6 +377,16 @@ export async function crawlSite(inicio, opts) {
        * una página del censo, así que se reintenta UNA vez con más plazo. Si el
        * segundo también falla, el error se anota Y SE DICE EN LOS AVISOS: una
        * página que no cargó, callada, se lee como «el sitio tiene 123 páginas». */
+      /* CUÁNTO TARDÓ ESTA PÁGINA.
+       *
+       * Esto sale de una pasada real en el sitio del autor: con el mismo suelo y
+       * el mismo censo, una pasada tardó 1390 s y la siguiente 341 —cuatro veces
+       * más— con CERO errores y una sola página reintentada. En el JSON eso era
+       * invisible: no se guardaba un solo tiempo, así que «el sitio iba cuatro
+       * veces más lento» no se podía ni preguntar, y es justo la condición en la
+       * que la pasada siguiente pierde una página por tiempo de espera. Un sitio
+       * lento y callado está a un timeout de mover la muestra. */
+      const tPagina = Date.now();
       let datos = null, errorUlt = null, noEsHtml = false, intentosUsados = 0;
       /* OJO A LA CONDICIÓN: no puede llevar `errorUlt === null`. La escribí así
        * y el segundo intento no se ejecutaba NUNCA, porque la condición se
@@ -618,7 +628,10 @@ export async function crawlSite(inicio, opts) {
         // Y si NO llegó a estabilizarse, también viaja: el aviso lo nombra y el
         // JSON lo guarda, porque es la explicación de por qué su plantilla puede
         // salir distinta en la pasada siguiente.
-        sinAsentar: datos.sinAsentar || null
+        sinAsentar: datos.sinAsentar || null,
+        // Lo que tardó, de `goto` a lectura asentada. Es el dato que faltaba
+        // para distinguir «el sitio va lento hoy» de «el sitio va igual».
+        ms: Date.now() - tPagina
       });
       // Se cuenta DESPUÉS de leer con éxito: así la primera página que de verdad
       // se leyó es la que calibra, y no una que falló.
@@ -735,6 +748,38 @@ export async function crawlSite(inicio, opts) {
      * si el suelo SUBIÓ a mitad del rastreo, las páginas anteriores se leyeron
      * con menos: eso hay que decirlo y no dejar que el informe presuma de una
      * lectura que no tuvieron. */
+    /* EL RITMO DEL SITIO, DICHO CON NÚMEROS.
+     *
+     * Medido en el sitio del autor: dos pasadas seguidas con el mismo suelo y el
+     * mismo censo, 1390 s y 341 s. Sin tiempos en el JSON, las dos pasadas se
+     * veían idénticas —124 candidatas, 0 errores— y la de 1390 s llevaba además
+     * una página reintentada. Que un rastreo tarde cuatro veces más es un dato
+     * del informe: explica por qué una pasada puede perder una página que la
+     * anterior leyó, y si se degrada un poco más eso es exactamente lo que pasa. */
+    const tiempos = candidatas.map(function (c) { return c.ms || 0; }).filter(function (x) { return x > 0; })
+      .sort(function (x, y) { return x - y; });
+    let ritmo = null;
+    if (tiempos.length >= 3) {
+      const mediana = tiempos[Math.floor(tiempos.length / 2)];
+      const max = tiempos[tiempos.length - 1];
+      const lentas = candidatas.filter(function (c) { return c.ms; })
+        .sort(function (a, b) { return b.ms - a.ms; }).slice(0, 5)
+        .map(function (c) { return { ruta: c.ruta, ms: c.ms }; });
+      ritmo = { mediana: mediana, min: tiempos[0], max: max, lentas: lentas,
+                totalMs: tiempos.reduce(function (x, y) { return x + y; }, 0) };
+      /* El umbral es una RELACIÓN, no un tiempo absoluto: un sitio lento de por
+       * sí es asunto del sitio, pero una página que tarda un orden de magnitud
+       * más que la mediana de SU PROPIO sitio es un tropiezo, y es la que se
+       * cae del censo en la pasada siguiente. */
+      if (max >= Math.max(6 * mediana, 5000)) {
+        avisos.push("EL SITIO NO RESPONDIÓ A RITMO CONSTANTE: la página más lenta tardó " +
+          Math.round(max / 1000) + " s contra una mediana de " + (mediana / 1000).toFixed(1) +
+          " s (" + ritmo.lentas.slice(0, 3).map(function (l) { return l.ruta + ": " + Math.round(l.ms / 1000) + " s"; }).join(" · ") +
+          "). Importa para la muestra: una página que hoy tarda mucho es la que mañana agota el plazo y " +
+          "se cae del censo, y con ella cambia la muestra. Si se repite, rastrea con el sitio menos cargado " +
+          "o sube `timeout`, y dilo en el informe.");
+      }
+    }
     const medidas = calibraciones.filter(function (c) { return c.ultimoCambio > 0; });
     if (calibraciones.length && medidas.length) {
       const peor = medidas.reduce(function (m, c) { return Math.max(m, c.ultimoCambio); }, 0);
@@ -769,6 +814,9 @@ export async function crawlSite(inicio, opts) {
       /* La calibración, en el JSON: el aviso lo lee una persona y esto lo lee el
        * cotejo entre pasadas. Dos pasadas con suelos distintos no son
        * comparables, y sin este dato no hay forma de saberlo. */
+      // Cuánto tardó cada página y cuáles fueron las peores: dos pasadas que se
+      // ven iguales en el censo pueden no haberse corrido en el mismo sitio.
+      ritmo: ritmo,
       calibracion: { suelo: sueloEfectivo, sueloBase: sueloBase, techo: techoBase,
                      margen: margenAsentar, cada: calibrarCada, medidas: calibraciones },
       inicio: raiz.href,
@@ -830,6 +878,9 @@ export async function muestrearSitio(inicio, opts) {
                // sitio y qué se midió para elegirlo. Dos pasadas con suelos
                // distintos no son comparables, y esto es lo que lo dice.
                calibracion: r.calibracion || null,
+               // El ritmo, también en el JSON del muestreo: una pasada cuatro
+               // veces más lenta que otra no es la misma medición.
+               ritmo: r.ritmo || null,
                inquietas: (r.candidatas || []).filter(function (c) { return c.sinAsentar; })
                  .map(function (c) {
                    return { ruta: c.ruta, lecturas: c.sinAsentar.lecturas, ms: c.sinAsentar.ms };

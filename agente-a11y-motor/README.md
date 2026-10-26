@@ -1001,6 +1001,16 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.82.0 — una pasada cuatro veces más lenta se veía igual que otra
+
+**Medido en el sitio del autor, y no en un montaje:** dos muestreos seguidos con el mismo suelo calibrado y el mismo censo tardaron **1390 s y 341 s**. Cuatro veces más, con cero errores en los dos y una sola página reintentada en el lento. En el JSON del rastreo no se guardaba **un solo tiempo**, así que las dos pasadas eran indistinguibles —124 candidatas, 0 errores, 8 plantillas, la misma muestra— y «el sitio fue cuatro veces más lento» no se podía ni preguntar.
+
+Importa por lo mismo que todo lo de v0.81.0: **un sitio lento está a un timeout de perder una página del censo**, y cuando la pierde se mueve la muestra que va al IRA. La pasada lenta ya llevaba la señal —una página que necesitó dos intentos— y el reintento la salvó; con el sitio un poco peor, esa página se cae y la reproducibilidad se va con ella. Callar el ritmo es dejar fuera del informe la condición en la que falla.
+
+Así que cada candidata lleva ahora su **tiempo** (de `goto` a lectura asentada), el rastreo publica `ritmo` —mediana, mínimo, máximo y las cinco más lentas— y, cuando la peor página tarda seis veces la mediana **de su propio sitio** (y al menos 5 s), se dice arriba con lo que le hace a la muestra. El umbral es una relación y no un tiempo absoluto a propósito: un sitio uniformemente lento es asunto del sitio, mientras que una página que tarda un orden de magnitud más que sus vecinas es el tropiezo que mañana agota el plazo. Y la dirección contraria tiene su guardia, porque un aviso que sale siempre deja de leerse.
+
+**882 tests unitarios** y `crawl-real` con **18**, dos nuevas: la página lentísima que se nombra con su tiempo, y el sitio de ritmo parejo que no se acusa.
+
 ### v0.81.0 — el suelo de espera lo mide el agente, no lo elijo yo
 
 (Esta entrega **sustituye a v0.80.0**, que nunca llegó a commitearse: su instalador se paró en rojo porque dos guardias nuevas arrancaban el navegador con una variable que su fichero no define. Lleva lo de v0.80.0, lo que faltaba, y el arreglo de mi propio arreglo.)

@@ -521,3 +521,54 @@ test("rastreo: el suelo calibrado es el MISMO en dos pasadas", { skip: !hayNaveg
     assert.equal(a.calibracion.suelo % 250, 0, "y redondeado a 250 ms: " + a.calibracion.suelo);
   } finally { srv.close(); }
 });
+
+/* ── UNA PASADA CUATRO VECES MÁS LENTA SE VEÍA IGUAL QUE OTRA (v0.82.0) ──────
+ *
+ * Medido en el sitio del autor, dos pasadas seguidas con el MISMO suelo y el
+ * MISMO censo: 1390 s y 341 s, con cero errores las dos y una sola página
+ * reintentada en la lenta. En el JSON no había un solo tiempo, así que las dos
+ * pasadas eran indistinguibles y «el sitio iba cuatro veces más lento» no se
+ * podía ni preguntar. Importa porque un sitio lento está a un timeout de perder
+ * una página del censo, y con ella se mueve la muestra. */
+const sitioConUnaLentisima = async (retardoMs) => {
+  const { createServer } = await import("node:http");
+  const enlaces = Array.from({ length: 6 }, (_, i) => '<a href="/p' + i + '">p' + i + '</a>').join("");
+  const srv = createServer((q, s) => {
+    const r = (q.url || "/").split("?")[0];
+    const cuerpo = '<!doctype html><html lang="es"><head><meta charset="utf-8"><title>' + r + '</title></head>' +
+      '<body><header><nav>' + enlaces + '</nav></header><main><h1>' + r + '</h1></main><footer>pie</footer></body></html>';
+    const responder = () => { s.writeHead(200, { "content-type": "text/html; charset=utf-8" }); s.end(cuerpo); };
+    if (r === "/p3" && retardoMs) setTimeout(responder, retardoMs); else responder();
+  });
+  await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+  return { srv, url: "http://127.0.0.1:" + srv.address().port + "/" };
+};
+
+test("rastreo: el tiempo de cada página viaja en el JSON, y una lentísima se dice", { skip: !hayNavegador && ("sin navegador: " + porQueNo) }, async () => {
+  const { crawlSite } = await import("../../src/crawl.js");
+  const { srv, url } = await sitioConUnaLentisima(6000);
+  try {
+    const r = await crawlSite(url, { max: 10, pausaMs: 0, timeout: 15000 });
+    assert.ok(r.ritmo, "`ritmo` tiene que existir: sin tiempos, dos pasadas distintas se ven iguales");
+    assert.ok(r.ritmo.mediana > 0 && r.ritmo.max >= 6000, JSON.stringify(r.ritmo));
+    assert.equal(r.ritmo.lentas[0].ruta, "/p3", "la más lenta tiene que nombrarse: " + JSON.stringify(r.ritmo.lentas));
+    r.candidatas.forEach(function (c) { assert.ok(c.ms > 0, c.ruta + " sin tiempo"); });
+    const av = (r.avisos || []).filter((a) => /NO RESPONDIÓ A RITMO CONSTANTE/.test(a))[0];
+    assert.ok(av, JSON.stringify(r.avisos));
+    assert.match(av, /\/p3/);
+    assert.match(av, /se cae del censo/, "y tiene que decir qué le hace a la muestra, no solo que fue lento");
+  } finally { srv.close(); }
+});
+
+test("rastreo: un sitio de ritmo parejo no se acusa de lento", { skip: !hayNavegador && ("sin navegador: " + porQueNo) }, async () => {
+  // La dirección contraria. El umbral es una relación contra la mediana del
+  // propio sitio, no un tiempo absoluto: un sitio uniformemente lento es asunto
+  // del sitio, y un aviso que sale siempre deja de leerse.
+  const { crawlSite } = await import("../../src/crawl.js");
+  const { srv, url } = await sitioConUnaLentisima(0);
+  try {
+    const r = await crawlSite(url, { max: 10, pausaMs: 0 });
+    assert.ok(r.ritmo, "los tiempos se guardan igual, aviso o no");
+    assert.ok(!(r.avisos || []).some((a) => /NO RESPONDIÓ A RITMO CONSTANTE/.test(a)), JSON.stringify(r.avisos));
+  } finally { srv.close(); }
+});
