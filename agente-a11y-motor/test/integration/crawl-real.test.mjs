@@ -342,7 +342,7 @@ test("rastreo: los enlaces que pintan tarde entran en el censo, y se dice", { sk
     // decide si la muestra se puede defender como la del sitio entero.
     const av = (r.avisos || []).filter((a) => /PINTA EN EL CLIENTE/.test(a))[0];
     assert.ok(av, JSON.stringify(r.avisos));
-    assert.match(av, /OJO AL CENSO/);
+    assert.match(av, /LOS ENLACES TAMBIÉN LLEGAN TARDE/);
     assert.match(av, /117 candidatas/, "con el dato que lo midió, para que no se lea como una cautela genérica");
   } finally { srv.close(); }
 });
@@ -408,7 +408,7 @@ test("rastreo: con el suelo por omisión, una página que se hidrata tarde se le
       JSON.stringify(r.calibracion.medidas));
     // Y SE DICE, con el número: un suelo que el agente se pone solo es un dato
     // del informe, porque explica con qué margen se leyó el sitio.
-    const av = (r.avisos || []).filter((a) => /SE ASIENTA TARDE/.test(a))[0];
+    const av = (r.avisos || []).filter((a) => /CUÁNDO SE ASIENTA ESTE SITIO/.test(a))[0];
     assert.ok(av, JSON.stringify(r.avisos));
     assert.match(av, /El suelo de espera se ha puesto en \d+ ms/);
   } finally { srv.close(); }
@@ -422,43 +422,59 @@ test("rastreo: un sitio quieto no calibra nada hacia arriba ni inventa aviso", {
   try {
     const r = await crawlSite(url, { max: 5, pausaMs: 0 });
     assert.equal(r.calibracion.suelo, 1000, "el suelo no debe subir sin motivo: " + r.calibracion.suelo);
-    assert.ok(!(r.avisos || []).some((a) => /SE ASIENTA TARDE|SUELO DE ESPERA SUBIÓ/.test(a)), JSON.stringify(r.avisos));
+    assert.ok(!(r.avisos || []).some((a) => /CUÁNDO SE ASIENTA ESTE SITIO|SUELO DE ESPERA SUBIÓ/.test(a)), JSON.stringify(r.avisos));
     assert.ok(r.candidatas.every((c) => !c.sinAsentar));
   } finally { srv.close(); }
 });
 
 test("rastreo: si el suelo sube a mitad del rastreo, se dice qué páginas se leyeron con menos", { skip: !hayNavegador && ("sin navegador: " + porQueNo) }, async () => {
-  /* La honestidad del arreglo: la calibración mira una página de cada N, así que
-   * puede descubrir en la página 11 que el sitio se asienta más tarde. Las diez
-   * anteriores se leyeron con menos margen y su huella puede ser la temprana. Si
-   * eso se calla, el informe presume de una lectura que esas páginas no tuvieron. */
+  /* La honestidad del arreglo: la calibración mira la primera página, la primera
+   * de cada plantilla y una de cada N, así que puede descubrir tarde que el
+   * sitio se asienta más tarde. Las leídas antes se leyeron con menos margen y
+   * su huella puede ser la temprana. Si eso se calla, el informe presume de una
+   * lectura que esas páginas no tuvieron.
+   *
+   * OJO AL MONTAJE, que es lo que v0.83.0 corrigió: una página CALIBRADA no se
+   * leyó con menos margen —se observó hasta el techo, que es más que cualquier
+   * suelo—, así que contarla era un falso positivo. Con `calibrarCada: 1` todas
+   * calibran y entonces NO debe salir aviso; para que salga de verdad hacen
+   * falta páginas no calibradas leídas antes de la que sube el suelo: tres de la
+   * misma plantilla y luego una de plantilla propia que se hidrata tarde. */
   const { createServer } = await import("node:http");
   const { crawlSite } = await import("../../src/crawl.js");
-  const enlaces = Array.from({ length: 6 }, (_, i) => '<a href="/p' + i + '">p' + i + '</a>').join("");
+  const enlaces = '<a href="/p0">p0</a><a href="/p1">p1</a><a href="/p2">p2</a><a href="/ficha">ficha</a>';
   const srv = createServer((q, s) => {
     const r = (q.url || "/").split("?")[0];
-    const tarde = r === "/p2";           // solo una página se hidrata tarde
+    const esFicha = r === "/ficha";
     s.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     s.end('<!doctype html><html lang="es"><head><meta charset="utf-8"><title>p</title></head><body>' +
-      '<header><nav>' + enlaces + '</nav></header><main class="grow"><div class="min-h-screen"><h1>h</h1></div></main>' +
-      '<footer>pie</footer>' +
-      (tarde ? '<script>setTimeout(function(){document.querySelector("main div").className="bg-white";},1400)<\/script>' : '') +
+      '<header><nav>' + enlaces + '</nav></header><main class="grow"><div class="' +
+      (esFicha ? "min-h-screen" : "comun") + '"><h1>' + r + '</h1></div></main><footer>pie</footer>' +
+      (esFicha ? '<script>setTimeout(function(){document.querySelector("main div").className="ficha";},1400)<\/script>' : '') +
       '</body></html>');
   });
   await new Promise((r) => srv.listen(0, "127.0.0.1", r));
   const url = "http://127.0.0.1:" + srv.address().port + "/";
   try {
-    // Calibrando cada página: la que se hidrata tarde sube el suelo, y las
-    // leídas antes de ella quedan señaladas.
-    const r = await crawlSite(url, { max: 8, pausaMs: 0, calibrarCada: 1 });
-    assert.ok(r.calibracion.suelo > 1400, "el suelo tiene que haber subido: " + r.calibracion.suelo);
+    const r = await crawlSite(url, { max: 8, pausaMs: 0, calibrarCada: 1000 });
+    assert.ok(r.calibracion.suelo > 1400, "la ficha sube el suelo: " + r.calibracion.suelo);
     const av = (r.avisos || []).filter((a) => /SUELO DE ESPERA SUBIÓ/.test(a))[0];
-    assert.ok(av, JSON.stringify(r.avisos));
+    assert.ok(av, "las leídas antes tienen que decirse: " + JSON.stringify(r.avisos));
     assert.match(av, /vuelve a rastrear/);
     assert.match(av, new RegExp("asentarSueloMs: " + r.calibracion.suelo));
-    const conMenos = r.candidatas.filter((c) => c.sueloUsado < r.calibracion.suelo);
-    assert.ok(conMenos.length >= 1, "alguna se leyó con el suelo viejo: " +
-      JSON.stringify(r.candidatas.map((c) => [c.ruta, c.sueloUsado])));
+    // Los dos números del aviso tienen que cuadrar entre sí. En `ja9` decía
+    // «1 de 124 página(s)» y acto seguido «(y 5 más)».
+    const m = av.match(/así que (\d+) de (\d+) página/);
+    assert.ok(m, av);
+    const dicho = Number(m[1]);
+    const mas = av.match(/y (\d+) más/);
+    const listadas = (av.match(/\/p\d/g) || []).length;
+    assert.equal(dicho, listadas + (mas ? Number(mas[1]) : 0),
+      "«N de M» y la lista no cuadran: " + av);
+    // Y ninguna calibrada entre las acusadas.
+    const acusadas = r.candidatas.filter((c) => c.sueloUsado < r.calibracion.suelo && !c.calibrada);
+    assert.equal(dicho, acusadas.length, "el recuento tiene que ser el de las no calibradas: " + av);
+    assert.ok(acusadas.length >= 1 && acusadas.every((c) => !c.calibrada));
   } finally { srv.close(); }
 });
 
@@ -571,4 +587,140 @@ test("rastreo: un sitio de ritmo parejo no se acusa de lento", { skip: !hayNaveg
     assert.ok(r.ritmo, "los tiempos se guardan igual, aviso o no");
     assert.ok(!(r.avisos || []).some((a) => /NO RESPONDIÓ A RITMO CONSTANTE/.test(a)), JSON.stringify(r.avisos));
   } finally { srv.close(); }
+});
+
+/* ── EL RELOJ, EL TOPE Y DOS AVISOS QUE SE CONTRADECÍAN (v0.83.0) ────────────
+ *
+ * Todo esto sale de dos salidas reales, no de leer el código:
+ *
+ *  · una pasada acabó en 90 437 s —25 horas— con el suelo calibrado en 926 250 ms.
+ *    El portátil se suspendió a mitad del rastreo y, como la convergencia mide
+ *    con el reloj de pared, el hueco del sueño entró en la medición: la
+ *    calibración «midió» que la página mutaba a los 925 597 ms. A 15 min por
+ *    página, 124 páginas son 30 horas. Y en el JSON no había NADA que dijera que
+ *    la máquina había estado parada: solo una huella distinta y la muestra movida.
+ *
+ *  · y en la auditoría `ja9`, el aviso del suelo decía «1 de 124 página(s) se
+ *    leyeron con menos margen: / … (y 5 más)». Dos números que se contradicen en
+ *    la misma frase, por pasarle a `nombrar(urls, total)` un tope donde espera el
+ *    total. Y la página era la portada, que es justo la que se había observado
+ *    hasta el techo: un falso positivo encima. */
+
+test("rastreo: un parón de este proceso no se calibra ni se da por asentado, y SE DICE", { skip: !hayNavegador && ("sin navegador: " + porQueNo) }, async () => {
+  const { createServer } = await import("node:http");
+  const { crawlSite } = await import("../../src/crawl.js");
+  /* El parón se provoca con un bucle que bloquea el hilo de la página: el ciclo
+   * «espera y lee» tarda entonces mucho más de lo que debería, que es la misma
+   * señal que deja un ordenador suspendido. El umbral va por opción para poder
+   * medirlo sin dormir diez segundos. */
+  const srv = createServer((q, s) => {
+    const r = (q.url || "/").split("?")[0];
+    s.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    s.end('<!doctype html><html lang="es"><head><meta charset="utf-8"><title>' + r + '</title></head><body>' +
+      '<header><nav><a href="/">inicio</a><a href="/otra">otra</a></nav></header>' +
+      '<main class="grow"><div class="bloque"><h1>' + r + '</h1></div></main><footer>pie</footer>' +
+      (r === "/" ? '<script>setTimeout(function(){var t=Date.now();while(Date.now()-t<2500){}},300)<\/script>' : '') +
+      '</body></html>');
+  });
+  await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+  const url = "http://127.0.0.1:" + srv.address().port + "/";
+  try {
+    const r = await crawlSite(url, { max: 5, pausaMs: 0, saltoRelojMs: 1200 });
+    const av = (r.avisos || []).filter((a) => /ESTUVO PARADO DURANTE EL RASTREO/.test(a))[0];
+    assert.ok(av, "el parón tiene que decirse: " + JSON.stringify(r.avisos));
+    assert.match(av, /NO des esta muestra por buena/);
+    assert.ok((r.calibracion.relojSaltado || []).length >= 1, JSON.stringify(r.calibracion.relojSaltado));
+    // Y lo que NO puede pasar: que el parón se convierta en suelo.
+    assert.ok(r.calibracion.suelo <= r.calibracion.tope,
+      "el suelo no puede salir del parón: " + r.calibracion.suelo);
+  } finally { srv.close(); }
+});
+
+test("rastreo: la calibración no adopta un suelo por encima del tope, y lo dice", { skip: !hayNavegador && ("sin navegador: " + porQueNo) }, async () => {
+  const { crawlSite } = await import("../../src/crawl.js");
+  const { srv, url } = await sitioQueHidrataTarde(2200);
+  try {
+    // Tope por debajo de lo que la página pide: 2200+500 pediría 2750.
+    const r = await crawlSite(url, { max: 4, pausaMs: 0, asentarSueloTopeMs: 1500, asentarTechoMs: 5000 });
+    assert.equal(r.calibracion.suelo, 1500, "el suelo se topa: " + r.calibracion.suelo);
+    assert.ok(r.calibracion.medidas.some((m) => m.topado), JSON.stringify(r.calibracion.medidas));
+    const av = (r.avisos || []).filter((a) => /CUÁNDO SE ASIENTA ESTE SITIO/.test(a))[0];
+    assert.ok(av, JSON.stringify(r.avisos));
+    assert.match(av, /por encima del tope de 1500 ms, y NO se ha adoptado/);
+  } finally { srv.close(); }
+});
+
+test("rastreo: el aviso del suelo no se contradice ni acusa a una página calibrada", { skip: !hayNavegador && ("sin navegador: " + porQueNo) }, async () => {
+  /* En `ja9` este aviso salía diciendo «1 de 124» y «(y 5 más)» a la vez, y
+   * sobre la portada, que se había observado hasta el techo. Con la portada
+   * quieta y una interior que se hidrata tarde, el suelo sube por la interior y
+   * las páginas realmente leídas con menos margen son las de en medio. */
+  const { createServer } = await import("node:http");
+  const { crawlSite } = await import("../../src/crawl.js");
+  const enlaces = Array.from({ length: 5 }, (_, i) => '<a href="/p' + i + '">p' + i + '</a>').join("");
+  const srv = createServer((q, s) => {
+    const r = (q.url || "/").split("?")[0];
+    const tarde = r === "/p3";
+    s.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    s.end('<!doctype html><html lang="es"><head><meta charset="utf-8"><title>p</title></head><body>' +
+      '<header><nav>' + enlaces + '</nav></header><main class="grow"><div class="' + (tarde ? "min-h-screen" : "igual") +
+      '"><h1>' + r + '</h1></div></main><footer>pie</footer>' +
+      (tarde ? '<script>setTimeout(function(){document.querySelector("main div").className="tarde";},1400)<\/script>' : '') +
+      '</body></html>');
+  });
+  await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+  const url = "http://127.0.0.1:" + srv.address().port + "/";
+  try {
+    const r = await crawlSite(url, { max: 8, pausaMs: 0, calibrarCada: 1 });
+    const av = (r.avisos || []).filter((a) => /SUELO DE ESPERA SUBIÓ/.test(a))[0];
+    if (av) {
+      // Si sale, sus dos números tienen que cuadrar y no puede nombrar calibradas.
+      const m = av.match(/así que (\d+) de \d+ página/);
+      assert.ok(m, av);
+      const dicho = Number(m[1]);
+      const nombradas = (av.match(/\//g) || []).length;
+      assert.ok(!/y \d+ más/.test(av) || dicho > 8,
+        "no puede decir «N de M» y «y X más» con N pequeño: " + av);
+      assert.ok(dicho >= 1 && nombradas >= 1, av);
+      const calibradasNombradas = r.candidatas.filter((c) => c.calibrada && av.indexOf(" " + c.ruta + ",") !== -1);
+      assert.equal(calibradasNombradas.length, 0, "una página calibrada no se leyó con menos margen: " + av);
+    }
+    // Y la portada, que es calibrada, nunca puede contarse como leída corta.
+    const portada = r.candidatas.filter((c) => c.ruta === "/")[0];
+    assert.ok(portada.calibrada, "la primera página se observa larga siempre");
+  } finally { srv.close(); }
+});
+
+test("rastreo: la duda sobre el censo solo se siembra cuando hay motivo", { skip: !hayNavegador && ("sin navegador: " + porQueNo) }, async () => {
+  /* En `ja9` este aviso decía «este censo puede no ser el del sitio entero»
+   * sobre un censo de 124 páginas que se había repetido IDÉNTICO cinco veces.
+   * Cierto en general, falso ahí, y en un informe de cliente se lee como que el
+   * agente no sabe si vio el sitio. Que los enlaces lleguen tarde es un dato;
+   * la duda la ponen las páginas sin asentar, las leídas con menos margen o las
+   * que no cargaron. */
+  const { crawlSite } = await import("../../src/crawl.js");
+
+  // Caso limpio: enlaces tardíos, todo asentado -> SIN sembrar duda.
+  const limpio = await sitioConEnlacesTardios(700);
+  try {
+    const r = await crawlSite(limpio.url, { max: 20, pausaMs: 0 });
+    assert.equal((r.errores || []).length, 0);
+    assert.ok(r.candidatas.every((c) => !c.sinAsentar), "nada sin asentar en el caso limpio");
+    const av = (r.avisos || []).filter((a) => /PINTA EN EL CLIENTE/.test(a))[0];
+    assert.ok(av, JSON.stringify(r.avisos));
+    assert.match(av, /LOS ENLACES TAMBIÉN LLEGAN TARDE/);
+    assert.match(av, /el censo es el de\s+las páginas ya hidratadas|el censo es el de las páginas ya hidratadas/);
+    assert.ok(!/puede no ser el del sitio entero/.test(av),
+      "sin motivo no se puede sembrar la duda: " + av);
+  } finally { limpio.srv.close(); }
+
+  // Caso con motivo: techo corto -> alguna sin asentar -> SÍ se dice.
+  const dudoso = await sitioConEnlacesTardios(700);
+  try {
+    const r = await crawlSite(dudoso.url, { max: 20, pausaMs: 0, asentarTechoMs: 600 });
+    const av = (r.avisos || []).filter((a) => /PINTA EN EL CLIENTE/.test(a))[0];
+    assert.ok(av, JSON.stringify(r.avisos));
+    assert.match(av, /MOTIVO PARA DUDAR/);
+    assert.match(av, /puede no ser el del sitio entero/);
+  } finally { dudoso.srv.close(); }
 });

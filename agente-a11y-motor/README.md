@@ -1001,6 +1001,24 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.83.0 — un portátil que se duerme no es una medición, y tres avisos que gritaban
+
+Las tres cosas de esta entrega salen de dos salidas reales del sitio del autor, no de leer el código.
+
+**Una pasada acabó en 90 437 segundos. Veinticinco horas.** Con el suelo calibrado en **926 250 ms** —quince minutos por página— y dos páginas «sin asentar» a 1 062 931 y 925 597 ms. El portátil se suspendió a mitad del rastreo y, como la convergencia mide con el reloj de pared, el hueco del sueño entró en la medición: la calibración «midió» que la página mutaba a los 925 597 ms y se creyó su propia cifra. A quince minutos por página, 124 páginas son treinta horas. Y en el JSON no había **nada** que dijera que la máquina había estado parada: solo una huella distinta, 9 plantillas en vez de 8 y la muestra movida — es decir, exactamente la pinta de un defecto del sitio.
+
+Van dos cosas, y la primera es la que importa: **se detecta el parón**. Si un ciclo de «espera y lee» tarda un orden de magnitud más de lo que debería (`saltoRelojMs`, 10 s), eso no mide el pintado de la página, mide el parón; esa lectura no calibra, no se declara asentada, y el aviso nombra las páginas y dice que **no se dé la muestra por buena**. Y la segunda es un cinturón: **un tope al suelo** (`asentarSueloTopeMs`, 5 s). Una medición que pide más que eso no es una medición del sitio, así que no se adopta y se dice con su valor bruto. Las dos están medidas con un montaje que bloquea el hilo a voluntad, no razonadas.
+
+**Y en la auditoría completa `ja9`, dos avisos que se contradecían o exageraban.** El del suelo decía, literalmente, «así que **1 de 124** página(s) se leyeron con menos margen: / … **(y 5 más)**». Dos números incompatibles en la misma frase, por pasarle a `nombrar(urls, total)` un tope donde espera el total; y la página acusada era la portada, que es justo la que se había observado hasta el techo. Una página calibrada no se leyó «con menos margen» —se miró más que cualquier suelo—, así que contarla era un falso positivo encima de la contradicción. Las dos cosas, arregladas y con guardia que exige que los dos números cuadren.
+
+**El tercero sembraba una duda que no tocaba.** La coletilla del censo afirmaba «este censo puede no ser el del sitio entero» sobre un censo de 124 páginas que se había repetido **idéntico cinco veces**. Cierto en general, falso ahí, y en un informe de cliente se lee como que el agente no sabe si vio el sitio. Que los enlaces lleguen tarde es un dato y ahora se dice como tal; la duda se siembra solo cuando hay motivo —alguna página sin asentar, alguna leída con menos margen, o alguna que no cargó—, y entonces se dice entera. Con su guardia en las dos direcciones.
+
+De paso, el titular de la calibración gritaba «ESTE SITIO SE ASIENTA TARDE» con **512 ms** medidos, que no es tarde para nada. Ahora dice qué se midió y con qué suelo se leyó el sitio, que es lo que el informe necesita.
+
+**882 tests unitarios** y `crawl-real` con **22**: el parón que no calibra, el tope que no se adopta, los dos números que cuadran y la duda del censo en sus dos direcciones.
+
+Y lo que esa misma auditoría `ja9` confirmó, de paso: **0 filas sin selector** (eran 3, y 6 antes de v0.79.0), 0 indistinguibles, 0 avisos de CSS ilegible, 131 filas y 121 familias, con la muestra igual a la de las cinco pasadas reproducibles.
+
 ### v0.82.0 — una pasada cuatro veces más lenta se veía igual que otra
 
 **Medido en el sitio del autor, y no en un montaje:** dos muestreos seguidos con el mismo suelo calibrado y el mismo censo tardaron **1390 s y 341 s**. Cuatro veces más, con cero errores en los dos y una sola página reintentada en el lento. En el JSON del rastreo no se guardaba **un solo tiempo**, así que las dos pasadas eran indistinguibles —124 candidatas, 0 errores, 8 plantillas, la misma muestra— y «el sitio fue cuatro veces más lento» no se podía ni preguntar.

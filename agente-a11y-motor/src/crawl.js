@@ -306,6 +306,23 @@ export async function crawlSite(inicio, opts) {
   const margenAsentar = opts.asentarMargenMs != null ? opts.asentarMargenMs : 500;
   const sueloBase = opts.asentarSueloMs != null ? opts.asentarSueloMs : 1000;
   let sueloEfectivo = sueloBase;
+  /* UN TOPE AL SUELO QUE LA CALIBRACIÓN PUEDE PEDIR.
+   *
+   * Sale de una pasada real que acabó en 25 HORAS. El portátil del autor se
+   * suspendió a mitad del rastreo, y como la convergencia mide con el reloj de
+   * pared, el hueco del sueño entró en la medición: la calibración «midió» que
+   * la página mutaba a los 925 597 ms y puso el suelo en 926 250 ms —quince
+   * minutos por página—. 124 páginas a ese ritmo son treinta horas.
+   *
+   * Una medición que pide más que el tope no es una medición: es una máquina
+   * parada o una página patológica. Así que no se adopta, y SE DICE. */
+  const topeSuelo = opts.asentarSueloTopeMs != null ? opts.asentarSueloTopeMs : 5000;
+  /* Y LA DETECCIÓN DEL SALTO. Si un ciclo de «espera y lee» tarda un orden de
+   * magnitud más de lo que debería, no es que el sitio vaya lento: es que este
+   * proceso ha estado parado. Esa lectura no vale para calibrar ni para decir
+   * que la página se asentó. */
+  const saltoReloj = opts.saltoRelojMs != null ? opts.saltoRelojMs : 10000;
+  const relojSaltado = [];
   const calibrar = opts.calibrarAsentado !== false && reposoBase > 0;
   const calibrarCada = opts.calibrarCada != null ? opts.calibrarCada : 10;
   const calibraciones = [];
@@ -520,11 +537,17 @@ export async function crawlSite(inicio, opts) {
             const primera = datos;
             let previa = datos, ultima = null, estable = false, lecturas = 0;
             let ultimoCambio = 0;
+            let salto = 0;
             const t0 = Date.now();
             while (Date.now() - t0 < techoAsentar) {
+              const tCiclo = Date.now();
               await page.waitForTimeout(reposo);
               try { ultima = await page.evaluate(new Function(EXTRAER)); } catch (e2) { ultima = null; }
               lecturas++;
+              // ¿Ha estado este proceso parado entre dos lecturas? Entonces el
+              // reloj de pared no mide el pintado de la página: mide el parón.
+              const ciclo = Date.now() - tCiclo;
+              if (ciclo > reposo + saltoReloj) { salto = ciclo; break; }
               if (!ultima) break;
               const igual = !diferenciaDeLectura(previa, ultima).length;
               if (!igual) ultimoCambio = Date.now() - t0;
@@ -563,6 +586,14 @@ export async function crawlSite(inicio, opts) {
             const transcurrido = Date.now() - t0;
             if (huellaVista) huellasVistas.add(huellaVista);
             if (ultima && ultima.plantilla) huellasVistas.add(ultima.plantilla);
+            if (salto) {
+              /* Lectura inservible: ni se calibra con ella ni se declara
+               * asentada. Y se nombra la página, porque un rastreo hecho con el
+               * ordenador suspendiéndose no es una medición del sitio. */
+              relojSaltado.push({ ruta: u.pathname + (u.search || ""), ms: salto });
+              esCalibracion = false;
+              estable = false;
+            }
             if (esCalibracion && ultima) {
               /* «Asentada» en una calibración significa que al final hubo un
                * tramo de silencio de al menos el margen. Si la última mutación
@@ -574,9 +605,13 @@ export async function crawlSite(inicio, opts) {
                * cambia de una pasada a otra hace que dos pasadas no sean
                * comparables —y el comparador, con razón, lo avisaba— cuando lo
                * que cambió fue el reloj y no el sitio. */
-              const pedido = ultimoCambio ? Math.ceil((ultimoCambio + margenAsentar) / 250) * 250 : 0;
+              const bruto = ultimoCambio ? Math.ceil((ultimoCambio + margenAsentar) / 250) * 250 : 0;
+              // El tope: lo que pida más que esto no se adopta, y queda anotado
+              // con su valor bruto para que el aviso lo pueda decir.
+              const pedido = Math.min(bruto, topeSuelo);
               calibraciones.push({ ruta: u.pathname + (u.search || ""), ultimoCambio: ultimoCambio,
                                    observado: transcurrido, sueloAntes: sueloEfectivo,
+                                   pedido: bruto, topado: bruto > topeSuelo || undefined,
                                    sueloDespues: Math.max(sueloEfectivo, pedido) });
               if (pedido > sueloEfectivo) sueloEfectivo = pedido;
             }
@@ -733,12 +768,29 @@ export async function crawlSite(inicio, opts) {
             return c.asentado.indexOf("enlaces") !== -1;
           });
           if (!conEnlaces.length) return "";
-          return " Y OJO AL CENSO: en " + conEnlaces.length + " página(s) lo que cambió fueron los ENLACES (" +
+          /* LA DUDA SOBRE EL CENSO SOLO SE SIEMBRA SI HAY MOTIVO, y esto es un
+           * arreglo de la primera versión de este aviso. En la auditoría `ja9`
+           * decía «este censo puede no ser el del sitio entero» sobre un censo
+           * de 124 páginas que se había repetido idéntico cinco veces: cierto en
+           * general, falso aquí, y en un informe de cliente eso se lee como que
+           * el agente no sabe si vio el sitio. Que los enlaces lleguen tarde es
+           * un DATO —se esperó y se leyeron—; lo que pone el censo en duda es
+           * que alguna página no llegara a asentarse, que el suelo subiera a
+           * mitad del rastreo, o que una página no cargara. */
+          const dudoso = candidatas.some(function (c) { return c.sinAsentar; }) ||
+            candidatas.some(function (c) { return c.sueloUsado != null && c.sueloUsado < sueloEfectivo && !c.calibrada; }) ||
+            errores.length > 0;
+          return " LOS ENLACES TAMBIÉN LLEGAN TARDE, en " + conEnlaces.length + " página(s) (" +
             nombrar(conEnlaces.map(function (c) { return c.ruta; }), conEnlaces.length) +
-            "), y el censo se construye con los enlaces leídos. Una página leída antes de pintar sus enlaces " +
-            "deja fuera del censo las páginas a las que apunta, sin un solo error que lo delate: medido en un " +
-            "sitio real, una pasada dio 117 candidatas y las siguientes 124, con 0 errores. Así que este censo " +
-            "puede no ser el del sitio entero, y la reproducibilidad por semilla vale para ESTE censo.";
+            "), y el censo se construye con los enlaces leídos: una página leída antes de pintar los suyos deja " +
+            "fuera del censo las páginas a las que apunta, sin un solo error que lo delate —medido, una pasada " +
+            "dio 117 candidatas y las siguientes 124 con 0 errores—. " +
+            (dudoso
+              ? "Y EN ESTE RASTREO HAY MOTIVO PARA DUDAR (hay páginas sin asentar, leídas con menos margen o que " +
+                "no cargaron, según los avisos de arriba), así que este censo puede no ser el del sitio entero y " +
+                "la reproducibilidad por semilla vale para ESTE censo."
+              : "Aquí se esperó a que se asentaran y ninguna página quedó sin asentar, así que el censo es el de " +
+                "las páginas ya hidratadas. Compruébalo igual contra el número de páginas que esperas del sitio.");
         })()));
     }
     /* LO QUE LA CALIBRACIÓN MIDIÓ, DICHO CON EL NÚMERO.
@@ -783,23 +835,58 @@ export async function crawlSite(inicio, opts) {
     const medidas = calibraciones.filter(function (c) { return c.ultimoCambio > 0; });
     if (calibraciones.length && medidas.length) {
       const peor = medidas.reduce(function (m, c) { return Math.max(m, c.ultimoCambio); }, 0);
-      avisos.push("ESTE SITIO SE ASIENTA TARDE: medido en " + calibraciones.length +
-        " página(s) de calibración, la última mutación llegó hasta " + peor + " ms después de «load» (" +
+      /* El titular dice lo que se midió, no una alarma. La primera versión
+       * gritaba «ESTE SITIO SE ASIENTA TARDE» con 512 ms medidos, que no es
+       * tarde para nada, y un aviso que exagera se acaba leyendo como ruido. */
+      const topados = calibraciones.filter(function (c) { return c.topado; });
+      avisos.push("CUÁNDO SE ASIENTA ESTE SITIO, medido en " + calibraciones.length +
+        " página(s) de calibración: la última mutación tras «load» llegó hasta " + peor + " ms (" +
         medidas.slice(0, 4).map(function (c) { return c.ruta + ": " + c.ultimoCambio + " ms"; }).join(" · ") +
         "). El suelo de espera se ha puesto en " + sueloEfectivo + " ms (de partida, " + sueloBase +
-        "). No es un detalle interno: con un suelo por debajo de eso, la página se lee antes de " +
-        "hidratarse —otra huella de plantilla y, si lo que falta son enlaces, otro censo— y eso mueve la muestra.");
+        "), y con eso se ha leído el sitio. Va en el informe porque con un suelo por debajo de lo medido la " +
+        "página se lee antes de hidratarse —otra huella de plantilla y, si lo que falta son enlaces, otro censo—." +
+        (topados.length
+          ? " OJO: en " + topados.length + " página(s) la observación pidió hasta " +
+            topados.reduce(function (m, c) { return Math.max(m, c.pedido || 0); }, 0) +
+            " ms, por encima del tope de " + topeSuelo + " ms, y NO se ha adoptado. Un suelo así no es una " +
+            "medición del sitio: suele ser el ordenador suspendido o una página que no para de moverse. " +
+            "Mira el aviso del reloj y vuelve a rastrear antes de dar la muestra por buena."
+          : ""));
     }
+    /* UNA PÁGINA CALIBRADA NO SE LEYÓ «CON MENOS MARGEN»: se observó hasta el
+     * techo, que es más de lo que pide cualquier suelo. Contarla era un falso
+     * positivo, y en `ja9` producía el aviso entero sobre la portada, que es
+     * justo la que se había mirado largo. */
     const conSueloMenor = candidatas.filter(function (c) {
-      return c.sueloUsado != null && c.sueloUsado < sueloEfectivo;
+      return c.sueloUsado != null && c.sueloUsado < sueloEfectivo && !c.calibrada;
     });
     if (conSueloMenor.length) {
       avisos.push("EL SUELO DE ESPERA SUBIÓ A MITAD DEL RASTREO (de " + sueloBase + " a " + sueloEfectivo +
         " ms), así que " + conSueloMenor.length + " de " + candidatas.length +
         " página(s) se leyeron con menos margen del que este sitio pide: " +
-        nombrar(conSueloMenor.map(function (c) { return c.ruta; }), 6) +
+        // `nombrar(urls, total)`: el segundo argumento es el TOTAL, no un tope.
+        // Pasarle 6 hacía que el aviso dijera «1 de 124 página(s)» y acto
+        // seguido «/ … (y 5 más)». Dos números que se contradicen en el mismo
+        // aviso destruyen la confianza en todos los demás.
+        nombrar(conSueloMenor.map(function (c) { return c.ruta; }), conSueloMenor.length) +
         ". Su huella puede ser la de antes de hidratarse. Para dar la muestra por buena, vuelve a rastrear " +
         "con `asentarSueloMs: " + sueloEfectivo + "` desde el principio.");
+    }
+    /* EL RELOJ, que es lo que convirtió una pasada en veinticinco horas.
+     *
+     * Medido: el portátil del autor se suspendió a mitad de un rastreo, el hueco
+     * del sueño entró en la medición del asentamiento, la calibración «midió»
+     * 925 597 ms y puso el suelo en quince minutos por página. La pasada acabó
+     * en 90 437 s, y en el JSON no había nada que dijera que la máquina había
+     * estado parada: solo una huella distinta y una muestra movida. */
+    if (relojSaltado.length) {
+      const peorSalto = relojSaltado.reduce(function (m, x) { return Math.max(m, x.ms); }, 0);
+      avisos.push("ESTE PROCESO ESTUVO PARADO DURANTE EL RASTREO: entre dos lecturas de la misma página " +
+        "pasaron hasta " + Math.round(peorSalto / 1000) + " s cuando debían pasar menos de un segundo, en " +
+        relojSaltado.length + " página(s) (" + nombrar(relojSaltado.map(function (x) { return x.ruta; }), relojSaltado.length) +
+        "). Eso no mide el sitio: mide el parón —el ordenador suspendido, o esta máquina sin CPU—. Esas " +
+        "páginas NO se han usado para calibrar y no se declaran asentadas, pero su lectura puede ser " +
+        "cualquiera: NO des esta muestra por buena, vuelve a rastrear con el ordenador despierto.");
     }
     const calibSinAsentar = candidatas.filter(function (c) { return c.calibrada && c.sinAsentar; });
     if (calibSinAsentar.length) {
@@ -818,7 +905,8 @@ export async function crawlSite(inicio, opts) {
       // ven iguales en el censo pueden no haberse corrido en el mismo sitio.
       ritmo: ritmo,
       calibracion: { suelo: sueloEfectivo, sueloBase: sueloBase, techo: techoBase,
-                     margen: margenAsentar, cada: calibrarCada, medidas: calibraciones },
+                     margen: margenAsentar, cada: calibrarCada, tope: topeSuelo,
+                     medidas: calibraciones, relojSaltado: relojSaltado },
       inicio: raiz.href,
       candidatas: candidatas,
       saltadas: saltadas,
