@@ -1001,6 +1001,26 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.84.0 — el fallo de NVDA no dejaba nada que mirar
+
+La verificación con NVDA corre en un runner de Windows, porque en España el lector dominante es NVDA y el equipo trabaja en macOS. Una ejecución terminó dejando esto, y nada más:
+
+```
+nvda  Process completed with exit code 1.
+nvda  No files were found with the provided path:
+      agente-a11y-motor/verificacion-nvda.json. No artifacts will be uploaded.
+```
+
+Dos líneas que no dicen nada. El script **sí** explicaba el motivo por la salida de error —tiene instrumentado hasta el listado de ventanas con título, que es lo que distingue «NVDA no arrancó» de «el navegador no se puso delante»—, pero el log de un runner se mira una vez y se cierra, mientras que el artefacto es lo que queda. Y al no escribir nada cuando falla, lo que quedaba era la ausencia. Es la regla de oro del proyecto aplicada a la integración continua: el silencio de un artefacto que falta se lee como «no pasó nada», cuando lo que pasó es que no se pudo comprobar.
+
+Ahora **todas las salidas dejan el JSON**, incluidas las de error, con el motivo, la pila recortada, el navegador, los pasos y la plataforma; y el informe lleva su propio `ok`, para que no haya que deducir de sus campos si vale. Comprobable sin Windows: en macOS o Linux el script sale con 2 y deja un informe que dice «NVDA solo existe en Windows: esta máquina es linux» — medido aquí.
+
+El workflow acompaña: la salida del script se guarda en `nvda-salida.log` y se sube junto al JSON (con el código de salida preservado, para que el paso siga fallando cuando falla), el resumen del log imprime el `motivo` cuando el informe es de fallo, y `if-no-files-found` pasa de `warn` a **`error`** — si ahora no hay artefacto es que no se pudo escribir ni el informe del fallo, y eso tiene que teñir el paso en vez de pasar como un aviso.
+
+Y un motivo que estaba mal explicado en el propio código: `import("@guidepup/guidepup")` **lanza en el import** cuando no hay lector soportado —medido, el mensaje es «No available supported screen readers»—, así que ese caso no significa «la versión es antigua» sino «NVDA no está registrado en esta máquina». El informe lo dice ahora con esas palabras y guarda el error de cada ruta intentada.
+
+Lo que esto NO hace: arreglar la causa del fallo de esa ejecución, que no se conoce porque el log no se guardó. Lo que hace es que la próxima lo diga.
+
 ### v0.83.0 — un portátil que se duerme no es una medición, y tres avisos que gritaban
 
 Las tres cosas de esta entrega salen de dos salidas reales del sitio del autor, no de leer el código.

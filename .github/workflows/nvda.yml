@@ -75,7 +75,23 @@ jobs:
         env:
           NVDA_NAVEGADOR: chrome
           NVDA_PASOS: "16"
-        run: node examples/verificar-nvda.mjs verificacion-nvda.json
+        # LA SALIDA SE GUARDA EN UN FICHERO, y no es por gusto: la ejecución
+        # anterior dejó esto y nada más —
+        #
+        #   nvda  Process completed with exit code 1.
+        #   nvda  No files were found with the provided path: …verificacion-nvda.json.
+        #
+        # El motivo lo decía el script por la salida de error, pero el log de un
+        # runner se mira una vez y se cierra, mientras el artefacto es lo que
+        # queda. Con `*>` se captura todo —stdout y stderr, incluidas las líneas
+        # «(ventanas …)» que dicen qué había en primer plano—, se imprime igual
+        # en el log, y se preserva el código de salida para que el paso siga
+        # fallando cuando falla.
+        run: |
+          node examples/verificar-nvda.mjs verificacion-nvda.json *> nvda-salida.log
+          $codigo = $LASTEXITCODE
+          Get-Content nvda-salida.log
+          exit $codigo
 
       - name: Resumen en el log
         if: always()
@@ -83,16 +99,29 @@ jobs:
         run: |
           if (Test-Path verificacion-nvda.json) {
             $j = Get-Content verificacion-nvda.json -Raw | ConvertFrom-Json
-            Write-Host "Resumen: $($j.resumen | ConvertTo-Json -Compress)"
-            foreach ($r in $j.resultados) { Write-Host "  $($r.veredicto)  $($r.locator)  <- $($r.fraseLimpia)" }
+            # El informe puede ser de ÉXITO o de FALLO: desde v0.84.0 el script
+            # deja JSON en las dos salidas, porque un artefacto que falta se lee
+            # como «no pasó nada» cuando lo que pasó es que no se pudo comprobar.
+            if ($j.ok -eq $false) {
+              Write-Host "NO VERIFICADO: $($j.motivo)"
+              if ($j.pila) { $j.pila | ForEach-Object { Write-Host "    $_" } }
+            } else {
+              Write-Host "Resumen: $($j.resumen | ConvertTo-Json -Compress)"
+              foreach ($r in $j.resultados) { Write-Host "  $($r.veredicto)  $($r.locator)  <- $($r.fraseLimpia)" }
+            }
           } else {
-            Write-Host "No se generó el informe: la captura no llegó a terminar."
+            Write-Host "No se generó el informe NI el informe del fallo: el proceso murió antes de llegar al script."
           }
 
-      - name: Guardar la transcripción
+      - name: Guardar la transcripción y el log
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: verificacion-nvda
-          path: agente-a11y-motor/verificacion-nvda.json
-          if-no-files-found: warn
+          path: |
+            agente-a11y-motor/verificacion-nvda.json
+            agente-a11y-motor/nvda-salida.log
+          # `error` y no `warn`: desde v0.84.0 el script deja informe también
+          # cuando falla, así que si aquí no hay nada es que ni eso se pudo, y
+          # eso tiene que teñir el paso en vez de pasar como un aviso.
+          if-no-files-found: error

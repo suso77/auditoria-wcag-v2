@@ -26,10 +26,51 @@ import { understand, analyze, setDOMParser } from "../src/index.js";
 import { bridge, captureWithNvda } from "../src/guidepup-bridge.js";
 import { idiomaDelLector } from "../src/reader-lexicon.js";
 
+const salida = process.argv[2] || "verificacion-nvda.json";
+
+/* ── UN FALLO TAMBIÉN TIENE QUE DEJAR INFORME ──────────────────────────────
+ *
+ * Esto sale de una ejecución real en CI, y de lo que NO se pudo saber de ella.
+ * El workflow de NVDA terminó así, y es todo lo que llegó:
+ *
+ *     nvda  Process completed with exit code 1.
+ *     nvda  No files were found with the provided path:
+ *           agente-a11y-motor/verificacion-nvda.json. No artifacts will be uploaded.
+ *
+ * Dos líneas que no dicen nada. El script sí explicaba el motivo por la salida
+ * de error, pero el log de un runner se mira una vez y se cierra, mientras que
+ * el artefacto es lo que queda — y al no escribir nada cuando falla, lo que
+ * quedaba era la ausencia. Es la regla de oro del proyecto aplicada a la
+ * integración continua: el silencio de un artefacto que falta se lee como «no
+ * pasó nada», cuando lo que pasó es que no se pudo comprobar.
+ *
+ * Así que todas las salidas, incluidas las de error, dejan el JSON con el
+ * motivo. Comprobable aquí mismo: en macOS o Linux este script sale con 2 y
+ * ahora deja un informe que dice por qué.
+ */
+async function salir(codigo, motivo, extra) {
+  const informe = Object.assign({
+    creado: new Date().toISOString(),
+    lector: "nvda",
+    ok: false,
+    motivo: motivo,
+    plataforma: process.platform,
+    nodeVersion: process.version,
+    salidaCodigo: codigo
+  }, extra || {});
+  try {
+    await writeFile(salida, JSON.stringify(informe, null, 2) + "\n", "utf8");
+    console.error("  Informe del fallo: " + salida);
+  } catch (e) {
+    console.error("  (y no se pudo escribir el informe: " + ((e && e.message) || e) + ")");
+  }
+  process.exit(codigo);
+}
+
 if (process.platform !== "win32") {
   console.error("✗ NVDA solo existe en Windows. Aquí no hay nada que verificar.");
   console.error("  Desde macOS o Linux, lanza el workflow de CI: .github/workflows/nvda.yml");
-  process.exit(2);
+  await salir(2, "NVDA solo existe en Windows: esta máquina es " + process.platform);
 }
 
 const { DOMParser } = await import("linkedom");
@@ -37,12 +78,20 @@ setDOMParser(DOMParser);
 
 const RUTAS_GUIDEPUP = ["@guidepup/guidepup", process.env.GUIDEPUP_PATH].filter(Boolean);
 let guidepup = null, deDonde = null;
+const fallosDeImport = [];
 for (const r of RUTAS_GUIDEPUP) {
-  try { guidepup = await import(r); deDonde = r; break; } catch (e) { /* siguiente */ }
+  try { guidepup = await import(r); deDonde = r; break; }
+  catch (e) { fallosDeImport.push(r + ": " + ((e && e.message) || e)); }
 }
 if (!guidepup || !guidepup.nvda) {
+  /* OJO AL MOTIVO, que no es obvio: `import("@guidepup/guidepup")` LANZA en el
+   * propio import cuando no hay lector soportado —comprobado, el mensaje es
+   * «No available supported screen readers»—, así que este caso no significa
+   * «la versión es antigua» sino «NVDA no está registrado». Si el runner llega
+   * aquí, lo que falló es `npx @guidepup/setup install`. */
   console.error("✗ No se encuentra `nvda` en @guidepup/guidepup. Instálalo, o apunta GUIDEPUP_PATH a donde esté.");
-  process.exit(2);
+  await salir(2, "@guidepup/guidepup no expone `nvda`: NVDA no está registrado en esta máquina",
+    { intentos: RUTAS_GUIDEPUP, detalle: fallosDeImport });
 }
 
 /**
@@ -73,7 +122,6 @@ const HTML = [
   '<main id="contenido"><h1>Verificación con lector real</h1><p>Fin del recorrido.</p></main>'
 ].join("\n");
 
-const salida = process.argv[2] || "verificacion-nvda.json";
 const pasos = Number(process.env.NVDA_PASOS || 14);
 const navegador = process.env.NVDA_NAVEGADOR || "chrome";
 
@@ -92,7 +140,11 @@ try {
   console.error("✗ La captura falló: " + (e && e.message ? e.message : e));
   console.error("  Lo más habitual: NVDA no está instalado. Instálalo con `npx @guidepup/setup install`");
   console.error("  desde esta carpeta (busca `@guidepup/guidepup` a partir del directorio actual).");
-  process.exit(1);
+  // Y el fallo, en el artefacto: con el mensaje y la pila, que es lo único que
+  // permite distinguir «NVDA no arrancó» de «el navegador no se puso delante».
+  await salir(1, "la captura con NVDA falló: " + ((e && e.message) || e),
+    { pila: (e && e.stack) ? String(e.stack).split("\n").slice(0, 8) : null,
+      guidepup: deDonde, navegador: navegador, pasos: pasos, duracionMs: Date.now() - t0 });
 }
 const ms = Date.now() - t0;
 
@@ -111,6 +163,9 @@ if (idioma && idioma !== "es") {
 const informe = {
   creado: new Date().toISOString(),
   lector: "nvda",
+  // El informe dice si vale: un JSON sin veredicto sobre sí mismo obliga a
+  // deducirlo de sus campos, y eso en CI nadie lo hace.
+  ok: true,
   idioma: idioma,
   duracionMs: ms,
   plataforma: process.platform,
@@ -174,5 +229,14 @@ if (perdidos) {
 if (!casados) {
   console.error("\n✗ Ningún nodo quedó verificado contra el lector: la sesión no comprueba nada.");
   console.error("  Si el recorrido no llegó al componente, mira arriba los títulos de ventana y la transcripción.");
+  /* El informe ya está escrito con la sesión entera —transcripción incluida—,
+   * así que aquí solo se marca que NO vale, sin perder el contenido: una sesión
+   * que no verifica nada es justo la que hay que poder leer después. */
+  try {
+    await writeFile(salida, JSON.stringify(Object.assign({}, informe, {
+      ok: false,
+      motivo: "ningún nodo quedó verificado contra el lector: la sesión no comprueba nada"
+    }), null, 2) + "\n", "utf8");
+  } catch (e) { /* el informe de arriba ya está en disco */ }
   process.exit(1);
 }
