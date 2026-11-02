@@ -583,3 +583,30 @@ test("agrupación: agrupar dos veces da lo mismo (idempotente)", () => {
   // La forma de la evidencia YA agrupada tiene que seguir siendo la misma forma.
   assert.equal(formaDeEvidencia(una[0].evidencia), formaDeEvidencia(filas[0].evid[0]));
 });
+
+/* ── UNA SONDA CAÍDA EN UNA PÁGINA NO LA TAPAN LAS OTRA ONCE ─────────────────
+ *
+ * Es el caso medido: once páginas con la sonda dinámica midiendo y diciendo
+ * «cumple-parcial», una con la sonda caída. `loComprobado` encuentra medición
+ * —la de las once—, y si `sonda-rota` se tratara como un motivo suave la fila
+ * diría «medido donde había algo que medir», que es exactamente lo que no pasó
+ * en la página que importa. */
+test("«sonda-rota» no se ablanda porque haya medición en otras páginas", () => {
+  const fs = [
+    { c: { n: "2.2.2" }, verdict: "cumple-parcial", origen: "dinamico",
+      evid: ["Observada la página 8.0 s SIN tocar nada: ningún elemento cambia por su cuenta."] },
+    { c: { n: "2.2.2" }, verdict: "revisar", origen: "barrido", motivo: "sonda-rota",
+      evid: ["la capa que lo mide se ha ejecutado pero 1 de sus sondas ha FALLADO en esta página"] }
+  ];
+  const m = motivoPendiente(fs, "revisar");
+  assert.match(m, /FALLÓ/, m);
+  assert.doesNotMatch(m, /Medido donde había algo que medir/, "eso tapa la página que no se midió");
+});
+
+test("y «sonda-muda» sí se ablanda: ese comportamiento no cambia", () => {
+  const fs = [
+    { c: { n: "3.2.2" }, verdict: "cumple-parcial", origen: "dinamico", evid: ["Se han probado 3 control(es)."] },
+    { c: { n: "3.2.2" }, verdict: "revisar", origen: "barrido", motivo: "sonda-muda", evid: ["no encontró contenido"] }
+  ];
+  assert.match(motivoPendiente(fs, "revisar"), /Medido donde había algo que medir/);
+});

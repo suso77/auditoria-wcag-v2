@@ -253,6 +253,21 @@ export function notaDeCapaApagada(findings, capas, opts) {
   return afectados;
 }
 
+/* La etiqueta con la que cada capa firma sus errores, por su clave de bandera.
+ *
+ * `capasDe` devuelve claves («dynamic», «render»); `errores` trae etiquetas en
+ * castellano, porque las escribe el envoltorio `capa(nombre, fn)` con el nombre
+ * que se lee en los avisos. Para cruzar «quién mide este criterio» con «qué
+ * sonda se ha roto en esta página» hace falta la correspondencia, y vive aquí
+ * una sola vez: deducirla del castellano sería volver a classificar por prosa. */
+const ETIQUETA_CAPA = { dynamic: "dinámico", render: "render", viewport: "viewport", pixeles: "píxeles" };
+
+function nombrarSondaRota(e) {
+  const donde = e && e.fase ? "fase «" + e.fase + "»" : "capa «" + ((e && e.capa) || "?") + "»";
+  const que = String((e && e.error) || "sin mensaje").replace(/\s+/g, " ").slice(0, 120);
+  return donde + ": " + que;
+}
+
 export function criteriosEnSilencio(findings, capas, opts) {
   opts = opts || {};
   const dichos = {};
@@ -285,10 +300,58 @@ export function criteriosEnSilencio(findings, capas, opts) {
     } else if (!corridas.length) {
       motivo = "capa-no-corrio";
       razon = "la capa que lo mide (" + capaQueMide(c.n) + ") no se ha ejecutado en esta pasada, así que este criterio NO se ha comprobado.";
+    } else if (corridas.length < suyas.length) {
+      /* MEDIDO A MEDIAS NO ES MEDIDO.
+       *
+       * Varios criterios los miden DOS capas —2.2.2 el CSS y el observador de
+       * mutaciones, 2.1.1 el marcado y la prueba de teclado— y aquí bastaba que
+       * una hubiera corrido para decir «la capa que lo mide sí se ha ejecutado y
+       * no ha dicho nada». Con `--dinamico` apagado eso convertía «no encendí la
+       * sonda» en «la miré y no había nada», que es la confusión que toda esta
+       * maquinaria existe para no hacer. Se nombra la que falta. */
+      const faltan = suyas.filter(function (k) { return corridas.indexOf(k) === -1; });
+      motivo = "capa-no-corrio";
+      razon = "este criterio lo miden varias capas (" + capaQueMide(c.n) + ") y " + faltan.length +
+        " de ellas no se ha ejecutado en esta pasada, así que NO está comprobado del todo: " +
+        "lo que corrió no ha dicho nada de él y lo que lo mide de verdad puede ser lo que falta.";
     } else {
-      motivo = "sonda-muda";
-      razon = "la capa que lo mide (" + capaQueMide(c.n) + ") sí se ha ejecutado y no ha dicho nada de este criterio: " +
-        "lo más probable es que no haya encontrado contenido al que aplique, pero el agente no lo afirma.";
+      /* UNA SONDA QUE SE CAE Y UNA SONDA QUE NO VE NADA NO SON LO MISMO.
+       *
+       * `sonda-muda` afirma que la capa «sí se ha ejecutado y no ha dicho nada»,
+       * y eso era mentira en el caso que lo destapó. Medido comparando `ja12` y
+       * `ja13` —misma muestra, mismas doce páginas—: 2.1.4, 2.2.1 y 2.2.2
+       * pasaron de `cumple-parcial` en las doce a `revisar` en el sitio entero
+       * porque en UNA página, `/blog/articulos/diferencias-wcag-2-1-y-2-2`, los
+       * tres se quedaron sin un solo hallazgo. Y lo único que quedó escrito fue
+       * «ninguna capa ha dicho nada en esta página», que se lee igual que «la
+       * capa miró y no había nada».
+       *
+       * El envoltorio `fase()` de la capa dinámica SÍ anota el fallo, en
+       * `errores`, con la fase y el mensaje. Lo que pasaba es que `errores` se
+       * quedaba en el objeto de la página y de ahí no salía: ni aviso, ni
+       * entregable, ni motivo. Tres criterios de nivel A del informe de un
+       * cliente cambiados por un fallo que no se podía ni leer.
+       *
+       * Así que cuando la capa que mide el criterio registró un error en esta
+       * página, el motivo lo dice con su fase y su mensaje. No se nombra la fase
+       * exacta que mide ESE criterio —no hay tabla fase→criterio y escribirla
+       * sería inventar precisión—: se dice qué se rompió y que el silencio puede
+       * ser eso. Es menos de lo que me gustaría afirmar y es todo lo que sé. */
+      const rotas = (opts.errores || []).filter(function (e) {
+        if (!e || !e.capa) return false;
+        return corridas.some(function (k) { return ETIQUETA_CAPA[k] === e.capa; });
+      });
+      if (rotas.length) {
+        motivo = "sonda-rota";
+        razon = "la capa que lo mide (" + capaQueMide(c.n) + ") se ha ejecutado pero " + rotas.length +
+          " de sus sondas ha(n) FALLADO en esta página (" + rotas.slice(0, 3).map(nombrarSondaRota).join(" · ") +
+          (rotas.length > 3 ? " · y " + (rotas.length - 3) + " más" : "") + "). El silencio sobre este criterio " +
+          "puede ser ese fallo y no la ausencia de contenido, así que el agente NO afirma que no aplique: repite la pasada.";
+      } else {
+        motivo = "sonda-muda";
+        razon = "la capa que lo mide (" + capaQueMide(c.n) + ") sí se ha ejecutado y no ha dicho nada de este criterio: " +
+          "lo más probable es que no haya encontrado contenido al que aplique, pero el agente no lo afirma.";
+      }
     }
     out.push({
       c: critDe(c.n), verdict: "revisar", sev: null,
@@ -664,7 +727,21 @@ export async function auditRun(target, opts) {
         "Si alguno salía conforme, se ha bajado a «revisar»: una conformidad firmada con la sonda apagada no es una conformidad.");
     }
 
-    const silencio = criteriosEnSilencio(findings, capas, { sitio: false });
+    /* LAS SONDAS QUE SE HAN CAÍDO, DICHAS EN UN AVISO.
+     *
+     * `errores` existía desde el principio y no salía por ninguna parte: no
+     * había aviso, y `auditar-sitio.mjs` no lo escribía en `auditoria.json`. Una
+     * sonda que se cae dejaba exactamente el mismo rastro que una sonda que no
+     * encuentra nada —ninguno—, y eso es la regla de oro del proyecto al revés.
+     * Va ANTES del barrido porque explica por qué hay criterios en silencio. */
+    if (errores.length) {
+      avisos.push("OJO: " + errores.length + " sonda(s) han FALLADO en esta página (" +
+        errores.slice(0, 4).map(nombrarSondaRota).join(" · ") + (errores.length > 4 ? " · y " + (errores.length - 4) + " más" : "") +
+        "). Lo que midieran esas sondas NO está en este informe: los criterios que dependen de ellas salen sin " +
+        "dictamen —no conformes— y su motivo lo dice. Repite la pasada antes de dar por bueno el resultado de esta página.");
+    }
+
+    const silencio = criteriosEnSilencio(findings, capas, { sitio: false, errores: errores });
     if (silencio.length) {
       findings = findings.concat(silencio);
       avisos.push("Hay " + silencio.length + " criterio(s) de los que ninguna capa ha dicho nada en esta página (" +
@@ -806,7 +883,13 @@ export async function auditSite(targets, opts) {
      no emitiera nada —muestra de una sola página, huellas que no se pudieron
      sacar— se quedaban en blanco en el agregado. Se barre sobre lo ya reunido,
      con los de sitio incluidos esta vez. */
-  const silencioSitio = criteriosEnSilencio(findings, Object.assign(capasEfectivas((opts || {}).capas), { coherencia: true }), { sitio: true });
+  /* Y en el barrido del SITIO, los errores de TODA la muestra: un criterio que
+   * se queda en silencio en el agregado porque la sonda se cayó en una página
+   * tiene que decirlo igual, y aquí es donde se exportan los entregables. */
+  const erroresMuestra = paginas.reduce(function (a, p) {
+    return a.concat((p.errores || []).map(function (e) { return Object.assign({ url: p.url }, e); }));
+  }, []);
+  const silencioSitio = criteriosEnSilencio(findings, Object.assign(capasEfectivas((opts || {}).capas), { coherencia: true }), { sitio: true, errores: erroresMuestra });
   silencioSitio.forEach(function (f) { findings.push(Object.assign({ url: "(toda la muestra)" }, f)); });
 
   // El rollup necesita ver la coherencia y el cuaderno en todas las páginas para
@@ -838,7 +921,7 @@ export async function auditSite(targets, opts) {
       paginas: paginas.length,
       porPagina: paginas.map(function (p) { return p.procedencia; })
     },
-    errores: paginas.reduce(function (a, p) { return a.concat((p.errores || []).map(function (e) { return Object.assign({ url: p.url }, e); })); }, []),
+    errores: erroresMuestra,
     // Las páginas que no se pudieron auditar se dicen, y arriba del todo: una
     // muestra con huecos no es una muestra más pequeña, es una muestra incompleta.
     paginasFallidas: fallidas,

@@ -444,3 +444,79 @@ test("inquieta: un hallazgo malformado no tira el informe", () => {
   const tocados = notaDePaginaInquieta(f, { asentado: false, ms: 1000, lecturas: 7 });
   assert.deepEqual(tocados, ["2.1.1"]);
 });
+
+/* ── LA SONDA QUE SE CAE, QUE NO ES LA SONDA QUE NO VE NADA ──────────────────
+ *
+ * De comparar `ja12` con `ja13` en el sitio del autor: misma muestra, mismas
+ * doce páginas, y 2.1.4, 2.2.1 y 2.2.2 pasaron de `cumple-parcial` en las doce
+ * a `revisar` en el sitio entero. La causa estaba en UNA página en la que los
+ * tres se quedaron sin un solo hallazgo, y el único rastro era «ninguna capa ha
+ * dicho nada en esta página», que se lee igual que «la capa miró y no había
+ * nada». El fallo SÍ se anotaba, en `errores`, y de ahí no salía a ninguna
+ * parte. Estas cuatro guardias son las que impiden que vuelva a pasar. */
+
+test("un criterio en silencio con su sonda caída NO dice «se ejecutó y no dijo nada»", () => {
+  const rotas = [{ capa: "dinámico", fase: "movimiento", error: "Execution context was destroyed" }];
+  const f = criteriosEnSilencio([], capasEfectivas({ dynamic: true }), { sitio: true, errores: rotas })
+    .find((x) => x.c.n === "2.2.2");
+  assert.equal(f.motivo, "sonda-rota", "el motivo tiene que ser un código, no prosa");
+  const prosa = f.evid.join(" ");
+  assert.match(prosa, /FALLADO en esta página/, prosa);
+  assert.match(prosa, /movimiento/, "la fase que se cayó, con su nombre");
+  assert.match(prosa, /Execution context was destroyed/, "y el mensaje, que es el único dato que hay");
+  assert.doesNotMatch(prosa, /sí se ha ejecutado y no ha dicho nada/, "eso sería afirmar lo que no se sabe");
+  assert.ok(!esConforme(f.verdict));
+});
+
+test("el error de OTRA capa no contamina el motivo del criterio", () => {
+  // 2.2.2 lo mide la capa dinámica. Un fallo de la de adaptación no dice nada
+  // de él, y ponerlo ahí sería un falso positivo de los que este proyecto no da.
+  const otra = [{ capa: "viewport", fase: "reflow", error: "timeout" }];
+  const f = criteriosEnSilencio([], capasEfectivas({ dynamic: true }), { sitio: true, errores: otra })
+    .find((x) => x.c.n === "2.2.2");
+  assert.equal(f.motivo, "sonda-muda", "sin fallo de SU capa, el motivo es el de siempre");
+});
+
+test("sin errores, el motivo sigue siendo «sonda-muda»: esto no cambia lo que ya funcionaba", () => {
+  const f = criteriosEnSilencio([], capasEfectivas({ dynamic: true }), { sitio: true, errores: [] })
+    .find((x) => x.c.n === "2.2.2");
+  assert.equal(f.motivo, "sonda-muda");
+  assert.match(f.evid.join(" "), /sí se ha ejecutado y no ha dicho nada/);
+});
+
+test("la capa apagada manda sobre la sonda caída: si no corrió, no se cayó", () => {
+  const rotas = [{ capa: "dinámico", fase: "movimiento", error: "lo que sea" }];
+  const f = criteriosEnSilencio([], capasEfectivas({ dynamic: false }), { sitio: true, errores: rotas })
+    .find((x) => x.c.n === "2.2.2");
+  assert.equal(f.motivo, "capa-no-corrio");
+});
+
+test("2.1.4, 2.2.1 y 2.2.2 los mide la capa dinámica, y la tabla lo dice", () => {
+  // La tabla decía «página» de los dos primeros y «medición» del tercero, y de
+  // ahí salía el motivo de `seguimiento.csv`. Quien los dictamina es la sonda
+  // dinámica: las teclas sueltas, los temporizadores envueltos y el observador
+  // de mutaciones. Si esto se revierte, el motivo vuelve a mentir.
+  ["2.1.4", "2.2.1", "2.2.2"].forEach((n) => {
+    assert.match(capaQueMide(n), /dinámico/, n + ": " + capaQueMide(n));
+  });
+});
+
+test("con la sonda dinámica apagada, esos tres criterios NO dicen «la miré y no había nada»", () => {
+  const sin = criteriosEnSilencio([], capasEfectivas({ dynamic: false }), { sitio: false });
+  ["2.1.4", "2.2.1", "2.2.2"].forEach((n) => {
+    const f = sin.find((x) => x.c.n === n);
+    assert.ok(f, n + " tiene que salir nombrado");
+    assert.equal(f.motivo, "capa-no-corrio", n + " → " + f.motivo);
+    assert.doesNotMatch(f.evid.join(" "), /sí se ha ejecutado y no ha dicho nada/);
+  });
+});
+
+test("y con la sonda dinámica caída en la página, los tres lo dicen con la fase", () => {
+  const rotas = [{ capa: "dinámico", fase: "movimiento", error: "Execution context was destroyed" }];
+  const con = criteriosEnSilencio([], capasEfectivas({ dynamic: true }), { sitio: false, errores: rotas });
+  ["2.1.4", "2.2.1", "2.2.2"].forEach((n) => {
+    const f = con.find((x) => x.c.n === n);
+    assert.equal(f.motivo, "sonda-rota", n + " → " + f.motivo);
+    assert.match(f.evid.join(" "), /fase «movimiento»/);
+  });
+});

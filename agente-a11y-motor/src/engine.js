@@ -743,9 +743,24 @@ const QUALITY_MANUAL = new Set(["1.1.1", "2.4.6", "2.5.3", "3.3.2", "1.3.5"]); /
 const CAPA_QUE_MIDE = {
   "1.2.1": "página (inventario de medios)", "1.2.2": "página (inventario de medios)",
   "1.2.3": "página (inventario de medios)", "1.4.2": "página (inventario de medios)",
-  "3.1.2": "página", "2.2.1": "página", "2.1.4": "página",
+  "3.1.2": "página",
+  /* 2.1.4, 2.2.1 y 2.2.2: LOS MIDE LA CAPA DINÁMICA, y aquí decían que no.
+   *
+   * Esta tabla es la que contesta «quién mide este criterio», y de ella salen el
+   * motivo de `seguimiento.csv`, la nota de la capa apagada y el cruce con las
+   * sondas que se caen. Decía «página» de 2.1.4 y 2.2.1 y «medición» de 2.2.2,
+   * cuando quien los dictamina es la capa dinámica: el barrido de teclas sueltas
+   * (2.1.4), la API de temporizadores envuelta antes de cargar (2.2.1) y el
+   * MutationObserver que mira la página quieta (2.2.2). Del marcado y del CSS
+   * sale una parte —un `<marquee>`, un `animation-iteration-count: infinite`—,
+   * así que se nombran las dos, como ya se hacía con 2.1.1 y 2.4.3.
+   *
+   * Lo destapó comparar `ja12` con `ja13`: con la sonda dinámica caída en una
+   * página, el motivo de los tres decía «la capa de medición corrió y no dijo
+   * nada de este criterio». Las dos mitades de esa frase eran falsas. */
+  "2.2.1": "página / dinámico", "2.1.4": "página / dinámico", "2.2.2": "medición / dinámico",
   "2.5.1": "medición (censo de oyentes)", "2.5.2": "medición (censo de oyentes)",
-  "2.5.4": "medición (censo de oyentes)", "2.5.7": "medición (censo de oyentes)", "2.2.2": "medición",
+  "2.5.4": "medición (censo de oyentes)", "2.5.7": "medición (censo de oyentes)",
   "1.3.1": "página / dinámico", "1.3.4": "adaptación", "1.4.1": "medición", "1.4.3": "medición / píxeles",
   "1.4.4": "adaptación", "1.4.10": "adaptación", "1.4.11": "medición", "1.4.12": "adaptación",
   "1.4.13": "adaptación", "2.1.1": "medición / dinámico", "2.1.2": "dinámico",

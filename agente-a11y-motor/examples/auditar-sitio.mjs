@@ -76,6 +76,14 @@ await writeFile(F("auditoria.json"), JSON.stringify({
    * si las N se hubieran auditado, que es peor que el silencio: afirma una
    * cobertura que no hubo. */
   paginasFallidas: sitio.paginasFallidas || [],
+  /* LAS SONDAS QUE SE CAYERON, CON SU PÁGINA Y SU MENSAJE.
+   *
+   * `auditSite` las devolvía en `errores` y este script las tiraba: no estaban
+   * en el JSON ni en la salida, así que una sonda que fallaba en una página era
+   * indistinguible de una sonda que no encontraba nada. Lo pagó la comparación
+   * de `ja12` con `ja13`: tres criterios de nivel A del sitio entero cambiaron
+   * de veredicto por un fallo en una página y no había forma de saber cuál. */
+  errores: sitio.errores || [],
   avisos: sitio.avisos || [],
   coherencia: sitio.coherencia,
   rollup: sitio.rollup,
@@ -92,6 +100,20 @@ const cobertura = lineasDeCobertura(sitio);
 if (cobertura.length) {
   console.log("");
   cobertura.forEach((l, i) => console.log((i === 0 ? "  ⚠ " : "   ") + l));
+}
+
+/* Y las sondas caídas, al lado del hueco de la muestra y por la misma razón:
+ * son el límite de lo que este informe puede afirmar, no una nota de depuración. */
+const sondas = sitio.errores || [];
+if (sondas.length) {
+  console.log("");
+  console.log("  ⚠ " + sondas.length + " SONDA(S) HAN FALLADO durante la pasada. Lo que midieran no está en el informe,");
+  console.log("    y los criterios que dependen de ellas salen sin dictamen (no conformes):");
+  sondas.slice(0, 10).forEach((e) => {
+    const donde = e.fase ? "fase «" + e.fase + "»" : "capa «" + (e.capa || "?") + "»";
+    console.log("    · " + (e.url || "(sin url)") + " — " + donde + ": " + String(e.error || "").replace(/\s+/g, " ").slice(0, 120));
+  });
+  if (sondas.length > 10) console.log("    · … y " + (sondas.length - 10) + " más");
 }
 
 console.log("\n" + sitio.rollup.conformidad.toUpperCase());

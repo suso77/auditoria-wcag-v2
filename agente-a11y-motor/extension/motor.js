@@ -929,9 +929,24 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   const CAPA_QUE_MIDE = {
     "1.2.1": "página (inventario de medios)", "1.2.2": "página (inventario de medios)",
     "1.2.3": "página (inventario de medios)", "1.4.2": "página (inventario de medios)",
-    "3.1.2": "página", "2.2.1": "página", "2.1.4": "página",
+    "3.1.2": "página",
+    /* 2.1.4, 2.2.1 y 2.2.2: LOS MIDE LA CAPA DINÁMICA, y aquí decían que no.
+     *
+     * Esta tabla es la que contesta «quién mide este criterio», y de ella salen el
+     * motivo de `seguimiento.csv`, la nota de la capa apagada y el cruce con las
+     * sondas que se caen. Decía «página» de 2.1.4 y 2.2.1 y «medición» de 2.2.2,
+     * cuando quien los dictamina es la capa dinámica: el barrido de teclas sueltas
+     * (2.1.4), la API de temporizadores envuelta antes de cargar (2.2.1) y el
+     * MutationObserver que mira la página quieta (2.2.2). Del marcado y del CSS
+     * sale una parte —un `<marquee>`, un `animation-iteration-count: infinite`—,
+     * así que se nombran las dos, como ya se hacía con 2.1.1 y 2.4.3.
+     *
+     * Lo destapó comparar `ja12` con `ja13`: con la sonda dinámica caída en una
+     * página, el motivo de los tres decía «la capa de medición corrió y no dijo
+     * nada de este criterio». Las dos mitades de esa frase eran falsas. */
+    "2.2.1": "página / dinámico", "2.1.4": "página / dinámico", "2.2.2": "medición / dinámico",
     "2.5.1": "medición (censo de oyentes)", "2.5.2": "medición (censo de oyentes)",
-    "2.5.4": "medición (censo de oyentes)", "2.5.7": "medición (censo de oyentes)", "2.2.2": "medición",
+    "2.5.4": "medición (censo de oyentes)", "2.5.7": "medición (censo de oyentes)",
     "1.3.1": "página / dinámico", "1.3.4": "adaptación", "1.4.1": "medición", "1.4.3": "medición / píxeles",
     "1.4.4": "adaptación", "1.4.10": "adaptación", "1.4.11": "medición", "1.4.12": "adaptación",
     "1.4.13": "adaptación", "2.1.1": "medición / dinámico", "2.1.2": "dinámico",
@@ -9738,10 +9753,17 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     "capa-no-corrio": "La sonda que lo mide no se ejecutó en esta pasada: repite la pasada con esa capa encendida",
     "nadie-lo-mide": "Ninguna capa lo mide, y el motor no vio en el marcado nada a lo que aplicarlo: sin comprobar",
     "sonda-muda": "La sonda corrió y no encontró contenido al que aplicarlo; el agente no afirma que no aplique",
+    "sonda-rota": "La sonda que lo mide FALLÓ en alguna página de la muestra: este criterio no está medido ahí. Repite la pasada",
     "muestra-incompleta": "Hay páginas de la muestra sin analizar: lo que sale bien en el resto no cubre las que faltan",
     "pagina-inquieta": "La página seguía cambiando cuando se midió: lo que saliera conforme ahí no se puede firmar"
   };
-  const PRECEDENCIA = ["pagina-inquieta", "capa-apagada", "capa-no-corrio", "muestra-incompleta", "nadie-lo-mide", "sonda-muda"];
+  /* `sonda-rota` va con los duros y pronto: significa «parte de la muestra no se
+   * midió», igual que una capa apagada, y además es de las cosas que quien lee
+   * puede arreglar él mismo repitiendo la pasada — que es el criterio con el que
+   * está ordenada esta lista. Lo que NO puede es ser suave: un criterio cuya
+   * sonda se cayó en una página no está medido en esa página, y que lo esté en
+   * las otras once no lo cubre. */
+  const PRECEDENCIA = ["pagina-inquieta", "capa-apagada", "capa-no-corrio", "sonda-rota", "muestra-incompleta", "nadie-lo-mide", "sonda-muda"];
 
   function motivoPendiente(fs, worst) {
     const lista = fs || [];

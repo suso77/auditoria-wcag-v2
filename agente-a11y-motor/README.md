@@ -1001,6 +1001,30 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.90.0 — una sonda que se cae dejaba el mismo rastro que una sonda que no ve nada: ninguno
+
+Salió de comparar dos auditorías del sitio del autor, `ja12` y `ja13`, hechas con la **misma muestra** —las mismas doce páginas, la misma plantilla, el mismo orden— y con la capa dinámica encendida en las dos. Tres criterios cambiaron de veredicto para el sitio entero:
+
+```
+2.1.4  Atajos de teclado de un carácter   cumple-parcial → revisar
+2.2.1  Tiempo ajustable                   cumple-parcial → revisar
+2.2.2  Poner en pausa, detener, ocultar    cumple-parcial → revisar
+```
+
+El `rollup` por página localizó la causa en una sola: en `/blog/articulos/diferencias-wcag-2-1-y-2-2` los tres se quedaron **sin un solo hallazgo**, y en las otras once siguieron saliendo medidos. Lo único que quedó escrito de aquello fue una línea genérica, «ninguna capa ha dicho nada en esta página», que se lee exactamente igual que «la capa miró y no había nada que mirar». Tres criterios de nivel A del informe de un cliente cambiados por un fallo que no se podía ni leer.
+
+**El fallo SÍ se anotaba. Lo que no hacía era salir.** El envoltorio `fase()` de la capa dinámica captura cada sonda por separado y guarda `{ fase, error }` en `errores`; `auditRun` los junta con los de medición y adaptación; `auditSite` los devuelve con su URL. Y ahí se acababa: no había aviso, y `auditar-sitio.mjs` no escribía `errores` en `auditoria.json`. El campo existía desde el principio y lo tiraba el único script que produce los entregables. Ahora sale por tres sitios —el aviso de la página, la salida del script y el JSON— con su página, su fase y su mensaje.
+
+**Y el motivo de la hoja de seguimiento afirmaba lo que no sabía.** Un criterio sin hallazgos cuya capa sí corrió salía con el código `sonda-muda`: «la capa que lo mide se ha ejecutado y no ha dicho nada de este criterio». Con la sonda caída esa frase es falsa en las dos mitades. Hay un código nuevo, `sonda-rota`, que se usa cuando la capa que mide ese criterio registró un error **en esa misma página**, y dice qué fase se cayó y con qué mensaje. No se nombra la fase que mide ese criterio concreto: no hay tabla fase→criterio y escribirla sería inventar precisión. Se dice qué se rompió y que el silencio puede ser eso. En `seguimiento.csv` el código entra en la precedencia con los duros —junto a la página inquieta y la capa apagada—, así que **no lo ablanda** que el criterio sí se haya medido en las otras once páginas: un criterio cuya sonda se cayó en una página no está medido en esa página.
+
+**La tabla de «quién mide qué» mentía justo en estos tres criterios.** `CAPA_QUE_MIDE` decía «página» de 2.1.4 y 2.2.1 y «medición» de 2.2.2, cuando quien los dictamina es la capa dinámica: el barrido de teclas sueltas, la API de temporizadores envuelta desde antes de cargar y el `MutationObserver` que mira la página quieta. De esa tabla salen el motivo de la hoja, la nota de la capa apagada y ahora el cruce con las sondas caídas, así que el error se propagaba a todo. Se nombran las dos capas, como ya se hacía con 2.1.1 y 2.4.3.
+
+**Medido a medias no es medido.** Como consecuencia de lo anterior: varios criterios los miden DOS capas, y bastaba que una hubiera corrido para decir «la capa que lo mide sí se ha ejecutado y no ha dicho nada». Comprobado con Chromium sobre una página de prueba, con `--dinamico` apagado, los tres criterios decían eso; ahora dicen que una de sus dos capas no corrió y cuál. Es la diferencia entre «no encendí la sonda» y «la encendí y no había nada», que es la confusión que toda esta maquinaria existe para no hacer.
+
+**900 tests unitarios** (de 891), en verde, con nueve nuevos: que el error de OTRA capa no contamine el motivo de un criterio que no mide, que la capa apagada siga mandando sobre la sonda caída, que `sonda-rota` no se ablande con medición en otras páginas y que `sonda-muda` sí siga ablandándose, que es el comportamiento de v0.89.0 y no debía cambiar.
+
+**Lo que esta entrega NO hace, dicho claro:** no arregla la causa del fallo de aquella página. No se conoce, porque el dato no se guardó. Lo que hace es que la próxima pasada lo diga con su fase y su mensaje; hasta tenerlo delante no hay nada que arreglar, solo algo que inventar.
+
 ### v0.89.0 — dos campos que se contradecían en la misma fila
 
 Medido en la auditoría `ja13` del sitio del autor, con la sonda de texto de 3.2.2 ya funcionando. Su fila decía, a la vez:
