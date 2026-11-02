@@ -1001,6 +1001,31 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.92.0 — el fichero que promete «una fila por familia» traía treinta filas de tres familias
+
+Medido en la auditoría `ja14` del sitio del autor, contando las familias del fichero agrupado **ignorando la página**:
+
+```
+43 filas en barreras-agrupadas.csv
+15 familias si se agrupa también entre páginas
+
+10 filas · 2.5.3 · a.text-black «Ir a la página de inicio»   (logo de la cabecera)
+10 filas · 2.5.3 · a.text-3xl   «Ir a la página de inicio»   (logo del pie)
+10 filas · 2.5.3 · a.flex       «Perfil de LinkedIn»         (enlace del pie)
+```
+
+Tres elementos de la misma plantilla, en las diez páginas de la muestra, con **un solo arreglo cada uno**. La agrupación llevaba la página en la clave, así que agrupaba dentro de cada página y no entre páginas: treinta filas afirmando treinta problemas que no existen, y una estimación de trabajo de remediación inflada en la misma proporción.
+
+**El umbral, y por qué hay umbral.** Había un test defendiendo lo contrario —«dos páginas no se funden, aunque la medida sea la misma»— y tenía razón: dos elementos con el mismo esqueleto de ruta pueden estar escritos a mano por separado, y arreglar uno no arregla el otro. El esqueleto no distingue «componente de la plantilla» de «dos elementos que se parecen». Lo que sí lo distingue es **cuántas páginas**: una cosa que aparece en la misma ruta del DOM, con la misma forma de hallazgo, en tres o más páginas de una muestra WCAG-EM, es la plantilla. Dos no son prueba de nada y se quedan separadas, con su test intacto.
+
+Ese umbral es una elección, así que tiene nombre (`umbralPlantilla`, por defecto 3), se puede subir, y con 1 el fichero vuelve a salir exactamente como antes.
+
+**No se pierde una sola página.** La familia trae `Nº de páginas` y `Todas las páginas` en columnas propias; `Página` sigue trayendo una, porque hay entregables que leen esa columna. Y la evidencia lo dice con palabras: «10 elementos con esta misma medida, en 10 páginas de la muestra — es el mismo componente de la plantilla, así que un solo arreglo los cierra todos». El fichero por elemento (`barreras.csv`, 132 filas) **no cambia**: es la evidencia por página y es lo que sostiene el IRA.
+
+**910 tests unitarios** (de 906), con cuatro nuevos que reproducen la forma exacta de `ja14`: tres componentes en diez páginas dan tres filas; en dos páginas dan seis; el umbral se puede apagar; y tres rutas distintas siguen siendo tres componentes aunque el defecto tenga la misma forma.
+
+Predicción para la próxima pasada, dicha para que se pueda desmentir: **43 → 16 filas** (las tres familias de diez colapsan; el par de 2.4.11, que está en dos páginas, se queda en dos).
+
 ### v0.91.0 — lo primero que dijo el aviso nuevo: la huella llevaba rota en las doce páginas
 
 La pasada `ja14`, la primera con el aviso de sondas caídas de v0.90.0, lo dijo en la primera línea:

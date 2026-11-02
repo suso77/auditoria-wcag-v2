@@ -10126,14 +10126,77 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       if (ix[k] === undefined) { ix[k] = grupos.length; grupos.push([]); }
       grupos[ix[k]].push(r);
     });
-    const out = grupos.map(function (g) {
+    /* ── SEGUNDA PASADA: LO QUE ESTÁ EN LA PLANTILLA ES UNA FAMILIA, NO DIEZ ────
+     *
+     * Lo de arriba agrupa DENTRO de cada página, y eso deja fuera el caso más
+     * caro. Medido en la auditoría `ja14` del sitio del autor: el fichero que
+     * promete «una fila por familia» traía 43 filas, y tres familias se comían 30:
+     *
+     *     10 filas · 2.5.3 · a.text-black «Ir a la página de inicio»  (logo de la cabecera)
+     *     10 filas · 2.5.3 · a.text-3xl   «Ir a la página de inicio»  (logo del pie)
+     *     10 filas · 2.5.3 · a.flex       «Perfil de LinkedIn»        (enlace del pie)
+     *
+     * Tres elementos de la MISMA plantilla en las diez páginas, con un solo
+     * arreglo para cada uno. Treinta filas dicen que hay treinta problemas, e
+     * infla además la estimación del trabajo de remediación.
+     *
+     * PERO FUSIONAR POR PÁGINA NO VALE, y hay un test que lo defiende con razón:
+     * dos páginas con el mismo esqueleto pueden ser dos elementos escritos a mano
+     * por separado, y arreglar uno no arregla el otro. El esqueleto no distingue
+     * «componente de la plantilla» de «dos elementos que se parecen».
+     *
+     * Lo que sí lo distingue es CUÁNTAS páginas. Una cosa que aparece en la misma
+     * ruta del DOM, con la misma forma de hallazgo, en TRES o más páginas de una
+     * muestra WCAG-EM, es la plantilla: un elemento escrito a mano página a página
+     * no cae tres veces en la misma ruta con el mismo defecto. Dos páginas no son
+     * prueba de nada y se quedan separadas.
+     *
+     * El umbral es una ELECCIÓN mía, así que tiene nombre y se puede cambiar
+     * (`umbralPlantilla`), y con 0 o 1 esto no hace nada. Sin esqueleto no se
+     * fusiona nunca, por lo mismo que la primera pasada: sin ruta no hay prueba. */
+    const umbral = (ctx && ctx.umbralPlantilla != null) ? ctx.umbralPlantilla : 3;
+    let porFamilia = grupos;
+    if (umbral >= 2) {
+      const porClave = {};
+      grupos.forEach(function (g) {
+        const r = g[0];
+        const esq = esqueletoSelector(r.selector);
+        if (!esq) { (porClave["\u0001" + grupos.indexOf(g)] = []).push(g); return; }
+        const k = [r.criterio, formaDeEvidencia(r.evidencia), esq, r.subcriterioOAW || ""].join("\u0000");
+        (porClave[k] = porClave[k] || []).push(g);
+      });
+      porFamilia = [];
+      Object.keys(porClave).forEach(function (k) {
+        const familia = porClave[k];
+        const paginas = {};
+        familia.forEach(function (g) { g.forEach(function (r) { if (r.pagina) paginas[r.pagina] = 1; }); });
+        if (familia.length > 1 && Object.keys(paginas).length >= umbral) {
+          porFamilia.push(familia.reduce(function (a, g) { return a.concat(g); }, []));
+        } else {
+          familia.forEach(function (g) { porFamilia.push(g); });
+        }
+      });
+    }
+    const out = porFamilia.map(function (g) {
       const p = g[0];
       const sels = g.map(function (r) { return r.selector || ""; }).filter(Boolean);
       const els = g.map(function (r) { return r.elemento || ""; }).filter(Boolean);
       const elsUnicos = [];
       els.forEach(function (e) { if (elsUnicos.indexOf(e) === -1) elsUnicos.push(e); });
+      /* Las páginas de la familia, que es el dato que sustituye a las diez filas.
+       * No se pierde ninguna: van todas en el JSON y las diez primeras en el CSV.
+       * Y «Página» sigue trayendo UNA —la primera—, porque la columna existía y
+       * hay entregables que la leen: lo que cambia es que ahora dice cuántas más. */
+      const pags = [];
+      g.forEach(function (r) { if (r.pagina && pags.indexOf(r.pagina) === -1) pags.push(r.pagina); });
       return Object.assign({}, p, {
         instancias: g.length,
+        paginas: pags,
+        nPaginas: pags.length,
+        paginasCsv: pags.length > TOPE_SELECTORES
+          ? pags.slice(0, TOPE_SELECTORES).join(" · ") + " · … y " + (pags.length - TOPE_SELECTORES) +
+            " más (las " + pags.length + " están en el JSON, campo `paginas`)"
+          : pags.join(" · "),
         /* La columna «Elemento» sigue siendo legible de un vistazo: el primero, y
          * cuántos más hay cuando son distintos entre sí. Si los 63 son el mismo
          * `a.red-link`, repetirlo 63 veces no dice nada que el recuento no diga. */
@@ -10163,7 +10226,11 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
          * datos: quien va a arreglar 85 tarjetas necesita ver que el patrón es
          * siempre el mismo y un par de casos concretos para comprobarlo. */
         evidencia: g.length > 1
-          ? p.evidencia + " [" + g.length + " elementos con esta misma medida en esta página" +
+          ? p.evidencia + " [" + g.length + " elementos con esta misma medida" +
+            (pags.length > 1
+              ? ", en " + pags.length + " páginas de la muestra — es el mismo componente de la plantilla, " +
+                "así que un solo arreglo los cierra todos"
+              : " en esta página") +
             (function () {
               const distintas = [];
               g.forEach(function (r) { if (distintas.indexOf(r.evidencia) === -1) distintas.push(r.evidencia); });
@@ -10191,6 +10258,11 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     { key: "criterio", label: "Criterio WCAG" },
     { key: "nombre", label: "Nombre" }, { key: "nivel", label: "Nivel" }, { key: "gravedad", label: "Gravedad" },
     { key: "ambito", label: "Ámbito" }, { key: "pagina", label: "Página" },
+    /* Las páginas de la familia van en su propia columna, al lado de la que
+     * siempre trajo una sola: una familia de la cabecera aparece en las diez
+     * páginas de la muestra y eso es el dato que sustituye a las diez filas. */
+    { key: "nPaginas", label: "Nº de páginas" },
+    { key: "paginasCsv", label: "Todas las páginas" },
     { key: "instancias", label: "Nº de elementos" },
     { key: "elemento", label: "Elemento" },
     { key: "elementosCsv", label: "Todos los elementos" },

@@ -633,3 +633,65 @@ test("un criterio de sitio sin huella NO sale como «revisado sin incumplimiento
   // Y no se cuela en la columna de lo comprobado: ahí va lo que el agente MIRÓ.
   assert.equal(loComprobado([sinHuella], 3), "");
 });
+
+/* ── LA PLANTILLA ES UNA FAMILIA, NO DIEZ ────────────────────────────────────
+ *
+ * Reproduce la forma exacta de la auditoría `ja14` del sitio del autor: el
+ * fichero que promete «una fila por familia» traía 43 filas, y tres familias se
+ * comían 30 de ellas — el logo de la cabecera, el logo del pie y el enlace de
+ * LinkedIn del pie, cada uno en las diez páginas de la muestra. Un solo arreglo
+ * cierra cada uno, así que treinta filas afirman treinta problemas que no hay, e
+ * inflan además la estimación del trabajo de remediación.
+ */
+const LOGOS = [
+  { sel: "html > body > header:nth-of-type(1) > nav:nth-of-type(1) > a:nth-of-type(1)", el: "a.text-black", nom: "Ir a la página de inicio", vis: "JFA" },
+  { sel: "html > body > footer:nth-of-type(1) > div:nth-of-type(1) > a:nth-of-type(1)", el: "a.text-3xl", nom: "Ir a la página de inicio", vis: "JFA" },
+  { sel: "html > body > footer:nth-of-type(1) > nav:nth-of-type(2) > ul:nth-of-type(1) > li:nth-of-type(1) > a:nth-of-type(1)", el: "a.flex", nom: "Perfil de LinkedIn", vis: "LinkedIn Profesional" }
+];
+const plantilla = (nPaginas) => {
+  const fs = [];
+  for (let i = 0; i < nPaginas; i++) {
+    LOGOS.forEach(function (L) {
+      const f = familia("2.5.3", [{ locator: L.el, name: L.nom, path: L.sel }],
+        "link «" + L.nom + "»: El texto visible es «" + L.vis + "» y el nombre accesible es «" + L.nom + "», que no lo contiene (fallo F96).");
+      f.url = "https://x.test/p" + i;
+      fs.push(f);
+    });
+  }
+  return fs;
+};
+
+test("agrupadas: tres elementos de la plantilla en diez páginas son TRES filas", () => {
+  const g = barrerasAgrupadas(plantilla(10), {});
+  assert.equal(g.length, 3, "una fila por componente, no una por página: " +
+    g.map(function (r) { return r.elemento; }).join(" | "));
+  g.forEach(function (r) {
+    assert.equal(r.instancias, 10);
+    assert.equal(r.nPaginas, 10, "las diez páginas, contadas");
+    assert.equal(r.paginas.length, 10, "y enteras en el objeto, que no se pierde ninguna");
+    assert.match(r.evidencia, /en 10 páginas de la muestra/, r.evidencia.slice(-180));
+    assert.match(r.evidencia, /un solo arreglo los cierra todos/);
+  });
+  // Y los tres componentes siguen separados: son tres arreglos distintos.
+  assert.equal(new Set(g.map(function (r) { return r.selector; })).size, 3);
+});
+
+test("agrupadas: por debajo del umbral NO se funde, que dos páginas no son una plantilla", () => {
+  // Es el caso que defiende el test de más arriba: con dos páginas, arreglar una
+  // puede no arreglar la otra, y el agente no tiene con qué demostrarlo.
+  assert.equal(barrerasAgrupadas(plantilla(2), {}).length, 6, "dos páginas × tres componentes = seis filas");
+  assert.equal(barrerasAgrupadas(plantilla(3), {}).length, 3, "con tres ya es la plantilla");
+});
+
+test("agrupadas: el umbral de plantilla se puede cambiar y apagar", () => {
+  assert.equal(barrerasAgrupadas(plantilla(10), { umbralPlantilla: 1 }).length, 30, "apagado: como antes de v0.92.0");
+  assert.equal(barrerasAgrupadas(plantilla(4), { umbralPlantilla: 5 }).length, 12, "con el umbral por encima, no funde");
+});
+
+test("agrupadas: componentes DISTINTOS con el mismo defecto no se funden entre sí", () => {
+  // La prueba de que son el mismo componente es el esqueleto de la ruta. Tres
+  // rutas distintas son tres componentes aunque el hallazgo tenga la misma forma.
+  const g = barrerasAgrupadas(plantilla(10), {});
+  const esqueletos = g.map(function (r) { return esqueletoSelector(r.selector); });
+  assert.equal(new Set(esqueletos).size, 3, esqueletos.join(" | "));
+});
