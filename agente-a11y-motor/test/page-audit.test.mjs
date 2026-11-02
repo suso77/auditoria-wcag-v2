@@ -170,8 +170,25 @@ test("autoplay silenciado no dispara una FALLA de 1.4.2, pero sí se dice", () =
   assert.match(f[0].evid[0], /están silenciados/);
 });
 
-test("sin medios, ninguno de los criterios de 1.2 se inventa", () => {
-  assert.deepEqual(soloDe(BASE + "<p>Solo texto.</p></main></body></html>", /1\.2\.|1\.4\.2/), []);
+test("sin medios, los criterios de medios salen NO APLICA, no en blanco", () => {
+  /* ESTE TEST EXIGÍA SILENCIO, y el silencio era el defecto. Medido en el sitio
+   * del autor: de los seis criterios que quedaban sin nada que mostrar, CUATRO
+   * eran estos, con el motivo «la sonda corrió y no encontró contenido al que
+   * aplicarlo; el agente no afirma que no aplique». Literalmente cierto y, en un
+   * IRA, inútil: un auditor que revisa un sitio sin vídeo ni audio escribe «no
+   * aplica», y dejarlo en «no se puede comprobar» deja cuatro criterios de nivel
+   * A abiertos en el informe de un sitio que no tiene medios.
+   *
+   * Lo que el test tenía que defender —que no se INVENTE una barrera donde no
+   * hay medios— sigue defendido: ninguno es `falla` ni `revisar`. */
+  const f = soloDe(BASE + "<p>Solo texto.</p></main></body></html>", /1\.2\.|1\.4\.2/);
+  const n = f.map((x) => x.c.n).sort();
+  assert.deepEqual(n, ["1.2.1", "1.2.2", "1.2.3", "1.2.4", "1.2.5", "1.4.2"], JSON.stringify(n));
+  f.forEach((x) => assert.equal(x.verdict, "no-aplica", x.c.n + ": " + x.verdict));
+  // Y la afirmación va con lo que se buscó y con lo que NO se ve desde el marcado.
+  assert.match(f[0].evid[0], /0 elementos <video> o <audio>/);
+  assert.match(f[0].evid[0], /0 enlaces a un reproductor/);
+  assert.match(f[0].evid[0], /solo aparece tras una interacción/);
 });
 
 /* ── 3.1.2 Idioma de las partes ─────────────────────────────────────────── */
@@ -353,7 +370,13 @@ test("medios: un mapa o un captcha NO cuentan como medio dudoso", () => {
     '<iframe src="https://www.google.com/maps/embed?pb=1" title="Mapa"></iframe>' +
     '<iframe src="https://www.google.com/recaptcha/api2/anchor" title="captcha"></iframe></main></body></html>';
   const f = auditPageHtml(html, DOMParser).filter((x) => ["1.2.1", "1.2.2", "1.2.3", "1.4.2"].includes(x.c.n));
-  assert.deepEqual(f, [], "un mapa no es un medio: " + JSON.stringify(f.map((x) => x.c.n + "/" + x.evid[0])));
+  /* Un mapa y un captcha no son medios, así que la página sigue siendo una
+   * página SIN medios: lo que no puede pasar es que salgan como `revisar` o
+   * `falla` —eso sería inventarse un vídeo—, y desde v0.87.0 salen como «no
+   * aplica» con la evidencia de lo que se buscó, que es lo que firma un auditor. */
+  f.forEach((x) => assert.equal(x.verdict, "no-aplica",
+    "un mapa no es un medio: " + x.c.n + " salió " + x.verdict + " — " + x.evid[0]));
+  assert.equal(f.length, 4, JSON.stringify(f.map((x) => x.c.n)));
 });
 
 test("medios: 1.2.3 distingue el vídeo sin nada del que tiene transcripción al lado", () => {

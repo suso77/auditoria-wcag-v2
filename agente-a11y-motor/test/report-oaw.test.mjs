@@ -300,6 +300,38 @@ test("motivo: sin código se deduce del veredicto, que también es un dato", () 
   assert.equal(motivoPendiente([{ c: { n: "1.1.1" }, verdict: "cumple", evid: ["la capa que lo mide sí se ha ejecutado y no ha dicho nada"] }], "cumple"), "");
 });
 
+test("un «no aplica» de UNA página no decide por el sitio: manda la peor", () => {
+  /* LA REGRESIÓN QUE HABÍA QUE EVITAR al hacer que los criterios de medios
+   * salgan «no aplica» sin medios. En una muestra de doce páginas, once sin
+   * vídeo y una con un vídeo sin subtítulos, el criterio NO puede salir «no
+   * aplica» por el sitio: saldría conforme un sitio con una barrera dentro.
+   * `worseOf` ordena `no-aplica` como el más débil de todos, y esto lo vigila
+   * desde la hoja, que es donde se vería el daño. */
+  const rows = seguimiento([
+    { c: { n: "1.2.2", t: "Subtítulos (grabados)", lvl: "A" }, verdict: "no-aplica", sev: null,
+      evid: ["Sin medios en el marcado de esta página"] },
+    { c: { n: "1.2.2", t: "Subtítulos (grabados)", lvl: "A" }, verdict: "no-aplica", sev: null,
+      evid: ["Sin medios en el marcado de esta página"] },
+    { c: { n: "1.2.2", t: "Subtítulos (grabados)", lvl: "A" }, verdict: "falla", sev: "grave",
+      nodes: [{ locator: "video" }], evid: ["1 vídeo sin pista de subtítulos"] }
+  ]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].veredicto, "falla", "la barrera manda sobre el «no aplica» de las otras páginas");
+  assert.equal(rows[0].resultado, "Falla");
+  assert.equal(rows[0].num_barreras, 1);
+});
+
+test("y sin ninguna barrera, el «no aplica» sí llega al informe", () => {
+  const rows = seguimiento([
+    { c: { n: "1.2.2", t: "Subtítulos (grabados)", lvl: "A" }, verdict: "no-aplica", sev: null,
+      evid: ["Sin medios en el marcado de esta página"] }
+  ]);
+  assert.equal(rows[0].resultado, "No aplica");
+  // Y un «no aplica» es un dictamen: no lleva motivo ni «qué ha comprobado».
+  assert.equal(rows[0].motivo, "");
+  assert.equal(rows[0].comprobado, "");
+});
+
 test("loComprobado: trae las evidencias de lo que SÍ se midió, sin repetirlas", () => {
   /* En una muestra de doce páginas la misma evidencia llega doce veces, y la
    * celda de una hoja de cálculo no es un sitio donde repetirla. */

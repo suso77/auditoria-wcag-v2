@@ -6258,6 +6258,51 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     /* ── 1.2.x Medios ── */
     const medios = inventarioMedios(doc);
     const dudosos = medios.dudosos || [], enlazados = medios.enlaces || [];
+    /* ── SIN UN SOLO MEDIO, LOS CRITERIOS DE MEDIOS NO APLICAN, Y HAY QUE DECIRLO ──
+     *
+     * Esto sale de una medición en el sitio del autor. En la pasada `ja11`, con la
+     * hoja ya diciendo qué se comprueba, el hueco real eran SEIS criterios y
+     * CUATRO de ellos eran estos: 1.2.1, 1.2.2, 1.2.3 y 1.4.2, con el motivo «la
+     * sonda corrió y no encontró contenido al que aplicarlo; el agente no afirma
+     * que no aplique». Literalmente cierto y, en un IRA, inútil: un auditor que
+     * revisa un sitio sin vídeo ni audio escribe «no aplica», no «no se puede
+     * comprobar», y la diferencia es que lo segundo deja cuatro criterios de
+     * nivel A abiertos en el informe de un sitio que no tiene medios.
+     *
+     * Y el agente SÍ puede afirmarlo, porque el inventario no es ingenuo: busca
+     * `<video>` y `<audio>`, los reproductores incrustados reconocidos, los
+     * marcos/objetos DUDOSOS —los que no se reconocen como mapa, captcha ni
+     * analítica— y los ENLACES a un reproductor o a un archivo de medios por
+     * extensión. Con las cuatro listas vacías, la afirmación «en el marcado de
+     * esta página no hay medios grabados» está sostenida por lo que se buscó, y
+     * eso es lo que dice la evidencia.
+     *
+     * CON SU CAUTELA, que es lo que hace que la afirmación se pueda firmar: un
+     * reproductor que solo aparece tras una interacción, o un sonido en un
+     * `<canvas>`, no están en el marcado y no se ven desde aquí. Va escrito en la
+     * propia evidencia, no en una nota al pie que nadie lee.
+     *
+     * El `no-aplica` es por PÁGINA, y eso lo arregla la agregación: si otra página
+     * de la muestra tiene un vídeo, su `revisar` o su `falla` manda sobre este
+     * `no-aplica` —`worseOf` lo ordena así— y el criterio no sale «no aplica» por
+     * el sitio entero. */
+    if (!medios.propios.length && !medios.externos.length && !dudosos.length && !enlazados.length) {
+      const buscado = "Sin medios en el marcado de esta página: 0 elementos <video> o <audio>, " +
+        "0 reproductores incrustados reconocidos, 0 marcos u objetos sin identificar y 0 enlaces a un " +
+        "reproductor o a un archivo de medios. Lo que NO se ve desde el marcado: un reproductor que solo " +
+        "aparece tras una interacción (una caja de luz, un consentimiento de cookies que desbloquea el " +
+        "vídeo) y el sonido generado por un <canvas> o por la Web Audio API. Si el sitio tiene algo de eso, " +
+        "este «no aplica» no le vale.";
+      ["1.2.1", "1.2.2", "1.2.3", "1.2.4", "1.2.5"].forEach(function (c) {
+        out.push(F(c, "no-aplica", null, [buscado]));
+      });
+      /* 1.4.2 es sobre audio que SUENA SOLO más de tres segundos. Sin medios en el
+       * marcado no hay nada que pueda sonar, así que la misma evidencia lo
+       * sostiene; se dice aparte porque su razón es distinta y el informe la cita. */
+      out.push(F("1.4.2", "no-aplica", null, [
+        "No hay audio que pueda sonar solo: " + buscado.charAt(0).toLowerCase() + buscado.slice(1)
+      ]));
+    }
     if (medios.propios.length || medios.externos.length || dudosos.length || enlazados.length) {
       const videos = medios.propios.filter(function (m) { return m.tag === "video"; });
       const audios = medios.propios.filter(function (m) { return m.tag === "audio"; });

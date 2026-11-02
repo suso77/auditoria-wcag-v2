@@ -1001,6 +1001,22 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.87.0 — un sitio sin vídeo no deja cuatro criterios de nivel A abiertos
+
+El segundo trozo del hueco que destapó la hoja nueva. En la pasada `ja11` del sitio del autor, cuatro de los seis criterios sin nada que mostrar eran **1.2.1, 1.2.2, 1.2.3 y 1.4.2**, con el motivo «la sonda corrió y no encontró contenido al que aplicarlo; el agente no afirma que no aplique». Literalmente cierto y, en un IRA, inútil: un auditor que revisa un sitio sin vídeo ni audio escribe **«no aplica»**, y dejarlo en «no se puede comprobar» deja cuatro criterios de nivel A abiertos en el informe de un sitio que no tiene medios.
+
+Y el agente **sí** puede afirmarlo, porque su inventario no es ingenuo: busca `<video>` y `<audio>`, los reproductores incrustados reconocidos, los marcos y objetos **dudosos** —los que no se identifican como mapa, captcha o analítica— y los **enlaces** a un reproductor o a un archivo de medios por extensión; esa última pieza la añadió en su día una medición, no una idea, porque la página con más vídeos de un sitio real no tenía ni un `<video>`. Con las cuatro listas vacías, «en el marcado de esta página no hay medios grabados» está sostenido por lo que se buscó, y la evidencia lo dice con esos números.
+
+Con su cautela dentro, que es lo que permite firmarlo: un reproductor que solo aparece tras una interacción —una caja de luz, un consentimiento de cookies que desbloquea el vídeo— y el sonido generado por un `<canvas>` o la Web Audio API no están en el marcado y no se ven desde ahí. Va escrito en la propia evidencia, no en una nota al pie.
+
+Alcanza a los cinco criterios de medios (1.2.1 a 1.2.5) y a 1.4.2, que es sobre audio que suena solo: sin nada que pueda sonar, la misma evidencia lo sostiene.
+
+**Y la regresión que había que evitar**, con su guardia: el «no aplica» es por página. En una muestra de doce páginas, once sin vídeo y una con un vídeo sin subtítulos, el criterio **no** puede salir «no aplica» por el sitio —saldría conforme un sitio con una barrera dentro—. `worseOf` ordena `no-aplica` como el más débil de todos, y el test lo comprueba desde la hoja, que es donde se vería el daño.
+
+Dos tests del propio banco exigían silencio aquí —«sin medios, ninguno de los criterios de 1.2 se inventa»— y el silencio era el defecto. Reescritos: lo que defendían, que no se invente una barrera donde no hay medios, sigue defendido, porque ninguno sale `falla` ni `revisar`.
+
+**889 tests unitarios** (de 887).
+
 ### v0.86.0 — 1.4.11 no se medía en ningún sitio hecho con utilidades CSS
 
 El paso anterior convirtió la hoja de Seguimiento en un diagnóstico, y el diagnóstico dio un nombre: en la pasada `ja11` del sitio del autor, con la capa dinámica encendida, **39 de los 55 criterios traen ya evidencia de lo comprobado** y el hueco real se quedó en **seis**. De esos seis, cinco son el inventario de medios diciendo honradamente que no encontró audio ni vídeo; el sexto era **1.4.11, el único criterio que decía «ninguna capa llegó a dictaminarlo»**.
