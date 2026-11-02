@@ -1001,6 +1001,22 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.85.0 — «sin dictamen» era falso, y era la fila más cara del informe
+
+Medido en la auditoría `ja10` del sitio del autor: **catorce de los 55 criterios** salían en la hoja de Seguimiento como «Sin dictamen del agente: queda para revisión manual» —1.3.1, 1.4.11, 1.4.13, 2.1.1, 2.4.5, 3.2.3, 3.2.4, 3.2.6, 4.1.2…— mientras el rollup decía `revisar` para todos ellos. `revisar` **es** un dictamen: es el prudente, y lo emite el agente después de mirar. La hoja que firma el auditor afirmaba lo contrario.
+
+Y detrás había algo peor: **las evidencias de los `revisar` no llegaban a ningún entregable**. Las barreras solo llevan fallas y el seguimiento tiraba el resto, así que todo lo que el agente comprueba y encuentra limpio era invisible — y eso es la mitad del trabajo de una auditoría: lo que se ha mirado. Ahora la hoja lleva una columna nueva, **«Qué ha comprobado el agente»**, con las evidencias medidas, deduplicadas (en una muestra de doce páginas la misma frase llega doce veces) y recortadas.
+
+**Y la frase depende del dato, no de la prosa.** Al medir el arreglo salió lo que no esperaba: de trece `revisar` en una página de prueba, **once traían evidencia medida** —«input#n: 185×21 px (< 24×24)», «a: recibe el foco», «con el texto al 200 % no se recorta ni se solapa ningún bloque»— y **dos eran solo relleno del motor**, que dice «lo mide la capa de medición» sobre una capa que no emitió nada de ese criterio. Las dos cosas acababan con la misma frase y no son lo mismo: una es «revisado, falta el juicio humano» y la otra es «aquí no ha mirado nadie». Ahora se distinguen, y la segunda lo dice con esas palabras: «Ninguna capa llegó a dictaminarlo».
+
+Eso convierte la hoja en el diagnóstico que faltaba: después de esta versión, un criterio con la casilla de comprobado vacía es, exactamente, un hueco de cobertura del agente. Es el dato con el que se decide dónde invertir el trabajo siguiente, y no existía.
+
+La clasificación va por **campos y nunca por la prosa castellana** —`origen: "motor-sin-capa"` y el `motivo` del barrido de cobertura—, que es una regla vieja de este proyecto y que la primera versión de este arreglo incumplió: filtraba con una expresión regular sobre el texto y colaba la frase del barrido («la capa que lo mide sí se ha ejecutado y no ha dicho nada») dentro de «qué se ha comprobado», afirmando lo contrario de lo que esa frase dice.
+
+**887 tests unitarios** (de 882), con seis nuevos: la deduplicación, el relleno del motor que no cuenta, el barrido que tampoco, la falla que no se cuenta como comprobación limpia, las dos frases de `revisar` y que un dictamen no arrastre ni motivo ni comprobado.
+
+BUNDLES: solo `extension/motor.js`, que embebe `report-oaw.js` entero. El artifact (`web/agente-a11y.html`) toma de ese fichero únicamente `csvCell` y `toCsv`, así que no cambia — medido con el ensayo del instalador, que paró en rojo cuando afirmé lo contrario.
+
 ### v0.84.0 — el fallo de NVDA no dejaba nada que mirar
 
 La verificación con NVDA corre en un runner de Windows, porque en España el lector dominante es NVDA y el equipo trabaja en macOS. Una ejecución terminó dejando esto, y nada más:

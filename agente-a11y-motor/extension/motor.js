@@ -9651,8 +9651,72 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     if (!worst) return "Ningún hallazgo mencionó este criterio en esta pasada: no se ha comprobado, y el barrido de cobertura tampoco llegó a él";
     if (worst === "humano") return "Criterio de juicio: hace falta una persona, y el cuaderno dice qué mirar";
     if (worst === "cumple-parcial") return "La parte automatizable se cumple; la calidad del texto exige juicio humano";
-    if (worst === "revisar") return "Sin dictamen del agente: queda para revisión manual";
+    /* «SIN DICTAMEN» ERA FALSO, Y ERA LA FILA MÁS CARA DEL INFORME.
+     *
+     * `revisar` ES un dictamen —el prudente— y lo emite el agente DESPUÉS de
+     * mirar: recorre la tabulación, mide los bordes, pasa el puntero, compara
+     * páginas. Medido en la auditoría `ja10` del sitio del autor: CATORCE de los
+     * 55 criterios salían con esta frase —1.3.1, 1.4.11, 1.4.13, 2.1.1, 2.4.5,
+     * 3.2.3, 3.2.4, 3.2.6, 4.1.2…— con el rollup diciendo `revisar` para todos
+     * ellos. O sea que la hoja que ve el cliente afirmaba que el agente no había
+     * opinado sobre catorce criterios que sí había examinado.
+     *
+     * Y peor: las evidencias de esos `revisar` no llegaban a NINGÚN entregable.
+     * Las barreras solo llevan fallas, y el seguimiento las tiraba. Todo lo que el
+     * agente comprueba y encuentra limpio era invisible, que es la mitad del
+     * trabajo de una auditoría: lo que se ha mirado. */
+    if (worst === "revisar") {
+      /* Y LA FRASE DEPENDE DE SI HAY MEDICIÓN DE VERDAD, que es lo que destapó la
+       * medición de este arreglo: de trece `revisar` en una página de prueba,
+       * once traían evidencia medida —«input#n: 185×21 px (< 24×24)», «a: recibe
+       * el foco», «con el texto al 200 % no se recorta»— y DOS eran solo el
+       * relleno del motor, que dice «lo mide la capa de medición» sobre una capa
+       * que no emitió nada de ese criterio. Las dos cosas acababan con la misma
+       * frase, y no son lo mismo: una es «revisado, falta el juicio humano» y la
+       * otra es «aquí no ha mirado nadie». Decirlas igual es la media verdad que
+       * este proyecto persigue, así que se distinguen por el DATO —si hay
+       * evidencia medida o no—, nunca por la prosa. */
+      return loComprobado(fs, 3)
+        ? "Revisado por el agente sin encontrar incumplimiento automatizable; queda la parte que exige una persona (ver qué se ha comprobado)."
+        : "Ninguna capa llegó a dictaminarlo: el motor no lo determina desde el marcado y la capa que lo mide no emitió nada sobre esta página. Sin comprobar.";
+    }
     return "";
+  }
+
+  /**
+   * QUÉ HA COMPROBADO EL AGENTE, en las propias palabras de sus hallazgos.
+   *
+   * Sale de las evidencias de los hallazgos que NO son falla: son las que decían
+   * qué se midió y qué quedaba fuera, y hasta ahora se calculaban y se tiraban.
+   * Se deduplican —en una muestra de doce páginas la misma evidencia aparece doce
+   * veces— y se recortan, porque esto va en una celda de hoja de cálculo.
+   *
+   * Se deja fuera el relleno del motor («lo mide la capa de X, que este análisis
+   * del marcado no ejecuta»): eso no es algo comprobado, es la ausencia de una
+   * capa, y para eso está el motivo `capa-no-corrio` con su precedencia.
+   */
+  function loComprobado(fs, tope) {
+    const vistas = [];
+    (fs || []).forEach(function (f) {
+      if (!f || f.verdict === "falla") return;
+      /* SE EXCLUYE POR EL DATO, NO POR LA PROSA. Dos clases de hallazgo no son
+       * comprobaciones: el relleno del motor (`origen: "motor-sin-capa"`) y los
+       * del barrido de cobertura, que llevan `motivo` con su código. La primera
+       * versión de esto los filtraba con una expresión regular sobre el texto
+       * castellano, y por eso colaba la prosa del barrido —«la capa que lo mide
+       * sí se ha ejecutado y no ha dicho nada»— en la casilla de «qué se ha
+       * comprobado», que es justo lo contrario de lo que esa frase dice. En este
+       * proyecto la clasificación va por los campos: la prosa cambia. */
+      if (f.origen === "motor-sin-capa" || f.motivo) return;
+      (f.evid || []).forEach(function (e) {
+        const t = String(e || "").replace(/\s+/g, " ").trim();
+        if (!t) return;
+        if (vistas.indexOf(t) === -1) vistas.push(t);
+      });
+    });
+    const max = tope || 3;
+    const usadas = vistas.slice(0, max);
+    return usadas.join(" · ") + (vistas.length > max ? " · (y " + (vistas.length - max) + " más)" : "");
   }
 
   function seguimiento(findings, opts) {
@@ -9716,6 +9780,11 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
           resultado: resultado,
           cobertura: cobertura,
           motivo: motivo,
+          /* Lo comprobado viaja en la fila, al lado del motivo. Un «no se puede
+           * comprobar» sin decir qué SÍ se comprobó deja al cliente —y al
+           * auditor que repite la revisión— sin saber dónde empezar. Va vacío
+           * cuando el dictamen habla por sí solo (falla, correcto, no aplica). */
+          comprobado: esDictamen ? "" : loComprobado(r.fs, 3),
           num_barreras: r.n
         };
       });
@@ -9940,6 +10009,9 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     // sobre cuántas páginas se está afirmando cada cosa sin salir de la fila.
     { key: "cobertura", label: "Cobertura de la muestra" },
     { key: "motivo", label: "Por qué no se puede comprobar" },
+    // Y qué SÍ se comprobó, que es la mitad del trabajo de una auditoría y no
+    // salía en ningún entregable: las barreras solo llevan fallas.
+    { key: "comprobado", label: "Qué ha comprobado el agente" },
     { key: "num_barreras", label: "Nº barreras" }
   ];
 
@@ -9990,6 +10062,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
   NS.resultadoOAW = resultadoOAW;
   NS.barreras = barreras;
   NS.motivoPendiente = motivoPendiente;
+  NS.loComprobado = loComprobado;
   NS.seguimiento = seguimiento;
   NS.csvCell = csvCell;
   NS.toCsv = toCsv;

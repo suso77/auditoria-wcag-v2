@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { oawExport, barreras, barrerasAgrupadas, seguimiento, motivoPendiente, formaDeEvidencia, esqueletoSelector } from "../src/index.js";
+import { oawExport, barreras, barrerasAgrupadas, seguimiento, motivoPendiente, loComprobado, formaDeEvidencia, esqueletoSelector } from "../src/index.js";
 
 const F = (n, lvl, verdict, sev, nodes, evid) => ({ c: { n, lvl, t: n }, verdict, sev, nodes, evid });
 
@@ -278,10 +278,84 @@ test("motivo: la sonda apagada manda sobre los demás, porque es lo único que a
 test("motivo: sin código se deduce del veredicto, que también es un dato", () => {
   assert.match(motivoPendiente([], "humano"), /hace falta una persona/i);
   assert.match(motivoPendiente([], "cumple-parcial"), /calidad del texto/i);
-  assert.match(motivoPendiente([], "revisar"), /Sin dictamen/i);
+  /* `revisar` ES un dictamen: lo emite el agente después de mirar, y decir
+   * «sin dictamen» era afirmar lo contrario. Medido en `ja10`: catorce de los
+   * 55 criterios salían con esa frase mientras el rollup decía `revisar` para
+   * todos ellos. La hoja que firma el auditor decía que el agente no había
+   * opinado sobre criterios que sí había examinado. */
+  /* Y `revisar` tiene DOS frases, según el dato: con evidencia medida es
+   * «revisado, falta el juicio humano»; sin ninguna, es «aquí no ha mirado
+   * nadie». Medido al construir esto: de trece `revisar` en una página de
+   * prueba, once traían medición y dos eran relleno, y las dos cosas salían con
+   * la misma frase. */
+  const conMedicion = [{ verdict: "revisar", evid: ["a: 40×20 px (< 24×24)"] }];
+  assert.match(motivoPendiente(conMedicion, "revisar"), /Revisado por el agente/i);
+  assert.match(motivoPendiente([], "revisar"), /Ninguna capa llegó a dictaminarlo/i);
+  assert.ok(!/Sin dictamen/i.test(motivoPendiente(conMedicion, "revisar")));
+  // Y el relleno del motor NO cuenta como medición para elegir la frase.
+  assert.match(motivoPendiente([{ verdict: "revisar", origen: "motor-sin-capa",
+    evid: ["lo mide la capa de medición"] }], "revisar"), /Ninguna capa llegó a dictaminarlo/i);
   // Y nunca se clasifica buscando expresiones regulares en la prosa castellana
   // de las evidencias: esa prosa cambia y la hoja tiene efectos legales.
   assert.equal(motivoPendiente([{ c: { n: "1.1.1" }, verdict: "cumple", evid: ["la capa que lo mide sí se ha ejecutado y no ha dicho nada"] }], "cumple"), "");
+});
+
+test("loComprobado: trae las evidencias de lo que SÍ se midió, sin repetirlas", () => {
+  /* En una muestra de doce páginas la misma evidencia llega doce veces, y la
+   * celda de una hoja de cálculo no es un sitio donde repetirla. */
+  const fs = [
+    { verdict: "revisar", evid: ["Se han recorrido 31 controles con el teclado."] },
+    { verdict: "revisar", evid: ["Se han recorrido 31 controles con el teclado."] },
+    { verdict: "cumple-parcial", evid: ["El borde se mide: 3.1:1 contra el fondo."] }
+  ];
+  const t = loComprobado(fs, 3);
+  assert.equal(t.match(/31 controles/g).length, 1, "no se repite: " + t);
+  assert.match(t, /3\.1:1/);
+});
+
+test("loComprobado: el relleno del motor NO se presenta como algo comprobado", () => {
+  /* «Lo mide la capa de dinámico, que este análisis del marcado no ejecuta» no
+   * es algo que se haya comprobado: es la ausencia de una capa, y para eso está
+   * el motivo `capa-no-corrio`. Colarlo en «qué ha comprobado el agente» sería
+   * exactamente la clase de media verdad que este proyecto persigue. */
+  const fs = [
+    { verdict: "revisar", origen: "motor-sin-capa",
+      evid: ["El motor no lo dictamina desde el marcado; lo mide la capa de dinámico, que este análisis del marcado no ejecuta."] },
+    // Y el barrido de cobertura, que se reconoce por su `motivo` y no por su
+    // prosa: su frase dice que NADIE lo comprobó, así que ponerla en la casilla
+    // de «qué se ha comprobado» sería afirmar lo contrario de lo que dice.
+    { verdict: "revisar", motivo: "sonda-muda",
+      evid: ["la capa que lo mide sí se ha ejecutado y no ha dicho nada de este criterio"] },
+    { verdict: "revisar", evid: ["Se ha pasado el puntero por 4 disparadores."] }
+  ];
+  const t = loComprobado(fs, 3);
+  assert.ok(!/no ejecuta/.test(t), t);
+  assert.ok(!/no ha dicho nada/.test(t), t);
+  assert.match(t, /4 disparadores/);
+});
+
+test("loComprobado: una falla no se cuenta como comprobación limpia", () => {
+  // Las fallas ya viajan en las barreras con su evidencia; repetirlas aquí
+  // haría leer una barrera como «esto se comprobó y está bien».
+  assert.equal(loComprobado([{ verdict: "falla", evid: ["botón sin nombre"] }], 3), "");
+});
+
+test("seguimiento: la fila de un `revisar` dice qué se comprobó", () => {
+  const rows = seguimiento([
+    { c: { n: "2.1.1", t: "Teclado", lvl: "A" }, verdict: "revisar", sev: null,
+      evid: ["Se han recorrido 31 controles con el teclado y todos se alcanzan."] }
+  ]);
+  const r = rows[0];
+  assert.match(r.motivo, /Revisado por el agente/);
+  assert.match(r.comprobado, /31 controles/);
+});
+
+test("seguimiento: un dictamen no lleva «qué ha comprobado» tampoco", () => {
+  const rows = seguimiento([
+    F("4.1.2", "A", "falla", "crítica", [{ locator: "button" }], ["sin nombre"]),
+    F("2.1.1", "A", "cumple", null, [], ["Correcto."])
+  ]);
+  rows.forEach((r) => assert.equal(r.comprobado, "", r.criterio + " no debía llevar «comprobado»"));
 });
 
 test("seguimiento: un dictamen NO lleva motivo al lado", () => {
