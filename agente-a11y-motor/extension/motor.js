@@ -9798,6 +9798,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
    */
   const MOTIVOS = {
     "capa-apagada": "La sonda que lo mide no se ejecutó en esta pasada: repite la pasada con esa capa encendida",
+    "capa-a-medias": "Lo miden varias capas y una NO se ejecutó: está medido a medias. Repite la pasada con esa capa encendida",
     "capa-no-corrio": "La sonda que lo mide no se ejecutó en esta pasada: repite la pasada con esa capa encendida",
     "nadie-lo-mide": "Ninguna capa lo mide, y el motor no vio en el marcado nada a lo que aplicarlo: sin comprobar",
     "sonda-muda": "La sonda corrió y no encontró contenido al que aplicarlo; el agente no afirma que no aplique",
@@ -9811,7 +9812,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
    * está ordenada esta lista. Lo que NO puede es ser suave: un criterio cuya
    * sonda se cayó en una página no está medido en esa página, y que lo esté en
    * las otras once no lo cubre. */
-  const PRECEDENCIA = ["pagina-inquieta", "capa-apagada", "capa-no-corrio", "sonda-rota", "muestra-incompleta", "nadie-lo-mide", "sonda-muda"];
+  const PRECEDENCIA = ["pagina-inquieta", "capa-apagada", "capa-a-medias", "capa-no-corrio", "sonda-rota", "muestra-incompleta", "nadie-lo-mide", "sonda-muda"];
 
   function motivoPendiente(fs, worst) {
     const lista = fs || [];

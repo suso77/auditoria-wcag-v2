@@ -532,3 +532,51 @@ test("un fallo de la capa de HUELLA marca los criterios de coherencia", () => {
   assert.equal(f.motivo, "sonda-rota", "3.2.3 → " + f.motivo);
   assert.match(f.evid.join(" "), /esClaseDeEstado/, "con el mensaje, que es el dato que hay");
 });
+
+/* ── UNA CONFORMIDAD FIRMADA CON MEDIA SONDA NO ES UNA CONFORMIDAD ───────────
+ *
+ * `notaDeCapaApagada` se iba en cuanto UNA de las capas del criterio había
+ * corrido, y varios criterios los miden DOS. Medido en Chromium sobre una
+ * página de prueba con la capa dinámica APAGADA, que es el valor POR DEFECTO:
+ * 1.3.1 salía `cumple`, y 2.1.1 y 2.4.3 `pasa`, sin que la prueba de teclado
+ * hubiera corrido. 2.1.1 es «Teclado». Tres conformidades firmadas con media
+ * sonda, en la configuración por defecto del agente.
+ */
+test("un criterio de dos capas con una apagada NO se firma conforme", () => {
+  const fs = ["1.3.1", "2.1.1", "2.4.3"].map((n) => ({
+    c: { n: n, t: n, lvl: "A" }, verdict: n === "1.3.1" ? "cumple" : "pasa", sev: null,
+    evid: ["lo que ve la capa de medición"]
+  }));
+  const tocados = notaDeCapaApagada(fs, capasEfectivas({ dynamic: false }), { sitio: false });
+  assert.deepEqual(tocados.sort(), ["1.3.1", "2.1.1", "2.4.3"]);
+  fs.forEach((f) => {
+    assert.equal(f.verdict, "revisar", f.c.n + " no puede quedarse conforme");
+    assert.equal(f.motivo, "capa-a-medias", f.c.n + " → " + f.motivo);
+    assert.match(f.evid.join(" "), /medido A MEDIAS/);
+    assert.match(f.evid.join(" "), /dinámico/, "y se dice QUÉ capa falta");
+  });
+});
+
+test("con todas sus capas encendidas, la conformidad se queda: esto no rompe lo que sí se mide", () => {
+  const fs = [{ c: { n: "2.1.1", t: "x", lvl: "A" }, verdict: "cumple", sev: null, evid: ["medido"] }];
+  const tocados = notaDeCapaApagada(fs, capasEfectivas({ dynamic: true }), { sitio: false });
+  assert.deepEqual(tocados, []);
+  assert.equal(fs[0].verdict, "cumple", "medido del todo, conforme: es el incentivo correcto");
+  assert.equal(fs[0].motivo, undefined);
+});
+
+test("ninguna capa corrió → sigue siendo «capa-apagada», no el motivo nuevo", () => {
+  // 4.1.3 lo mide SOLO la dinámica: ahí no hay medias tintas, y el motivo de
+  // siempre tiene que seguir saliendo o se pierde la distinción.
+  const fs = [{ c: { n: "4.1.3", t: "x", lvl: "AA" }, verdict: "cumple", sev: null, evid: ["x"] }];
+  notaDeCapaApagada(fs, capasEfectivas({ dynamic: false }), { sitio: false });
+  assert.equal(fs[0].motivo, "capa-apagada");
+  assert.match(fs[0].evid.join(" "), /NO SE EJECUTÓ en esta pasada/);
+});
+
+test("una BARRERA no se absuelve ni se reclasifica porque falte una capa", () => {
+  const f = { c: { n: "2.1.1", t: "x", lvl: "A" }, verdict: "falla", sev: "grave", evid: ["una barrera real"] };
+  notaDeCapaApagada([f], capasEfectivas({ dynamic: false }), { sitio: false });
+  assert.equal(f.verdict, "falla", "lo que estaba mal estaba mal");
+  assert.equal(f.sev, "grave");
+});

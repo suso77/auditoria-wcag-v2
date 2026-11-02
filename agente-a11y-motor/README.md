@@ -1001,6 +1001,26 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.93.0 — 2.1.1 «Teclado» salía conforme sin que la prueba de teclado hubiera corrido
+
+Medido en Chromium sobre una página de prueba, con la capa dinámica **apagada**, que es el valor **por defecto** del agente:
+
+```
+1.3.1  cumple   [página / dinámico]
+2.1.1  pasa     [medición / dinámico]
+2.4.3  pasa     [medición / dinámico]
+```
+
+Tres conformidades, y ninguna llevaba la nota de que a la mitad de su medición no se la había encendido. `notaDeCapaApagada` se iba en cuanto **una** de las capas del criterio había corrido (`if (corridas.length) return;`), y varios criterios los miden dos: el marcado ve una parte y la sonda dinámica la otra. 2.1.1 es «Teclado»: salía conforme sin que la prueba de teclado se hubiera ejecutado.
+
+Es la regla de oro del proyecto en su caso más caro, porque estaba en la configuración por defecto: cualquier pasada sin `--dinamico` firmaba esas tres.
+
+Ahora la nota se pone también cuando falta **alguna** capa, con su propio código (`capa-a-medias`, duro en la precedencia de `seguimiento.csv`), diciendo cuál falta, y los `cumple`/`pasa` bajan a `revisar`. Las **barreras no se tocan**: lo que estaba mal estaba mal, y que falte una sonda no lo absuelve — con su test.
+
+**Esto hace que el agente declare menos conformidad por defecto, y es a propósito.** No es una regresión: es dejar de afirmar lo que no se ha medido. Y la conformidad se recupera midiendo — comprobado en la misma pasada, con `--dinamico` encendido los tres vuelven a `cumple`/`pasa`. Que es el incentivo correcto, y resuelve mejor que a la bruta la pregunta de si la capa dinámica debería ir encendida por defecto: en vez de obligar a todo el mundo a pasadas más lentas, el agente deja de cobrar como conformidad lo que no ha comprobado.
+
+**914 tests unitarios** (de 910) y las 16 de integración en verde, con cuatro nuevos: el caso de las tres conformidades, que con todas las capas encendidas la conformidad se queda, que «ninguna capa corrió» sigue siendo `capa-apagada` y no el motivo nuevo, y que una barrera no se absuelve ni se reclasifica.
+
 ### v0.92.0 — el fichero que promete «una fila por familia» traía treinta filas de tres familias
 
 Medido en la auditoría `ja14` del sitio del autor, contando las familias del fichero agrupado **ignorando la página**:

@@ -236,16 +236,45 @@ export function notaDeCapaApagada(findings, capas, opts) {
     const corridas = suyas.filter(function (k) {
       return k === "coherencia" ? !!opts.sitio : !!(capas && capas[k]);
     });
-    if (corridas.length) return;                     // alguna corrió: no aplica la nota
+    /* ── UNA CONFORMIDAD FIRMADA CON MEDIA SONDA NO ES UNA CONFORMIDAD ────────
+     *
+     * Aquí decía `if (corridas.length) return;`: bastaba que UNA de las capas
+     * del criterio hubiera corrido para no decir nada de la que no. Y varios
+     * criterios los miden DOS. Medido en Chromium sobre una página de prueba,
+     * con la capa dinámica APAGADA —que es el valor POR DEFECTO del agente—:
+     *
+     *     1.3.1  cumple   [página / dinámico]
+     *     2.1.1  pasa     [medición / dinámico]
+     *     2.4.3  pasa     [medición / dinámico]
+     *
+     * Tres conformidades, y ninguna llevaba la nota. 2.1.1 es «Teclado»: salía
+     * conforme sin que la prueba de teclado hubiera corrido. Eso es exactamente
+     * lo que la regla de oro del proyecto existe para no hacer, y estaba en la
+     * configuración por defecto.
+     *
+     * Así que ahora la nota se pone también cuando falta ALGUNA, con su propio
+     * código, y los `cumple`/`pasa` bajan igual. Las BARRERAS no se tocan: lo
+     * que estaba mal estaba mal, y que falte una sonda no lo absuelve.
+     *
+     * Efecto secundario que hay que decir: el agente declara MENOS conformidad
+     * por defecto. Eso no es una regresión, es dejar de afirmar lo que no se ha
+     * medido; la conformidad se recupera encendiendo la capa (`--dinamico`). */
+    const faltan = suyas.filter(function (k) { return corridas.indexOf(k) === -1; });
+    if (!faltan.length) return;                      // corrieron todas: no aplica la nota
     afectados.push(n);
-    const nota = "LA SONDA QUE MIDE ESTE CRITERIO NO SE EJECUTÓ en esta pasada (" + capaQueMide(n) +
-      "), así que lo de arriba no es el resultado de haberlo medido: es lo que se puede decir sin medirlo. " +
-      "No es lo mismo que «necesita una persona». Para medirlo, repite la pasada con esa capa encendida.";
+    const todas = !corridas.length;
+    const nota = todas
+      ? "LA SONDA QUE MIDE ESTE CRITERIO NO SE EJECUTÓ en esta pasada (" + capaQueMide(n) +
+        "), así que lo de arriba no es el resultado de haberlo medido: es lo que se puede decir sin medirlo. " +
+        "No es lo mismo que «necesita una persona». Para medirlo, repite la pasada con esa capa encendida."
+      : "ESTE CRITERIO LO MIDEN VARIAS CAPAS (" + capaQueMide(n) + ") Y " + faltan.length +
+        " NO SE EJECUTÓ en esta pasada, así que lo de arriba está medido A MEDIAS: es lo que ve la capa que sí " +
+        "corrió, no el criterio entero. Para medirlo completo, repite la pasada con esa capa encendida.";
     porCrit[n].forEach(function (f) {
       f.evid = (f.evid || []).concat([nota]);
       // Y el motivo como dato, para que `seguimiento.csv` pueda decirlo en su
-      // fila: es el único de los motivos que se arregla repitiendo la pasada.
-      f.motivo = "capa-apagada";
+      // fila: son los motivos que se arreglan repitiendo la pasada.
+      f.motivo = todas ? "capa-apagada" : "capa-a-medias";
       // Una conformidad firmada con la sonda apagada no es una conformidad.
       if (f.verdict === "cumple" || f.verdict === "pasa") f.verdict = "revisar";
     });
