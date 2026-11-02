@@ -34,6 +34,20 @@
 import { analyzeTabTrace, analyzeDisclosure, analyzeTabs, analyzeErrorState, analyzeSuggestions, analyzeContextChange, analyzeAutoMovement, analyzeCharKeyShortcuts, analyzeStatusMessages } from "./dynamic.js";
 import { launchOptions } from "./playwright-launch.js";
 
+/* Los tipos de campo de texto que la sonda de 3.2.2 puede rellenar. Fuera
+ * quedan a propósito `password`, `file` y `hidden` (nunca), y también `date`,
+ * `time`, `color` y `range`, donde escribir un valor es más intrusivo que
+ * informativo: un selector de fecha abre su propio calendario y un `range` es
+ * un ajuste continuo. Si hace falta cubrirlos, se añaden con su medición
+ * delante, no por completar la lista. */
+const TEXTO_SONDEABLE = ["", "text", "search", "email", "tel", "url", "number"];
+/* Y los que ENTRAN en la rama para ser declarados aunque no se escriban. La
+ * diferencia importa: medido, una contraseña no estaba en la lista de arriba, así
+ * que la rama no se ejecutaba y el campo quedaba fuera del recuento de «no
+ * tocados» — excluido en silencio, que es lo que este proyecto persigue. Ahora
+ * entra, el cerrojo lo rechaza con su motivo y el informe lo cuenta. */
+const TEXTO_DECLARABLE = TEXTO_SONDEABLE.concat(["password", "file"]);
+
 // Palabras que marcan un formulario como destructivo: no se tocan ni en modo real.
 const DESTRUCTIVO = /(delete|destroy|remove|logout|sign-?out|unsubscribe|cancel-?account|elimina|borrar|baja|cerrar-?sesion|desactivar)/i;
 
@@ -672,7 +686,11 @@ export async function dynamicAnalyze(target, opts) {
      * DETECTA sin llegar a ocurrir. */
     const ctxEventos = [], noSondados = [];
     let recargasContexto = 0;
-    let ctxCenso = null;   // { total, sondados }: el tope del sondeo se dice y baja el veredicto
+    let ctxCenso = null;   // { total, sondados, noTocados }: lo que no se sondó se dice
+    /* Los campos que los cerrojos dejan sin escribir, con su motivo. No es
+     * contabilidad interna: un campo sin sondar es un campo sin comprobar, y
+     * 3.2.2 no puede salir conforme callándolo. */
+    const noTocados = [];
     await fase("cambio de contexto", async function () {
       armar();
       /* El tope se DICE, y cambia el veredicto.
@@ -696,7 +714,7 @@ export async function dynamicAnalyze(target, opts) {
         ".filter(function(e){ return __visible(e) && !e.disabled && !e.closest('[inert]') && !(e.matches && e.matches(':disabled')); });" +
         "return { total: todos.length, uids: todos.slice(0," + ctxTope + ").map(__uid) };");
       const uids = (censo && censo.uids) || [];
-      ctxCenso = { total: (censo && censo.total) || uids.length, sondados: uids.length };
+      ctxCenso = { total: (censo && censo.total) || uids.length, sondados: uids.length, noTocados: noTocados };
       const huella = "return { url: location.href, foco: document.activeElement?__uid(document.activeElement):null," +
         " contenido: (document.body?document.body.innerText:'').replace(/\\s+/g,' ').slice(0,4000).length + ':' + document.querySelectorAll('body *').length };";
 
@@ -887,6 +905,84 @@ export async function dynamicAnalyze(target, opts) {
                 if (__arg.r.tipo==='select') el.selectedIndex=__arg.r.prev; else el.checked=__arg.r.prev;
                 el.dispatchEvent(new Event('change',{bubbles:true}));
                 return true;`, { uid: uid, r: restaurar });
+            }
+          } else if (info.tag === "textarea" || (info.tag === "input" && TEXTO_DECLARABLE.indexOf(info.tipo || "text") !== -1)) {
+            /* ── 3.2.2 EN LOS CAMPOS DE TEXTO, que es donde no se medía ───────
+             *
+             * Esta sonda solo probaba `select`, casillas y radios, con la razón
+             * escrita al lado: «solo donde tiene sentido y sin escribir nada en
+             * campos que ya tuvieran datos del usuario». El efecto, medido en el
+             * sitio del autor: sus doce páginas de muestra no tienen ni un
+             * select ni una casilla, así que la sonda corría, no encontraba nada
+             * que probar y 3.2.2 se quedaba sin comprobar — en un sitio con
+             * formulario de contacto. Era el último criterio del hueco.
+             *
+             * 3.2.2 habla de «cambiar el ajuste de un componente», y escribir en
+             * un campo y confirmarlo lo es: el patrón clásico que incumple es el
+             * campo que al cambiar navega o recarga media página.
+             *
+             * ESCRIBIR EN UN SITIO AJENO ES LA PARTE DELICADA, así que la sonda
+             * va con cuatro cerrojos, y los cuatro están en el navegador para
+             * que no dependan de que el driver acierte:
+             *
+             *   1. SOLO CAMPOS VACÍOS. Si hay algo escrito —dato del usuario o
+             *      valor por omisión del sitio— no se toca.
+             *   2. NUNCA contraseña, fichero ni campo oculto.
+             *   3. NUNCA un campo de un formulario que suene a destructivo, con
+             *      la misma lista que ya protege la fase de formularios.
+             *   4. Y el valor se devuelve a su sitio al acabar.
+             *
+             * El cortafuegos del modo seguro sigue delante: ninguna petición con
+             * efecto sale a la red, y de eso hay cinco pruebas de integración. */
+            const ventanasAntes3 = await ventanasDe(uid);
+            const antes3 = await evalConReintento(huella);
+            const escrito = antes3 && await evalConReintento(`
+              var el=__el(__arg); if(!el) return null;
+              var t=(el.getAttribute('type')||'text').toLowerCase();
+              if (el.tagName.toLowerCase()==='textarea') t='text';
+              /* Cada cerrojo devuelve SU MOTIVO, no nulo a secas: un campo que
+                 no se sonda es un campo sin comprobar, y el informe tiene que
+                 poder decir cuántos y por qué. (Sin comillas invertidas aquí:
+                 esto vive dentro de una plantilla y una sola rompe el fichero
+                 entero; la cazó node --check al escribirla.) */
+              if (['password','file','hidden'].indexOf(t)!==-1) return { salto:'tipo sensible (' + t + ')' };
+              if (el.disabled || el.readOnly) return { salto:'deshabilitado o de solo lectura' };
+              if (String(el.value||'').length) return { salto:'ya tenía un valor puesto' };
+              var f=el.form;
+              if (f) {
+                var hu=(f.getAttribute('action')||'')+' '+(f.id||'')+' '+(f.className||'')+' '+(f.getAttribute('name')||'');
+                if (${DESTRUCTIVO.source ? "/" + DESTRUCTIVO.source + "/i" : "/$^/"}.test(hu)) return { salto:'formulario que parece destructivo' };
+              }
+              var v = t==='email' ? 'prueba@ejemplo.org'
+                    : t==='tel' ? '600000000'
+                    : t==='url' ? 'https://ejemplo.org'
+                    : t==='number' ? '1'
+                    : 'prueba';
+              el.value = v;
+              el.dispatchEvent(new Event('input',{bubbles:true}));
+              el.dispatchEvent(new Event('change',{bubbles:true}));
+              return { valor:v, tipo:t };`, uid);
+            if (escrito && escrito.salto) {
+              noTocados.push({ locator: info.locator, porQue: escrito.salto });
+            } else if (escrito) {
+              await page.waitForTimeout(150);
+              const trasTexto = await evalConReintento(huella);
+              if (trasTexto) ctxEventos.push({
+                locator: info.locator, uid: uid, disparador: "entrada",
+                navego: trasTexto.url !== antes3.url,
+                abrioVentana: (await ventanasDe(uid)) > ventanasAntes3,
+                focoMovido: trasTexto.foco !== uid && trasTexto.foco !== null,
+                contenidoCambio: trasTexto.contenido !== antes3.contenido
+              });
+              /* Se devuelve el campo a vacío con `input` y SIN `change`: el
+               * `input` es lo que necesita un componente controlado para no
+               * quedarse desincronizado, y repetir `change` dispararía por
+               * segunda vez justo el manejador que se está midiendo. */
+              await evalConReintento(`
+                var el=__el(__arg); if(!el) return null;
+                el.value='';
+                el.dispatchEvent(new Event('input',{bubbles:true}));
+                return true;`, uid);
             }
           }
         } catch (e) { noSondados.push(uid); /* un control que no se deja sondar no tumba la fase */ }

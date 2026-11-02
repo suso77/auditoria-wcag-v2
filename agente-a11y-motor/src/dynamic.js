@@ -407,6 +407,32 @@ export function analyzeContextChange(eventos, noSondados, censo) {
     : "") + (fuera
     ? " Quedan " + fuera + " de " + censo.total + " control(es) sin sondar por el tope de la prueba (súbelo con `maxContexto`): de esos no se sabe nada."
     : "");
+  /* LO DE LOS CERROJOS ES SOLO DE 3.2.2, y esto lo corrigió su propia prueba.
+   *
+   * La primera versión sumaba esta frase a la `cola` común y degradaba el
+   * veredicto de los DOS criterios, así que 3.2.1 salía `cumple-parcial`
+   * diciendo «1 campo de texto NO se ha escrito» — un criterio rebajado por un
+   * motivo que no le concierne: enfocar no escribe nada. Degradar de más cuesta
+   * tanta credibilidad como callar: el informe se llena de reservas que no
+   * significan nada. Así que esta cola, y la degradación que trae, se aplican
+   * solo a la fase de entrada. */
+  const colaEntrada = (function () {
+      /* LOS CAMPOS QUE LOS CERROJOS NO TOCAN, dichos con su motivo.
+       *
+       * La sonda de 3.2.2 escribe en los campos de texto vacíos, y no escribe
+       * en una contraseña, en un campo que ya tenía valor ni en un formulario
+       * que suena a destructivo. Eso protege el sitio del cliente y DEJA ESOS
+       * CAMPOS SIN COMPROBAR, así que callarlo sería firmar sobre lo que no se
+       * ha mirado — la regla de oro de este proyecto, aplicada al criterio que
+       * acaba de dejar de estar sin medir. */
+      const nt = (censo && censo.noTocados) || [];
+      if (!nt.length) return "";
+      const porQue = {};
+      nt.forEach(function (x) { porQue[x.porQue] = (porQue[x.porQue] || 0) + 1; });
+      return " Y " + nt.length + " campo(s) de texto NO se han escrito, por lo que de ellos no se sabe nada: " +
+        Object.keys(porQue).map(function (k) { return porQue[k] + " por " + k; }).join(", ") +
+        " (" + nt.slice(0, 4).map(function (x) { return x.locator; }).join(", ") + ").";
+  })();
   const porCrit = { foco: "3.2.1", entrada: "3.2.2" };
   ["foco", "entrada"].forEach(function (disp) {
     const crit = porCrit[disp];
@@ -469,10 +495,20 @@ export function analyzeContextChange(eventos, noSondados, censo) {
       ], medios.slice(0, 8).map(function (e) { return { locator: e.locator, name: "", path: e.uid }; })));
     }
     if (!graves.length && !medios.length) {
-      // Sin nada que reprochar, el veredicto depende de si se miró TODO.
-      const completo = !fuera && !noSondados;
+      /* Sin nada que reprochar, el veredicto depende de si se miró TODO — y los
+       * campos que los cerrojos dejan sin escribir CUENTAN. Medido al añadir la
+       * sonda de texto: un formulario con un campo relleno de antemano salía
+       * «Se han probado 2 control(es) y ninguno provoca…» con veredicto `pasa`,
+       * que `esConforme()` trata como conformidad, diciendo en la misma frase
+       * que de un tercer campo no se sabe nada. La evidencia era honrada y el
+       * veredicto no, que es la combinación peor: lo que viaja al IRA es el
+       * veredicto. Solo afecta a 3.2.2 —los cerrojos son de escribir— pero la
+       * cuenta se aplica igual, porque `noTocados` solo se llena ahí. */
+      const sinEscribir = disp === "entrada" ? ((censo && censo.noTocados) || []).length : 0;
+      const completo = !fuera && !noSondados && !sinEscribir;
       out.push(F(crit, completo ? "pasa" : "cumple-parcial", null, [
-        "Se han probado " + propios.length + " control(es) y ninguno provoca navegación, salto de foco ni sustitución de contenido " + verbo + "." + cola
+        "Se han probado " + propios.length + " control(es) y ninguno provoca navegación, salto de foco ni sustitución de contenido " + verbo + "." +
+        cola + (disp === "entrada" ? colaEntrada : "")
       ]));
     }
   });

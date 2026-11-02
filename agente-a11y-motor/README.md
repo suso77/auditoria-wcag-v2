@@ -1001,6 +1001,20 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.88.0 — 3.2.2 no se medía en un formulario de contacto normal
+
+El último criterio del hueco. La sonda de cambio de contexto solo probaba `<select>`, casillas y radios, con su razón escrita al lado: «solo donde tiene sentido y sin escribir nada en campos que ya tuvieran datos del usuario». El efecto, medido en el sitio del autor: sus doce páginas de muestra no tienen ni un select ni una casilla, así que la sonda corría, no encontraba nada que probar y **3.2.2 se quedaba sin comprobar en un sitio con formulario de contacto**.
+
+3.2.2 habla de «cambiar el ajuste de un componente», y escribir en un campo y confirmarlo lo es: el patrón que incumple es el campo que al cambiar navega o recarga media página. Así que ahora se prueba también en los campos de texto, con **cuatro cerrojos puestos en el navegador** para que no dependan de que el driver acierte: solo campos **vacíos** —si hay algo escrito, dato del usuario o valor por omisión, no se toca—, nunca contraseña, fichero ni campo oculto, nunca un campo de un formulario que suene a destructivo (la misma lista que ya protege la fase de formularios), y el valor se devuelve a su sitio al acabar. El cortafuegos del modo seguro sigue delante: ninguna petición con efecto sale a la red.
+
+**Y lo que los cerrojos no tocan SE DECLARA**, que es la regla de oro aplicada al criterio que acaba de dejar de estar sin medir: «Y 2 campo(s) de texto NO se han escrito, por lo que de ellos no se sabe nada: 1 por ya tenía un valor puesto, 1 por tipo sensible (password) (input#tel, input#clave)». Con campos sin escribir el veredicto **no puede ser `pasa`** —que `esConforme()` trata como conformidad— y baja a `cumple-parcial`.
+
+Tres defectos salieron al medirlo, y los tres estaban en mi propio arreglo. La contraseña no entraba en la rama, así que quedaba excluida **en silencio** y sin contar: ahora entra, el cerrojo la rechaza con su motivo y el informe la cuenta. El veredicto salía `pasa` en la misma frase que decía que de otro campo no se sabía nada —la evidencia honrada y el veredicto no, que es la peor combinación, porque al IRA viaja el veredicto—. Y la degradación se aplicaba también a **3.2.1**, que no escribe nada: un criterio rebajado por un motivo que no le concierne, y degradar de más cuesta tanta credibilidad como callar.
+
+De paso, el comentario que escribí dentro de la plantilla que se inyecta al navegador llevaba comillas invertidas y rompía el fichero entero. Es la trampa que este proyecto tiene documentada desde hace versiones; la cazó `node --check` en el acto.
+
+**889 tests unitarios** y `contexto-real` con **12** en navegador real (de 8): el campo de texto que navega al confirmar, los campos que se portan, los cerrojos que se declaran con su motivo, y la dirección contraria —todos los campos vacíos y nada que reprochar sigue siendo `pasa`—.
+
 ### v0.87.0 — un sitio sin vídeo no deja cuatro criterios de nivel A abiertos
 
 El segundo trozo del hueco que destapó la hoja nueva. En la pasada `ja11` del sitio del autor, cuatro de los seis criterios sin nada que mostrar eran **1.2.1, 1.2.2, 1.2.3 y 1.4.2**, con el motivo «la sonda corrió y no encontró contenido al que aplicarlo; el agente no afirma que no aplique». Literalmente cierto y, en un IRA, inútil: un auditor que revisa un sitio sin vídeo ni audio escribe **«no aplica»**, y dejarlo en «no se puede comprobar» deja cuatro criterios de nivel A abiertos en el informe de un sitio que no tiene medios.
