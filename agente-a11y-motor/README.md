@@ -1001,6 +1001,23 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.89.0 — dos campos que se contradecían en la misma fila
+
+Medido en la auditoría `ja13` del sitio del autor, con la sonda de texto de 3.2.2 ya funcionando. Su fila decía, a la vez:
+
+```
+motivo:     «La sonda corrió y no encontró contenido al que aplicarlo»
+comprobado: «Se han probado 3 control(es) y ninguno provoca navegación…»
+```
+
+Las dos frases eran ciertas **de páginas distintas** —tres controles sondados en la del formulario, ningún control aplicable en las demás— y juntas en una fila se contradicen. Dos campos que se contradicen destruyen la confianza en los demás, que es el defecto que ya costó una entrega entera (v0.83.0, el «1 de 124 … y 5 más»).
+
+La causa era la precedencia de los motivos: cualquier código del barrido de cobertura ganaba al dictamen medido. Ahora se distingue por lo que cada código SIGNIFICA. Los que dicen «parte de la muestra no se midió» —una página inquieta, una capa apagada, una capa que no corrió, una muestra incompleta— **siguen mandando** aunque haya medición en otras páginas, porque son lo que limita el informe. Pero `sonda-muda` y `nadie-lo-mide` solo dicen «aquí no había nada a lo que aplicarlo», y eso no es lo que hay que decir de un criterio que sí se midió donde había algo: la fila pasa a decir «medido donde había algo que medir, y en el resto de las páginas no había contenido al que aplicarlo».
+
+**891 tests unitarios** (de 889), con las dos direcciones guardadas: la medición que gana al «aquí no había nada», y el «la capa no corrió» que sigue mandando sobre cualquier medición.
+
+Y con esto el hueco de la hoja llegó a **cero** en el sitio del autor: los 55 criterios traen dictamen o la evidencia de lo que se comprobó.
+
 ### v0.88.0 — 3.2.2 no se medía en un formulario de contacto normal
 
 El último criterio del hueco. La sonda de cambio de contexto solo probaba `<select>`, casillas y radios, con su razón escrita al lado: «solo donde tiene sentido y sin escribir nada en campos que ya tuvieran datos del usuario». El efecto, medido en el sitio del autor: sus doce páginas de muestra no tienen ni un select ni una casilla, así que la sonda corría, no encontraba nada que probar y **3.2.2 se quedaba sin comprobar en un sitio con formulario de contacto**.

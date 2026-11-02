@@ -220,8 +220,38 @@ export function motivoPendiente(fs, worst) {
   const lista = fs || [];
   const codigos = {};
   lista.forEach(function (f) { if (f && f.motivo) codigos[f.motivo] = 1; });
+  /* UNA MEDICIÓN EN UNA PÁGINA GANA AL «AQUÍ NO HABÍA NADA» DE OTRA.
+   *
+   * Medido en la auditoría `ja13` del sitio del autor, en la fila de 3.2.2 con
+   * la sonda de texto ya funcionando. La fila decía, a la vez:
+   *
+   *   motivo:     «La sonda corrió y no encontró contenido al que aplicarlo»
+   *   comprobado: «Se han probado 3 control(es) y ninguno provoca navegación…»
+   *
+   * Las dos frases eran ciertas de PÁGINAS DISTINTAS —tres controles sondados
+   * en la del formulario, ningún control que aplicase en las demás— y juntas en
+   * una fila se contradicen. Dos campos que se contradicen en la misma fila
+   * destruyen la confianza en los demás, que es el defecto que ya costó una
+   * entrega entera.
+   *
+   * La precedencia se queda como está para los códigos que significan «parte de
+   * la muestra no se midió» —una página inquieta, una capa apagada, una capa
+   * que no corrió, una muestra incompleta—: eso sigue mandando aunque haya
+   * medición en otras páginas, porque es lo que limita el informe. Pero
+   * `sonda-muda` y `nadie-lo-mide` significan «aquí no había nada a lo que
+   * aplicarlo», y eso NO es lo que hay que decir de un criterio que sí se midió
+   * donde había algo. */
+  const hayMedicion = !!loComprobado(lista, 1);
+  const SUAVES = { "sonda-muda": 1, "nadie-lo-mide": 1 };
   for (let i = 0; i < PRECEDENCIA.length; i++) {
-    if (codigos[PRECEDENCIA[i]]) return MOTIVOS[PRECEDENCIA[i]];
+    const cod = PRECEDENCIA[i];
+    if (!codigos[cod]) continue;
+    if (hayMedicion && SUAVES[cod]) {
+      return "Medido donde había algo que medir, y sin incumplimiento automatizable; " +
+        "en el resto de las páginas de la muestra no había contenido al que aplicarlo. " +
+        "Queda la parte que exige una persona (ver qué se ha comprobado).";
+    }
+    return MOTIVOS[cod];
   }
   // Sin código: se deduce del veredicto, que es un dato igual de estructurado.
   /* `worst` nulo es «No evaluado»: NINGÚN hallazgo mencionó el criterio. Es la

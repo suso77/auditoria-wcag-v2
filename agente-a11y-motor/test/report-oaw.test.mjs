@@ -332,6 +332,35 @@ test("y sin ninguna barrera, el «no aplica» sí llega al informe", () => {
   assert.equal(rows[0].comprobado, "");
 });
 
+test("motivo: una medición en una página gana al «aquí no había nada» de otra", () => {
+  /* Medido en la auditoría `ja13` del sitio del autor: la fila de 3.2.2 decía
+   * «La sonda corrió y no encontró contenido al que aplicarlo» en el motivo y
+   * «Se han probado 3 control(es)…» en la casilla de lo comprobado. Las dos
+   * frases eran ciertas de páginas distintas, y juntas en una fila se
+   * contradicen. */
+  const fs = [
+    { verdict: "revisar", motivo: "sonda-muda", evid: ["la capa que lo mide no dijo nada de este criterio"] },
+    { verdict: "cumple-parcial", evid: ["Se han probado 3 control(es) y ninguno provoca navegación."] }
+  ];
+  const m = motivoPendiente(fs, "cumple-parcial");
+  assert.match(m, /Medido donde había algo que medir/, m);
+  assert.ok(!/no encontró contenido al que aplicarlo/.test(m), m);
+  assert.match(m, /en el resto de las páginas de la muestra no había contenido/, m);
+});
+
+test("motivo: pero lo que limita la muestra SIGUE mandando aunque haya medición", () => {
+  /* La dirección contraria, y es la que protege el informe: «una capa no corrió»
+   * o «hay páginas sin analizar» significan que parte de la muestra NO se midió,
+   * y eso manda sobre cualquier medición en las demás páginas. Suavizar eso
+   * sería exactamente la media verdad que este arreglo viene a quitar. */
+  const fs = [
+    { verdict: "revisar", motivo: "capa-no-corrio", evid: ["la capa de dinámico no se ejecutó"] },
+    { verdict: "cumple-parcial", evid: ["Se han probado 3 control(es) y ninguno provoca navegación."] }
+  ];
+  const m = motivoPendiente(fs, "cumple-parcial");
+  assert.match(m, /no se ejecutó en esta pasada/, m);
+});
+
 test("loComprobado: trae las evidencias de lo que SÍ se midió, sin repetirlas", () => {
   /* En una muestra de doce páginas la misma evidencia llega doce veces, y la
    * celda de una hoja de cálculo no es un sitio donde repetirla. */
