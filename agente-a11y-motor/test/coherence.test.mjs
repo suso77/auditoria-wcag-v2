@@ -653,3 +653,89 @@ test("2.4.5: un buscador es un campo donde escribir, no una etiqueta", () => {
   // Y el mapa web de verdad sigue contando.
   assert.deepEqual(dos('<footer><a href="/mapa-web">Mapa web</a></footer>'), ["2.4.5/cumple-parcial"]);
 });
+
+/* ── Y LA OTRA MITAD DEL MISMO DEFECTO: LAS LLAMADAS ─────────────────────────
+ *
+ * El guard de arriba lee los identificadores en MAYÚSCULAS, así que caza una
+ * CONSTANTE olvidada y no una FUNCIÓN olvidada. `componenteDe` llama a
+ * `esClaseDeEstado`, que no viajaba a la página, y eso es un ReferenceError en
+ * la primera página con un elemento con clase — o sea, en todas.
+ *
+ * Medido en la auditoría `ja14` del sitio del autor, con el aviso de sondas
+ * caídas ya puesto: la huella se cayó en las DOCE páginas de la muestra, con
+ * «ReferenceError: esClaseDeEstado is not defined». Y sin huellas, 2.4.5,
+ * 3.2.3, 3.2.4 y 3.2.6 no comparan nada, pero la hoja de seguimiento los daba
+ * por «revisado por el agente sin encontrar incumplimiento». Cuatro criterios
+ * presentados como mirados sin que su dato se hubiera tomado una sola vez.
+ *
+ * Esta guardia cierra la CLASE de defecto, no el caso: cualquier función del
+ * módulo que el código inyectado llame y no lleve consigo falla aquí.
+ */
+test("el código inyectado de la huella no llama a nada que no se lleve consigo", () => {
+  const PALABRAS = ["if", "for", "while", "return", "function", "switch", "catch", "typeof", "new", "do", "else", "in", "of", "void", "delete", "await", "yield"];
+  const GLOBALES = ["String", "Number", "Boolean", "Array", "Object", "RegExp", "URL", "Date", "Set", "Map", "JSON", "parseInt", "parseFloat", "isNaN", "encodeURIComponent", "decodeURIComponent", "getComputedStyle"];
+  const sinLiterales = (src) => src
+    .replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ")
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""').replace(/'(?:[^'\\]|\\.)*'/g, "''")
+    .replace(/`(?:[^`\\]|\\.)*`/g, "``");
+  const llamadas = new Set();
+  FN_FUENTES.forEach(function (f) {
+    // Un nombre seguido de `(` y NO precedido de punto: una llamada libre, no un método.
+    (sinLiterales(f).match(/(?:^|[^.\w$])([a-zA-Z_$][\w$]*)\s*\(/g) || []).forEach(function (x) {
+      llamadas.add(x.replace(/[^\w$]/g, "").replace(/\($/, ""));
+    });
+  });
+  const libres = [...llamadas].filter(function (n) {
+    if (PALABRAS.indexOf(n) !== -1 || GLOBALES.indexOf(n) !== -1) return false;
+    if (FN_DECLARADAS.indexOf(n) !== -1) return false;
+    return !new RegExp("\\b(?:var|let|const|function)\\s+" + n + "\\b").test(FN_SRC);
+  }).sort();
+  assert.deepEqual(libres, [], "el código inyectado llama a funciones que no declara: " + libres.join(", ") +
+    " — dentro de la página eso es un ReferenceError y la huella se cae entera, en todas las páginas");
+});
+
+test("la huella sobrevive a una clase de estado, que es lo que la tiraba", () => {
+  // `a.nav-link.active` es el patrón universal del ítem actual de un menú, y es
+  // justo el que entra en `componenteDe` → `esClaseDeEstado`. Un elemento SIN
+  // atributo `class` no llega a llamarla —la lista sale vacía antes del filtro—,
+  // y por eso el banco de integración, cuyo mini-sitio no pone clases, pasaba en
+  // verde con la huella rota en cualquier sitio de verdad.
+  const html = '<html lang="es"><head><title>t</title></head><body>' +
+    '<header><nav><a href="/" class="nav-link active">Inicio</a><a href="/b" class="nav-link">B</a></nav></header>' +
+    '<main><h1>x</h1></main><footer><a href="mailto:a@b.c">Correo</a></footer></body></html>';
+  const h = huella(html, "http://s/");
+  assert.ok(h && h.enlaces && h.enlaces.length >= 3, JSON.stringify(h && h.enlaces));
+  // Y la clase de estado NO entra en la identidad del componente, que es para lo
+  // que `esClaseDeEstado` existe: con ella dentro, el mismo enlace sería un
+  // componente distinto en su propia página y 3.2.4 inventaría incoherencias.
+  const comps = h.enlaces.map(function (e) { return e.comp; }).join(" ");
+  assert.doesNotMatch(comps, /active/, comps);
+  assert.match(comps, /a\.nav-link/, comps);
+});
+
+test("sin ninguna huella, los cuatro criterios de sitio llevan su código de motivo", () => {
+  const fs = analyzeCoherence([]);
+  assert.deepEqual(fs.map(function (f) { return f.c.n; }).sort(), ["2.4.5", "3.2.3", "3.2.4", "3.2.6"]);
+  assert.ok(fs.every(function (f) { return f.verdict === "revisar"; }));
+  assert.ok(fs.every(function (f) { return f.motivo === "sonda-rota"; }),
+    "sin código, el exportador convierte «no se ha mirado» en «revisado sin incumplimiento»");
+});
+
+/* ── COMPARAR OCHO DE DOCE NO ES COMPARAR LA MUESTRA ─────────────────────── */
+test("con huellas de parte de la muestra, se dice y los conformes bajan a revisar", () => {
+  const pag = (t, nav) => '<html lang="es"><head><title>' + t + '</title></head><body>' +
+    '<header><nav>' + nav + '</nav><form role="search"><label for="q">Buscar</label><input id="q" type="search"></form></header>' +
+    '<main><h1>' + t + '</h1><p>x</p></main><footer><a href="/ayuda">Ayuda</a></footer></body></html>';
+  const NAV = '<a href="/" class="nav-link active">Inicio</a><a href="/b" class="nav-link">B</a>';
+  const hs = [huella(pag("A", NAV), "http://s/"), huella(pag("B", NAV), "http://s/b")];
+  const completo = analyzeCoherence(hs, { paginas: 2 });
+  const parcial = analyzeCoherence(hs, { paginas: 5 });
+  assert.ok(completo.length, "tiene que emitir algo con dos páginas coherentes");
+  const texto = parcial.map(function (f) { return (f.evid || []).join(" "); }).join(" ");
+  assert.match(texto, /sobre 2 de las 5 páginas de la muestra/, texto.slice(0, 300));
+  // Lo que salía conforme con dos páginas no puede seguir conforme cubriendo cinco.
+  const conformesAntes = completo.filter(function (f) { return f.verdict === "cumple" || f.verdict === "pasa"; }).length;
+  const conformesDespues = parcial.filter(function (f) { return f.verdict === "cumple" || f.verdict === "pasa"; }).length;
+  assert.ok(conformesAntes >= 1, "la fixture tiene que dar al menos un conforme, o esta guardia no prueba nada");
+  assert.equal(conformesDespues, 0, "con páginas sin mirar, ninguna conformidad se firma");
+});

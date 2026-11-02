@@ -260,7 +260,18 @@ export function notaDeCapaApagada(findings, capas, opts) {
  * que se lee en los avisos. Para cruzar «quién mide este criterio» con «qué
  * sonda se ha roto en esta página» hace falta la correspondencia, y vive aquí
  * una sola vez: deducirla del castellano sería volver a classificar por prosa. */
-const ETIQUETA_CAPA = { dynamic: "dinámico", render: "render", viewport: "viewport", pixeles: "píxeles" };
+/* `coherencia` lleva «huella» además de la suya: la huella es su DATO DE ENTRADA.
+ *
+ * Los criterios de sitio no los mide una capa que corra al final, sino la
+ * comparación de las huellas que se toman página a página. Si la capa de huella
+ * se cae, la de coherencia no tiene nada que comparar, y para el cruce con las
+ * sondas rotas eso cuenta como que su sonda se rompió. Medido en `ja14`: doce
+ * fallos de la capa de huella y cuatro criterios de sitio sin dato, y el cruce
+ * no los veía porque el error venía firmado con otro nombre. */
+const ETIQUETA_CAPA = {
+  dynamic: ["dinámico"], render: ["render"], viewport: ["viewport"], pixeles: ["píxeles"],
+  coherencia: ["coherencia", "huella"]
+};
 
 function nombrarSondaRota(e) {
   const donde = e && e.fase ? "fase «" + e.fase + "»" : "capa «" + ((e && e.capa) || "?") + "»";
@@ -339,7 +350,7 @@ export function criteriosEnSilencio(findings, capas, opts) {
        * ser eso. Es menos de lo que me gustaría afirmar y es todo lo que sé. */
       const rotas = (opts.errores || []).filter(function (e) {
         if (!e || !e.capa) return false;
-        return corridas.some(function (k) { return ETIQUETA_CAPA[k] === e.capa; });
+        return corridas.some(function (k) { return (ETIQUETA_CAPA[k] || []).indexOf(e.capa) !== -1; });
       });
       if (rotas.length) {
         motivo = "sonda-rota";
@@ -840,7 +851,7 @@ export async function auditSite(targets, opts) {
     if (opts.onPage) opts.onPage(r);
   }
   const huellas = paginas.map(function (p) { return p.huella; }).filter(Boolean);
-  const coherencia = analyzeCoherence(huellas);
+  const coherencia = analyzeCoherence(huellas, { paginas: paginas.filter(function (p) { return !p.error; }).length });
 
   /* El cuaderno de juicio, de la MUESTRA y no de cada página.
    *

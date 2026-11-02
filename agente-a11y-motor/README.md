@@ -1001,6 +1001,33 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.91.0 — lo primero que dijo el aviso nuevo: la huella llevaba rota en las doce páginas
+
+La pasada `ja14`, la primera con el aviso de sondas caídas de v0.90.0, lo dijo en la primera línea:
+
+```
+⚠ 12 SONDA(S) HAN FALLADO durante la pasada.
+  · https://jesusaccesible.com/ — capa «huella»:
+    page.evaluate: ReferenceError: esClaseDeEstado is not defined
+  · … las doce páginas de la muestra, la misma línea
+```
+
+No era el fallo que yo esperaba, y era peor. La huella de la página es el dato de entrada de los cuatro criterios de SITIO —2.4.5, 3.2.3, 3.2.4 y 3.2.6—, y se estaba cayendo en **todas** las páginas de **todas** las pasadas. Esos cuatro criterios no se habían comparado una sola vez.
+
+**Y la hoja del cliente los daba por revisados.** `analyzeCoherence` hacía su parte bien: sin huellas emitía los cuatro a `revisar` con la frase «no es que el sitio sea coherente, es que no se ha mirado». Pero esos hallazgos salían sin código de motivo, así que el exportador caía a la rama genérica de `revisar`, `loComprobado` encontraba evidencia —esa misma frase— y la fila acababa diciendo **«Revisado por el agente sin encontrar incumplimiento automatizable»**. El texto honesto invertido en una absolución por el camino, y de paso copiado en la columna de «qué ha comprobado el agente». Ahora llevan el código `sonda-rota`, que va con los motivos duros y que `loComprobado` salta.
+
+**El defecto de fondo es el de siempre, y es la segunda vez.** El código de la huella se serializa y se inyecta en la página, así que todo lo que use tiene que viajar con él. v0.84.0 ya pagó esto con una constante (`COMPARTIR_RE`) y dejó un guard… que lee los identificadores **en MAYÚSCULAS**. Cazaba una constante olvidada y no una función olvidada: `componenteDe` llama a `esClaseDeEstado`, que no viajaba. El guard nuevo comprueba las **llamadas**, no solo las constantes, así que cierra la clase de defecto y no el caso.
+
+**Y el banco de integración pasaba en verde con la huella rota**, que es lo que más importa de esta entrega. `componenteDe` solo llama a `esClaseDeEstado` cuando el elemento tiene atributo `class`; el mini-sitio de la prueba no ponía ni una clase en los enlaces del menú, así que la rama no se ejecutaba nunca. Un sitio de verdad siempre trae clases, y el ítem actual del menú trae además una clase de estado. Con la fixture corregida y el defecto reintroducido a propósito: **8 de las 10 pruebas de integración se ponen en rojo**, y antes pasaban las 10.
+
+**Comparar ocho páginas de doce no es comparar la muestra.** Si la huella se cae en PARTE de la muestra, la comparación seguía y firmaba su veredicto sobre las que sí la tenían, sin decir que a las otras no las había mirado. Ahora se dice en la evidencia con los dos números y los veredictos conformes bajan a `revisar`, igual que con la página inquieta y la capa apagada.
+
+**Y el cruce con las sondas caídas entiende que la huella es la coherencia.** El error viene firmado como «huella» y los criterios de sitio dicen que los mide «coherencia»: son la misma sonda en dos tramos, así que un fallo de huella marca ahora los cuatro criterios de sitio con su mensaje.
+
+**906 tests unitarios** (de 900) y las 16 de integración de coherencia y orquestación en verde, con seis nuevos.
+
+Lo que esta entrega **no** explica sigue sin explicar: el fallo de la capa dinámica en una sola página de `ja13`. En `ja14` no se repitió —2.1.4, 2.2.1 y 2.2.2 volvieron a «presencia correcta»— y la única sonda caída fue la huella.
+
 ### v0.90.0 — una sonda que se cae dejaba el mismo rastro que una sonda que no ve nada: ninguno
 
 Salió de comparar dos auditorías del sitio del autor, `ja12` y `ja13`, hechas con la **misma muestra** —las mismas doce páginas, la misma plantilla, el mismo orden— y con la capa dinámica encendida en las dos. Tres criterios cambiaron de veredicto para el sitio entero:

@@ -520,3 +520,15 @@ test("y con la sonda dinámica caída en la página, los tres lo dicen con la fa
     assert.match(f.evid.join(" "), /fase «movimiento»/);
   });
 });
+
+test("un fallo de la capa de HUELLA marca los criterios de coherencia", () => {
+  // La huella es el dato de entrada de la comparación entre páginas. En `ja14`
+  // falló en las doce páginas y el cruce no lo vio, porque el error viene
+  // firmado como «huella» y los criterios de sitio dicen que los mide
+  // «coherencia». Son la misma sonda en dos tramos.
+  const rotas = [{ capa: "huella", error: "ReferenceError: esClaseDeEstado is not defined" }];
+  const f = criteriosEnSilencio([], capasEfectivas(), { sitio: true, errores: rotas })
+    .find((x) => x.c.n === "3.2.3");
+  assert.equal(f.motivo, "sonda-rota", "3.2.3 → " + f.motivo);
+  assert.match(f.evid.join(" "), /esClaseDeEstado/, "con el mensaje, que es el dato que hay");
+});

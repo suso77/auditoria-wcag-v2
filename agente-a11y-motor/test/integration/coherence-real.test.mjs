@@ -29,9 +29,18 @@ ${MOVIL}
 <footer><a href="/ayuda">Ayuda</a><a href="/contacto">Contacto</a><a href="/mapa-web">Mapa web</a></footer>
 </body></html>`;
 
-const NAV_OK = '<a href="/">Inicio</a><a href="/servicios">Servicios</a><a href="/contacto">Contacto</a>';
-const NAV_INVERTIDO = '<a href="/contacto">Contacto</a><a href="/servicios">Servicios</a><a href="/">Inicio</a>';
-const NAV_RENOMBRADO = '<a href="/">Inicio</a><a href="/servicios">Prestaciones</a><a href="/contacto">Contacto</a>';
+/* CON CLASES, como cualquier sitio de verdad.
+ *
+ * Este mini-sitio no ponía ni una clase en los enlaces del menú, y por eso pasó
+ * en verde durante versiones con la huella ROTA en el navegador:
+ * `componenteDe` solo llama a `esClaseDeEstado` cuando hay atributo `class` —sin
+ * él la lista sale vacía antes del filtro—, así que el `ReferenceError` que tiró
+ * la huella en las doce páginas de la auditoría `ja14` no se disparaba aquí.
+ * La clase de estado del ítem actual (`active`) es además la que `componenteDe`
+ * tiene que descartar, así que la fixture prueba las dos cosas a la vez. */
+const NAV_OK = '<a href="/" class="nav-link active">Inicio</a><a href="/servicios" class="nav-link">Servicios</a><a href="/contacto" class="nav-link">Contacto</a>';
+const NAV_INVERTIDO = '<a href="/contacto" class="nav-link active">Contacto</a><a href="/servicios" class="nav-link">Servicios</a><a href="/" class="nav-link">Inicio</a>';
+const NAV_RENOMBRADO = '<a href="/" class="nav-link active">Inicio</a><a href="/servicios" class="nav-link">Prestaciones</a><a href="/contacto" class="nav-link">Contacto</a>';
 
 const SITIO = {
   "/": pagina("Inicio", NAV_OK),
@@ -161,14 +170,30 @@ test("huella real: un pie con mailto y tel no rompe el código inyectado", { ski
   const b = await chromium.launch(launchOptions());
   try {
     const p = await b.newPage();
+    /* CON CLASES, y una de estado. Esta misma prueba pasó en verde durante
+     * versiones con la huella rota en el navegador porque su marcado no tenía ni
+     * una: `componenteDe` solo llama a `esClaseDeEstado` cuando hay atributo
+     * `class`, y esa función no viajaba a la página. Medido en la auditoría
+     * `ja14`: la huella se cayó en las DOCE páginas de la muestra con
+     * «ReferenceError: esClaseDeEstado is not defined». Un sitio real siempre
+     * trae clases, así que la fixture tiene que traerlas. */
     await p.setContent(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>t</title></head><body>
-      <header><a href="/">Inicio</a><a href="mailto:info@ejemplo.es">Contacto</a></header>
-      <main><h1>T</h1><p>x</p><a href="mailto:?subject=mira%20esto">Compartir por correo</a></main>
-      <footer><a href="tel:+34900000000">Teléfono de atención</a><a href="/sitemap.html">Mapa del sitio</a></footer>
+      <header><a href="/" class="nav-link active">Inicio</a><a href="mailto:info@ejemplo.es" class="nav-link">Contacto</a></header>
+      <main><h1>T</h1><p>x</p><a href="mailto:?subject=mira%20esto" class="btn btn--compartir">Compartir por correo</a></main>
+      <footer><a href="tel:+34900000000" class="pie__enlace is-current">Teléfono de atención</a><a href="/sitemap.html" class="pie__enlace">Mapa del sitio</a></footer>
       </body></html>`);
     const h = await p.evaluate(new Function("url", FINGERPRINT_BODY), "https://e.es/");
+    assert.ok(h, "la huella no puede salir nula: si sale, el código inyectado ha reventado dentro de la página");
     const tipos = (h.ayuda || []).map(function (a) { return a.tipo + "@" + a.region; });
     assert.deepEqual(tipos, ["contacto@cabecera", "teléfono@pie"],
       "el correo del pie y el teléfono cuentan; el «compartir por correo» del contenido no: " + JSON.stringify(tipos));
+    /* Y las clases de estado, descartadas DENTRO del navegador: `active` e
+     * `is-current` no pueden formar parte de la identidad del componente, o el
+     * mismo enlace sería uno distinto en su propia página y 3.2.4 inventaría una
+     * incoherencia en cada página de la muestra. */
+    const comps = (h.enlaces || []).map(function (e) { return e.comp; }).join(" ");
+    assert.doesNotMatch(comps, /active|is-current/, comps);
+    assert.match(comps, /a\.nav-link/, comps);
+    assert.match(comps, /a\.pie__enlace/, comps);
   } finally { await b.close(); }
 });

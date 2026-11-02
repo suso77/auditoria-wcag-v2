@@ -881,7 +881,7 @@ export function analyzeMultipleWays(huellas) {
 }
 
 /** Los cuatro criterios de coherencia sobre la muestra. */
-export function analyzeCoherence(huellas) {
+export function analyzeCoherence(huellas, opts) {
   /* Sin huellas no se devuelve una lista VACÍA: se dice que no se ha comparado.
    *
    * Era `return []`, y ese es el camino real cuando la capa de la huella se cae
@@ -893,14 +893,49 @@ export function analyzeCoherence(huellas) {
   if (!huellas || !huellas.length) {
     const porque = "No se ha podido tomar la huella de ninguna página de la muestra, así que los criterios de SITIO no se han comparado: " +
       "no es que el sitio sea coherente, es que no se ha mirado. Comprueba los errores de la capa de huella y vuelve a ejecutar.";
-    return ["2.4.5", "3.2.3", "3.2.4", "3.2.6"].map(function (n) { return F(n, "revisar", null, [porque]); });
+    /* Y CON SU CÓDIGO DE MOTIVO, o el exportador le da la vuelta a esta frase.
+     *
+     * Medido en la auditoría `ja14`, con la huella caída en las doce páginas:
+     * estos cuatro hallazgos salían sin `motivo`, así que `motivoPendiente` caía
+     * a la rama de `revisar`, `loComprobado` encontraba evidencia —ESTA, la que
+     * dice que no se ha mirado— y la fila del cliente acababa diciendo «Revisado
+     * por el agente sin encontrar incumplimiento automatizable». El texto honesto
+     * invertido en una absolución, y de paso metido en la columna de «qué ha
+     * comprobado el agente». Con el código, el exportador lo clasifica por dato:
+     * `sonda-rota` va con los motivos duros y `loComprobado` salta todo lo que
+     * trae `motivo`. */
+    return ["2.4.5", "3.2.3", "3.2.4", "3.2.6"].map(function (n) {
+      const f = F(n, "revisar", null, [porque]);
+      f.motivo = "sonda-rota";
+      return f;
+    });
   }
-  return [].concat(
+  /* COMPARAR OCHO PÁGINAS DE DOCE NO ES COMPARAR LA MUESTRA.
+   *
+   * Si la huella se cae en PARTE de la muestra, la comparación sigue y emite su
+   * veredicto sobre las páginas que sí la tienen, sin que nada diga que a las
+   * otras no se las ha mirado. Un `cumple` de 3.2.3 sobre ocho páginas de doce
+   * no cubre las cuatro que faltan, así que se dice en la evidencia y los
+   * veredictos conformes bajan a `revisar`: es la misma regla que la página
+   * inquieta y la capa apagada. */
+  const out = [].concat(
     analyzeMultipleWays(huellas),
     analyzeNavConsistency(huellas),
     analyzeIdConsistency(huellas),
     analyzeHelpConsistency(huellas)
   );
+  const total = opts && opts.paginas;
+  if (total && total > huellas.length) {
+    const faltan = total - huellas.length;
+    const nota = "OJO: esta comparación se ha hecho sobre " + huellas.length + " de las " + total +
+      " páginas de la muestra. De las " + faltan + " restantes no se pudo tomar la huella —mira los errores de " +
+      "la capa de huella—, así que lo que aquí salga NO las cubre: un menú incoherente en una de ellas no se habría visto.";
+    out.forEach(function (f) {
+      f.evid = (f.evid || []).concat([nota]);
+      if (f.verdict === "cumple" || f.verdict === "pasa") { f.verdict = "revisar"; f.motivo = "sonda-rota"; }
+    });
+  }
+  return out;
 }
 
 /* ── Código inyectable: la huella se toma DENTRO de la página real ───────── */
@@ -918,17 +953,30 @@ export function analyzeCoherence(huellas) {
  * Que estuviera escrito a mano era el problema, así que ahora es una lista con
  * nombre, y hay un test que extrae los identificadores en MAYÚSCULAS de las
  * funciones serializadas y falla si alguno no está declarado aquí. */
-const CONSTANTES = { MAPA_RE: MAPA_RE, INDICE_RE: INDICE_RE, COMPARTIR_RE: COMPARTIR_RE };
+/* Y VOLVIÓ A PASAR, con una función en vez de una constante.
+ *
+ * El guard que esta lista estrenó lee los identificadores en MAYÚSCULAS de las
+ * funciones serializadas, así que cazaba una constante olvidada y NO una función
+ * olvidada: `componenteDe` llama a `esClaseDeEstado`, que no viajaba, y dentro de
+ * la página eso es «ReferenceError: esClaseDeEstado is not defined» en la primera
+ * página que tenga un elemento con clase. Medido en la auditoría `ja14` del sitio
+ * del autor: la huella se cayó en las DOCE páginas de la muestra, y 2.4.5, 3.2.3,
+ * 3.2.4 y 3.2.6 llevaban desde entonces presentados como «revisado por el agente
+ * sin encontrar incumplimiento» sin que su dato se hubiera tomado una sola vez.
+ *
+ * Lo mismo que la vez anterior, entonces: el fallo no es el nombre que falta, es
+ * que el guard solo miraba la mitad del problema. Ahora comprueba también las
+ * LLAMADAS, y la lista de funciones serializadas se escribe una vez. */
+const CONSTANTES = { MAPA_RE: MAPA_RE, INDICE_RE: INDICE_RE, COMPARTIR_RE: COMPARTIR_RE, CLASE_ESTADO: CLASE_ESTADO };
+const FUNCIONES = [normalizarHref, tipoAyuda, tagOf, ocultoEl, loc, esClaseDeEstado, componenteDe, regionDe, nombreDe, fingerprintPage];
 export const FN_SRC =
   "var AYUDA = [" + AYUDA.map(function (a) { return "{tipo:" + JSON.stringify(a.tipo) + ",re:" + String(a.re) + "}"; }).join(",") + "];\n" +
   Object.keys(CONSTANTES).map(function (k) { return "var " + k + " = " + String(CONSTANTES[k]) + ";"; }).join("\n") + "\n" +
-  [normalizarHref, tipoAyuda, tagOf, ocultoEl, loc, componenteDe, regionDe, nombreDe, fingerprintPage]
-    .map(function (f) { return String(f).replace(/^export\s+/, ""); }).join("\n");
+  FUNCIONES.map(function (f) { return String(f).replace(/^export\s+/, ""); }).join("\n");
 /** Los nombres que se declaran en el código inyectado; el guard los compara. */
 export const FN_DECLARADAS = ["AYUDA"].concat(Object.keys(CONSTANTES));
 /** Las funciones que se serializan, para que el guard pueda leer su fuente. */
-export const FN_FUENTES = [normalizarHref, tipoAyuda, tagOf, ocultoEl, loc, componenteDe, regionDe, nombreDe, fingerprintPage]
-  .map(function (f) { return String(f); });
+export const FN_FUENTES = FUNCIONES.map(function (f) { return String(f); });
 
 /**
  * Cuerpo para `page.evaluate(new Function("url", FINGERPRINT_BODY))`.

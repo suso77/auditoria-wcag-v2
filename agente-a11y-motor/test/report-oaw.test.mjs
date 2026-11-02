@@ -610,3 +610,26 @@ test("y «sonda-muda» sí se ablanda: ese comportamiento no cambia", () => {
   ];
   assert.match(motivoPendiente(fs, "revisar"), /Medido donde había algo que medir/);
 });
+
+/* ── EL TEXTO HONESTO, INVERTIDO POR EL EXPORTADOR ───────────────────────────
+ *
+ * Medido en `ja14`, con la huella caída en las doce páginas de la muestra.
+ * `analyzeCoherence` hacía bien su parte: emitía los cuatro criterios de sitio a
+ * `revisar` con la frase «no se ha podido tomar la huella de ninguna página… no
+ * es que el sitio sea coherente, es que no se ha mirado». Pero esos hallazgos no
+ * llevaban código de motivo, así que `motivoPendiente` caía a la rama de
+ * `revisar`, `loComprobado` encontraba evidencia —esa misma— y la fila que ve el
+ * cliente decía «Revisado por el agente sin encontrar incumplimiento
+ * automatizable». La frase que dice «no se ha mirado» convertida en absolución, y
+ * además copiada en la columna de «qué ha comprobado el agente». */
+test("un criterio de sitio sin huella NO sale como «revisado sin incumplimiento»", () => {
+  const sinHuella = {
+    c: { n: "3.2.3" }, verdict: "revisar", origen: "coherencia", motivo: "sonda-rota",
+    evid: ["No se ha podido tomar la huella de ninguna página de la muestra, así que los criterios de SITIO no se han comparado."]
+  };
+  const m = motivoPendiente([sinHuella], "revisar");
+  assert.doesNotMatch(m, /Revisado por el agente sin encontrar incumplimiento/, m);
+  assert.match(m, /FALLÓ/, m);
+  // Y no se cuela en la columna de lo comprobado: ahí va lo que el agente MIRÓ.
+  assert.equal(loComprobado([sinHuella], 3), "");
+});
