@@ -4504,11 +4504,39 @@
             }
           }
         });
-        // 1.4.11 solo para controles personalizados: en los nativos el límite lo
-        // pinta el navegador y medirlo sobre el render no dice nada útil.
-        if (NATIVOS.indexOf(el.tagName.toLowerCase()) === -1 && !deshabilitado) {
+        /* 1.4.11 Y LOS CONTROLES NATIVOS: la exclusión en bloque era un agujero.
+         *
+         * Esto decía «solo para controles personalizados: en los nativos el límite
+         * lo pinta el navegador». Es cierto de un <button> sin estilos, y falso en
+         * cualquier sitio hecho con Tailwind o similar, donde el <button> es
+         * nativo y el borde o el relleno los pinta el AUTOR. Medido en el sitio
+         * del autor: 1.4.11 era el ÚNICO criterio de los 55 que salía con
+         * «ninguna capa llegó a dictaminarlo», porque todos sus controles son
+         * nativos y la medición no entraba nunca.
+         *
+         * La distinción correcta no es nativo contra personalizado: es si el
+         * límite lo pinta el autor o el navegador, y eso ya lo sabe
+         * `boundaryContrastOf` —`sinLimite` significa que no hay borde ni relleno
+         * propios—. Así que ahora se mide SIEMPRE, y lo que se salta es el caso
+         * real de la excepción: un nativo que no pinta nada propio, donde el
+         * límite es el del navegador y medirlo sobre el render no dice nada.
+         *
+         * No puede inventar fallas: de aquí solo salen `cumple-parcial` (límite
+         * medido ≥ 3:1) y `revisar`. */
+        if (!deshabilitado) {
           const nc = boundaryContrastOf(el, win);
-          if (nc && nc.sinLimite && nc.conTexto) {
+          const esNativo = NATIVOS.indexOf(el.tagName.toLowerCase()) !== -1;
+          /* LA LÍNEA FINA, y está donde el criterio la pone: 1.4.11 no exige
+           * límite a un control que se identifica por su propio texto. Un enlace
+           * o un botón nativos con texto y sin borde propio no tienen nada que
+           * medir y decirlo una vez por enlace sería ruido en cada página. Lo que
+           * sí hay que medir —y era el agujero— es el nativo SIN texto y sin
+           * límite propio: el botón de icono «fantasma», que es justo el caso que
+           * este proyecto ya persiguió una vez. */
+          if (nc && nc.sinLimite && nc.conTexto && esNativo) {
+            // Nativo con texto y sin límite propio: lo identifica su texto (1.4.3)
+            // o el cromo del navegador. No se dice nada.
+          } else if (nc && nc.sinLimite && nc.conTexto) {
             // Lleva texto propio: 1.4.11 no le exige límite, y el texto lo mide
             // 1.4.3. No es `pasa` porque de este control solo se ha mirado el
             // límite: iconos, estados y objetos gráficos siguen sin medir.

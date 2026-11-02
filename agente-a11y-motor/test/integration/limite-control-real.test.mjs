@@ -41,6 +41,12 @@ const PAGINA = `<!doctype html><html lang="es"><head><meta charset="utf-8"><titl
   #mudo     { background:transparent; border:0; width:120px; height:24px; }
   /* Borde solo por un lado: también es un límite, y hay que decir por dónde. */
   #unlado   { background:#fff; border:0; border-bottom:3px solid #767676; }
+  /* Nativos con el cromo del navegador quitado y el límite pintado por el autor:
+     el patrón de cualquier framework de utilidades. */
+  #nat-relleno { background:#2563eb; color:#fff; border:0; }
+  #nat-flojo   { background:#fff; border:1px solid #f4f4f4; }
+  #nat-icono   { background:transparent; border:0; }
+  #nat-enlace  { background:transparent; border:0; color:#1a5fb4; }
 </style></head><body>
 <main>
   <h1>Contraste no textual</h1>
@@ -52,6 +58,15 @@ const PAGINA = `<!doctype html><html lang="es"><head><meta charset="utf-8"><titl
   <div class="ctrl" id="mudo"     role="slider" tabindex="0" aria-label="Volumen"></div>
   <div class="ctrl" id="unlado"   role="textbox" tabindex="0">Campo con subrayado</div>
   <button class="ctrl" id="nativo">Botón nativo</button>
+  <!-- Los tres casos de un sitio hecho con utilidades CSS, donde el control es
+       NATIVO y el límite lo pinta el autor. La regla vieja —«los nativos no se
+       miden»— los dejaba sin dictaminar, y por eso 1.4.11 era el único de los 55
+       criterios que salía con «ninguna capa llegó a dictaminarlo» en el sitio
+       real del autor: todos sus controles son nativos. -->
+  <button class="ctrl" id="nat-relleno">Enviar</button>
+  <button class="ctrl" id="nat-flojo">Enviar</button>
+  <button class="ctrl" id="nat-icono" aria-label="Abrir menú"><svg width="16" height="16" aria-hidden="true"></svg></button>
+  <a class="ctrl" id="nat-enlace" href="/x">Ir al inicio</a>
 </main>
 </body></html>`;
 
@@ -129,6 +144,60 @@ test("un borde de un solo lado también es un límite, y la ficha dice por dónd
   assert.equal(f.verdict, "cumple-parcial", f.detail);
 });
 
-test("de un control NATIVO no se dice nada: su límite lo pinta el navegador", { skip }, () => {
-  assert.equal(uno("nativo"), undefined, "no hay que medir el borde de UA de un <button>");
+test("de un control nativo SIN estilos se mide el límite que pinta el navegador", { skip }, () => {
+  /* ESTE TEST AFIRMABA LO CONTRARIO, y lo afirmaba mal. Decía «de un control
+   * nativo no se dice nada: su límite lo pinta el navegador», y de ahí salía la
+   * exclusión en bloque que dejaba 1.4.11 sin dictaminar en cualquier sitio
+   * hecho con utilidades CSS. Que el límite lo pinte el navegador no es un
+   * motivo para callar: es un límite, se mide igual, y sale `cumple-parcial`
+   * porque de 1.4.11 siguen sin medirse los iconos, los objetos gráficos y los
+   * estados. Lo que no se dice es lo que no tiene límite propio Y se identifica
+   * por su texto, que es el enlace de más abajo. */
+  const f = uno("nativo");
+  assert.ok(f, "el <button> sin estilos tiene el cromo del navegador y eso es un límite medible");
+  assert.equal(f.verdict, "cumple-parcial", f.detail);
+  assert.match(f.detail, /límite del control/, f.detail);
+});
+
+/* ── LOS NATIVOS, QUE ERAN EL AGUJERO (v0.86.0) ──────────────────────────────
+ *
+ * Medido en el sitio del autor: de los 55 criterios, 1.4.11 era el ÚNICO que
+ * salía con «ninguna capa llegó a dictaminarlo», y no porque la capa callara:
+ * porque la medición excluía en bloque los controles nativos con el argumento
+ * de que «el límite lo pinta el navegador». Eso es cierto de un <button> sin
+ * estilos y falso en cualquier sitio hecho con Tailwind, donde el botón es
+ * nativo, el cromo está quitado y el límite lo pinta el autor. */
+
+test("1.4.11 real: un botón NATIVO con relleno propio se mide", { skip }, () => {
+  const f = uno("nat-relleno");
+  assert.ok(f, "un botón nativo con relleno del autor tiene que dictaminarse: " +
+    JSON.stringify(res.map((r) => r.node)));
+  assert.equal(f.verdict, "cumple-parcial", f.detail);
+  // #2563eb sobre #fff son 5.17:1 — calculado con la fórmula de WCAG.
+  assert.match(f.detail, /5\.[0-9]+:1/, f.detail);
+});
+
+test("1.4.11 real: un botón NATIVO con el límite flojo sale a revisar", { skip }, () => {
+  const f = uno("nat-flojo");
+  assert.ok(f, "sin hallazgo");
+  assert.equal(f.verdict, "revisar", f.detail);
+  assert.match(f.detail, /límite del control/);
+});
+
+test("1.4.11 real: el botón de icono NATIVO sin límite ya no se queda en silencio", { skip }, () => {
+  // Es el «fantasma» del caso nativo: sin texto, sin relleno y sin borde, lo
+  // único que lo identifica es el icono. Hay que mirarlo a mano, y para eso hay
+  // que decirlo.
+  const f = uno("nat-icono");
+  assert.ok(f, "el fantasma nativo seguía callado");
+  assert.equal(f.verdict, "revisar", f.detail);
+  assert.match(f.detail, /tampoco lleva texto/);
+});
+
+test("1.4.11 real: un enlace de texto nativo NO genera ruido", { skip }, () => {
+  /* La dirección contraria, y es la que protege el informe: 1.4.11 no exige
+   * límite a un control que se identifica por su propio texto, y decirlo una vez
+   * por enlace llenaría cada página de filas que no son barreras. */
+  assert.equal(uno("nat-enlace"), undefined,
+    "un enlace de texto no debía dictaminarse en 1.4.11");
 });

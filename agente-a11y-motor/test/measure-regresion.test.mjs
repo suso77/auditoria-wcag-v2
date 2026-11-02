@@ -184,12 +184,45 @@ test("regresión: el.focus() enfoca un tabindex=-1, pero Tab NO: 2.1.1 no puede 
   assert.match(enWidget.detail, /roving/);
 });
 
-test("1.4.11: el límite de un control personalizado se mide; el de uno nativo no", () => {
-  const custom = run('<div role="button" tabindex="0" data-cs=\'{"backgroundColor":"rgb(250,250,250)"}\'>X</div>');
-  const n = custom.filter((r) => r.crit === "1.4.11");
-  assert.equal(n.length, 1);
-  assert.equal(n[0].verdict, "revisar", n[0].detail);
-  assert.equal(run('<button data-cs=\'{"backgroundColor":"rgb(250,250,250)"}\'>X</button>').filter((r) => r.crit === "1.4.11").length, 0);
+test("1.4.11: se mide el límite que pinta el AUTOR, sea el control nativo o no", () => {
+  /* LA REGLA VIEJA ERA «nativo no se mide», Y ERA UN AGUJERO. Cierto de un
+   * <button> sin estilos, falso en cualquier sitio hecho con Tailwind, donde el
+   * botón es nativo y el límite lo pinta el autor. Medido en el sitio del autor:
+   * 1.4.11 era el ÚNICO de los 55 criterios que salía con «ninguna capa llegó a
+   * dictaminarlo», porque todos sus controles son nativos.
+   *
+   * La línea correcta no es nativo contra personalizado: 1.4.11 no exige límite
+   * a un control que se identifica por su propio TEXTO, y sí hay que mirar todo
+   * lo demás. */
+  const uno = (body) => run(body).filter((r) => r.crit === "1.4.11");
+
+  // 1. Personalizado con relleno casi igual al fondo: como antes, `revisar`.
+  const custom = uno('<div role="button" tabindex="0" data-cs=\'{"backgroundColor":"rgb(250,250,250)"}\'>X</div>');
+  assert.equal(custom.length, 1);
+  assert.equal(custom[0].verdict, "revisar", custom[0].detail);
+
+  // 2. Nativo CON TEXTO y sin límite propio: no se dice nada. Lo identifica su
+  //    texto —de eso se ocupa 1.4.3— o el cromo del navegador, y decirlo una
+  //    vez por enlace sería ruido en cada página.
+  assert.equal(uno('<a href="/x">Ir al inicio</a>').length, 0);
+
+  // 3. Nativo con un límite propio FLOJO: esto es lo que antes no se miraba.
+  const flojo = uno('<button data-cs=' + borde(1, "rgb(248,248,248)") + '>Enviar</button>');
+  assert.equal(flojo.length, 1, "un botón nativo con borde propio SÍ se mide");
+  assert.equal(flojo[0].verdict, "revisar", flojo[0].detail);
+  assert.match(flojo[0].detail, /límite del control/);
+
+  // 4. Y con un límite que contrasta, `cumple-parcial`: nunca `pasa`, porque de
+  //    1.4.11 quedan sin medir los iconos, los objetos gráficos y los estados.
+  const bueno = uno('<button data-cs=' + borde(1, "rgb(100,100,100)") + '>Enviar</button>');
+  assert.equal(bueno.length, 1);
+  assert.equal(bueno[0].verdict, "cumple-parcial", bueno[0].detail);
+
+  // 5. El botón de icono «fantasma» NATIVO: sin texto y sin límite. Es el caso
+  //    que de verdad hay que mirar a mano, y antes se saltaba por ser nativo.
+  const fantasma = uno('<button aria-label="Menú" data-cs=\'{"backgroundColor":"rgba(0,0,0,0)"}\'><svg></svg></button>');
+  assert.equal(fantasma.length, 1, "el fantasma nativo ya no se queda en silencio");
+  assert.equal(fantasma[0].verdict, "revisar", fantasma[0].detail);
 });
 
 /* ── 1.4.11: el límite de un control es su relleno O SU BORDE ── */

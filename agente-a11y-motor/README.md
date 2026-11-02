@@ -1001,6 +1001,20 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.86.0 — 1.4.11 no se medía en ningún sitio hecho con utilidades CSS
+
+El paso anterior convirtió la hoja de Seguimiento en un diagnóstico, y el diagnóstico dio un nombre: en la pasada `ja11` del sitio del autor, con la capa dinámica encendida, **39 de los 55 criterios traen ya evidencia de lo comprobado** y el hueco real se quedó en **seis**. De esos seis, cinco son el inventario de medios diciendo honradamente que no encontró audio ni vídeo; el sexto era **1.4.11, el único criterio que decía «ninguna capa llegó a dictaminarlo»**.
+
+Y no era que la capa callara: **la medición excluía en bloque los controles nativos**, con el argumento, escrito en su propio comentario, de que «en los nativos el límite lo pinta el navegador y medirlo sobre el render no dice nada útil». Eso es cierto de un `<button>` sin estilos y **falso en cualquier sitio hecho con Tailwind o parecido**, donde el botón es nativo, el cromo del navegador está quitado y el límite lo pinta el autor. El sitio del autor es exactamente ese caso: todos sus controles son nativos, así que 1.4.11 no se evaluaba nunca.
+
+La línea correcta no es nativo contra personalizado, y la pone el propio criterio: **1.4.11 no exige límite a un control que se identifica por su propio texto**. Así que ahora se mide el límite lo pinte quien lo pinte —autor o navegador—, y lo único que se calla es el nativo con texto y sin límite propio, que es el enlace de toda la vida; decirlo una vez por enlace llenaría cada página de filas que no son barreras. De aquí no puede salir ninguna falla nueva: el veredicto es `cumple-parcial` cuando el límite mide 3:1 o más y `revisar` cuando no llega.
+
+Medido en navegador de verdad, con cuatro guardias nuevas sobre el patrón de un framework de utilidades: un botón nativo con relleno `#2563eb` sobre blanco sale `cumple-parcial` con sus 5.17:1; el mismo con un borde `#f4f4f4` sale `revisar`; el botón de icono nativo sin relleno ni borde ni texto —el «fantasma» del caso nativo— sale `revisar` en vez de quedarse en silencio; y un enlace de texto no genera ninguna fila.
+
+Y un test del propio banco afirmaba lo contrario —«de un control NATIVO no se dice nada»— y era de donde venía la exclusión. Reescrito: que el límite lo pinte el navegador no es un motivo para callar, es un límite medible, y un `<button>` sin estilos sale ahora `cumple-parcial` por el cromo que le pinta Chromium.
+
+**887 tests unitarios** y `limite-control-real` con **12** en navegador real (de 8).
+
 ### v0.85.0 — «sin dictamen» era falso, y era la fila más cara del informe
 
 Medido en la auditoría `ja10` del sitio del autor: **catorce de los 55 criterios** salían en la hoja de Seguimiento como «Sin dictamen del agente: queda para revisión manual» —1.3.1, 1.4.11, 1.4.13, 2.1.1, 2.4.5, 3.2.3, 3.2.4, 3.2.6, 4.1.2…— mientras el rollup decía `revisar` para todos ellos. `revisar` **es** un dictamen: es el prudente, y lo emite el agente después de mirar. La hoja que firma el auditor afirmaba lo contrario.
