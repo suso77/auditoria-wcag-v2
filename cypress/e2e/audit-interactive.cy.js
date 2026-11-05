@@ -230,7 +230,8 @@ function performAction(state) {
   if (state.action === "none") return;
 
   if (state.action === "click") {
-    cy.get(state.selector, { timeout: 6000 }).click({ force: true });
+    // `.first()`: `click` sobre dos elementos lanza igual que `within`.
+    cy.get(state.selector, { timeout: 6000 }).first().click({ force: true });
   }
 
   if (state.action.startsWith("slide_")) {
@@ -242,7 +243,13 @@ function performAction(state) {
   }
 
   if (state.action === "submit") {
-    cy.get(state.selector).within(() => cy.root().submit());
+    /* `.first()`, que es lo que pedía el fallo de /customer/es/login:
+     * «cy.within() can only be called on a single element. Your subject
+     * contained 2 elements». Esa página trae dos formularios que casan con el
+     * mismo selector —acceso y recuperar contraseña—, y el spec los trataba
+     * como uno. Se sondea el primero, que es lo que ya hace la detección al
+     * numerar los patrones. */
+    cy.get(state.selector).first().within(() => cy.root().submit());
   }
 }
 
@@ -271,11 +278,43 @@ describe("IAAP PRO – Auditoría Interactiva (Estable)", () => {
     cy.task("initEvidenceFile", INTERACTIVE_EVIDENCE_FILE);
   });
 
+  // Lo que el cortafuegos ha abortado, para poder decirlo al final de cada página.
+  const bloqueadas = [];
+
   interactiveTargets.forEach(({ url }, idx) => {
     const id = `${idx + 1}`.padStart(3, "0");
 
     it(`(${id}) Auditoría interactiva → ${url}`, () => {
       cy.task("log", `[IAAP] Visitando → ${url}`);
+
+      /* ── CORTAFUEGOS DE RED ──────────────────────────────────────────────
+       *
+       * El estado `_submit` hace un submit DE VERDAD (`cy.root().submit()`), y
+       * aquí no había nada que lo parase: la petición salía al servidor del
+       * sitio auditado desde un runner de GitHub, en cada ejecución, sobre un
+       * formulario de reserva de un tercero. Puede crear registros reales,
+       * disparar correos o tropezar con un WAF y hacer que bloqueen la IP.
+       *
+       * Es el mismo cortafuegos que `agente-a11y-motor` instala en su capa
+       * dinámica (`src/dynamic-analyze.js`, `page.route` abortando todo lo que
+       * no sea GET/HEAD) y por la misma razón. La comprobación NO se pierde: la
+       * validación nativa y el `aria-invalid` se disparan ANTES de que salga la
+       * petición, así que los mensajes de error se siguen midiendo igual.
+       *
+       * Y además evita que la navegación del submit descargue la página: lo que
+       * viene después —`verifyPost`, axe, el guardado— se ejecutaba sobre un
+       * documento que se estaba yendo. */
+      /* Los manejadores NO llevan comandos de Cypress dentro: `cy.task` ahí no
+       * es válido y por eso la primera versión de esto no dejaba ni una línea
+       * en el log, con lo que el cortafuegos no se podía demostrar. Se cuentan
+       * en una lista de fuera y se dicen después, que es comprobable. */
+      bloqueadas.length = 0;
+      ["POST", "PUT", "PATCH", "DELETE"].forEach((m) => {
+        cy.intercept({ method: m, url: "**" }, (req) => {
+          bloqueadas.push(m + " " + req.url);
+          req.reply({ statusCode: 204, body: "" });
+        });
+      });
 
       cy.visit(url, { failOnStatusCode: false });
       cy.get("body", { timeout: 8000 }).should("not.be.empty");
@@ -298,6 +337,11 @@ describe("IAAP PRO – Auditoría Interactiva (Estable)", () => {
           performAction(state);
           cy.wait(300);
           verifyPost(state.post);
+          cy.then(() => {
+            if (bloqueadas.length) {
+              cy.task("log", `[IAAP] 🛡️ ${bloqueadas.length} petición(es) con efecto abortadas: ${bloqueadas.slice(0, 3).join(" · ")}`);
+            }
+          });
 
           cy.injectAxe();
 

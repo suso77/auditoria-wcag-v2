@@ -6,19 +6,16 @@ on:
       site_url:
         description: "URL raíz del sitio a auditar (https://dominio.com)"
         required: true
-        default: "https://www.suntransfers.com"
+        default: "https://jesusaccesible.com"
       lang_filter:
         description: "Fragmento/idioma para filtrar URLs (ej. /es/, vacío = sin filtro)"
         required: false
-        default: "/es/"
-  push:
-    branches: [ main, master ]
-  pull_request:
+        default: ""
 
 env:
   NODE_VERSION: "20"
-  SITE_URL: ${{ github.event.inputs.site_url || vars.SITE_URL || 'https://www.suntransfers.com' }}
-  LANG_FILTER: ${{ github.event.inputs.lang_filter || vars.LANG_FILTER || '/es/' }}
+  SITE_URL: ${{ github.event.inputs.site_url || vars.SITE_URL || 'https://jesusaccesible.com' }}
+  LANG_FILTER: ${{ github.event.inputs.lang_filter || vars.LANG_FILTER || '' }}
   TZ: Europe/Madrid
   LANG: es_ES.UTF-8
 
