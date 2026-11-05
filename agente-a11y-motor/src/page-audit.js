@@ -739,7 +739,28 @@ export function auditPageDoc(doc) {
       "aparece tras una interacción (una caja de luz, un consentimiento de cookies que desbloquea el " +
       "vídeo) y el sonido generado por un <canvas> o por la Web Audio API. Si el sitio tiene algo de eso, " +
       "este «no aplica» no le vale.";
-    ["1.2.1", "1.2.2", "1.2.3", "1.2.4", "1.2.5"].forEach(function (c) {
+    /* 1.2.4 Y 1.2.5 NO, QUE SON DEL CUADERNO Y YA LOS DICE ÉL.
+     *
+     * Esto emitía los cinco, y el cuaderno de juicio emite por su cuenta
+     * `no-aplica` de 1.2.4 y 1.2.5 con su propia evidencia. Resultado: DOS
+     * hallazgos del mismo criterio en la misma página. Medido en Chromium sobre
+     * la página de prueba del banco de integración:
+     *
+     *     1.2.1 → 1 hallazgo   no-aplica  scope=página
+     *     1.2.5 → 2 hallazgos  no-aplica  scope=página  +  no-aplica  scope=juicio
+     *
+     * Lo trajo v0.87.0 y lo cazaron dos pruebas de integración
+     * (`cuaderno-real`) que ese instalador no corría: solo corría la suite
+     * pura, y en la pura esto no se ve. Los dos veredictos coincidían, así que
+     * el informe no cambiaba de conclusión — pero una fila duplicada en una
+     * hoja con efectos legales es un defecto, y la invariante que se rompió
+     * —cada criterio lo decide UNA capa— es la que evita que dos capas digan
+     * cosas distintas del mismo criterio sin que nadie lo note.
+     *
+     * 1.2.4 y 1.2.5 son del cuaderno y además se deciden sobre la MUESTRA
+     * entera, no por página: si otra página tiene vídeo, aplican. Esa es la
+     * razón de fondo para que las decida él y no esto. */
+    ["1.2.1", "1.2.2", "1.2.3"].forEach(function (c) {
       out.push(F(c, "no-aplica", null, [buscado]));
     });
     /* 1.4.2 es sobre audio que SUENA SOLO más de tres segundos. Sin medios en el

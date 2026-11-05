@@ -1001,6 +1001,27 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.94.0 — dos capas dictaminando el mismo criterio, y tres versiones sin que nadie corriera la prueba que lo cazaba
+
+Salió de correr el banco de **integración** completo contra las cuatro entregas anteriores juntas, que es algo que ningún instalador hacía. Dos pruebas de `cuaderno-real` estaban en rojo, y lo que medían era esto:
+
+```
+1.2.1 → 1 hallazgo   no-aplica  scope=página
+1.2.5 → 2 hallazgos  no-aplica  scope=página  +  no-aplica  scope=juicio
+```
+
+**Dos hallazgos del mismo criterio en la misma página.** Lo trajo v0.87.0: su rama de medios emitía `no-aplica` de 1.2.1 a 1.2.5, y 1.2.4 y 1.2.5 son del cuaderno de juicio, que ya los emite por su cuenta. Los dos veredictos coincidían, así que ningún informe cambió de conclusión — pero una fila duplicada en una hoja con efectos legales es un defecto, y la invariante que se rompió es la que evita que dos capas digan cosas **distintas** del mismo criterio sin que nadie lo note.
+
+Y hay una razón de fondo para que los decida el cuaderno: 1.2.4 y 1.2.5 se resuelven sobre la **muestra entera**, no por página. Si otra página tiene vídeo, aplican. Una página sola no puede firmar que no apliquen.
+
+**Por qué vivió tres versiones.** El instalador de v0.87.0 corría la suite pura y nada más, y en la pura esto no se ve: el duplicado solo aparece cuando la orquestación junta la capa de página con el cuaderno, y eso pide un navegador. Las dos pruebas que lo cazaban llevaban sin ejecutarse desde antes. **La regla a partir de aquí: un instalador que toca una capa corre también el fichero de integración de esa capa**, como ya hacían el de v0.86.0 y el de v0.91.0 — y éste corre `cuaderno-real`.
+
+**El test pure que exigía los seis se reescribió, no se borró.** Lo que defendía sigue defendido en las dos puntas: que no se invente una barrera donde no hay medios, y que no quede ningún criterio de medios en blanco. Lo segundo lo garantizan ahora dos capas con los suyos, y hay una guardia nueva que comprueba que juntas no dejan hueco ni duplican.
+
+**Y la prueba de integración afirmaba algo que v0.87.0 volvió obsoleto:** «"no aplica" solo lo emite el cuaderno». Eso dejó de ser cierto a propósito. Se ha sustituido por tres afirmaciones más fuertes, todas por dato y no por prosa: ningún criterio con `no-aplica` duplicado en una página; `no-aplica` solo de quien tiene derecho a emitirlo (el cuaderno por ámbito, el inventario por número de criterio); y los cuatro del inventario dichos y no en blanco en una página sin medios.
+
+Medido reintroduciendo el defecto a propósito: las dos pruebas se ponen en rojo. **915 tests unitarios** (de 914) y las 7 de `cuaderno-real` en verde.
+
 ### v0.93.0 — 2.1.1 «Teclado» salía conforme sin que la prueba de teclado hubiera corrido
 
 Medido en Chromium sobre una página de prueba, con la capa dinámica **apagada**, que es el valor **por defecto** del agente:

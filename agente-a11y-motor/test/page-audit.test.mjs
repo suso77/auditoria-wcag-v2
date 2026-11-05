@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DOMParser } from "linkedom";
-import { auditPageHtml } from "../src/index.js";
+import { auditPageHtml, cuadernoDeJuicio } from "../src/index.js";
 
 function verdicts(html) {
   const doc = new DOMParser().parseFromString("", "text/html"); // no-op para asegurar carga
@@ -179,16 +179,43 @@ test("sin medios, los criterios de medios salen NO APLICA, no en blanco", () => 
    * aplica», y dejarlo en «no se puede comprobar» deja cuatro criterios de nivel
    * A abiertos en el informe de un sitio que no tiene medios.
    *
-   * Lo que el test tenía que defender —que no se INVENTE una barrera donde no
-   * hay medios— sigue defendido: ninguno es `falla` ni `revisar`. */
+   * Y DESPUÉS EXIGIÓ LOS SEIS, que era de más: 1.2.4 y 1.2.5 los decide el
+   * CUADERNO, que ya emite su propio `no-aplica` de los dos. Pedir aquí los seis
+   * dejaba DOS hallazgos del mismo criterio en la misma página —medido en
+   * Chromium: 1.2.5 con dos, uno de ámbito página y otro de juicio—, y lo cazaron
+   * dos pruebas de integración que el instalador de entonces no corría.
+   *
+   * Lo que el test defiende sigue siendo lo mismo en las dos puntas: que no se
+   * INVENTE una barrera donde no hay medios (ninguno es `falla` ni `revisar`) y
+   * que no quede ningún criterio de medios en blanco. Lo segundo lo garantizan
+   * ahora dos capas, cada una con los suyos, y hay una guardia de integración que
+   * comprueba que juntas no dejan hueco ni duplican. */
   const f = soloDe(BASE + "<p>Solo texto.</p></main></body></html>", /1\.2\.|1\.4\.2/);
   const n = f.map((x) => x.c.n).sort();
-  assert.deepEqual(n, ["1.2.1", "1.2.2", "1.2.3", "1.2.4", "1.2.5", "1.4.2"], JSON.stringify(n));
+  assert.deepEqual(n, ["1.2.1", "1.2.2", "1.2.3", "1.4.2"], JSON.stringify(n));
   f.forEach((x) => assert.equal(x.verdict, "no-aplica", x.c.n + ": " + x.verdict));
+  // 1.2.4 y 1.2.5 NO los emite esta capa: son del cuaderno, y además se deciden
+  // sobre la muestra entera —si otra página tiene vídeo, aplican—, que es la
+  // razón de fondo para que no las decida una página sola.
+  assert.ok(!n.includes("1.2.4") && !n.includes("1.2.5"),
+    "1.2.4 y 1.2.5 son del cuaderno: emitirlos aquí duplica la fila");
   // Y la afirmación va con lo que se buscó y con lo que NO se ve desde el marcado.
   assert.match(f[0].evid[0], /0 elementos <video> o <audio>/);
   assert.match(f[0].evid[0], /0 enlaces a un reproductor/);
   assert.match(f[0].evid[0], /solo aparece tras una interacción/);
+});
+
+test("y el CUADERNO sigue poniendo el «no aplica» de 1.2.4 y 1.2.5", () => {
+  /* La otra mitad de la invariante: que al quitarlos de la capa de página no se
+   * pierda el «no aplica» que v0.87.0 ganó. Si esta guardia se cae, un sitio sin
+   * vídeo vuelve a dejar dos criterios abiertos en el informe. */
+  const doc = new DOMParser().parseFromString(BASE + "<p>Solo texto.</p></main></body></html>", "text/html");
+  const c = cuadernoDeJuicio(doc, { url: "http://x.test/" });
+  ["1.2.4", "1.2.5"].forEach((n) => {
+    const ficha = c.criterios.find((x) => x.criterio === n);
+    assert.ok(ficha, n + " tiene que estar en el cuaderno");
+    assert.equal(ficha.aplica, false, n + " no aplica en una página sin medios");
+  });
 });
 
 /* ── 3.1.2 Idioma de las partes ─────────────────────────────────────────── */

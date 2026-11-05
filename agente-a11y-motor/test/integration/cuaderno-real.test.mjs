@@ -117,11 +117,52 @@ test("el informe de la muestra lleva el cuaderno UNA vez, no uno por página", {
 });
 
 test("y no se pierde ninguna barrera real por el camino", { skip }, async () => {
-  // El cuaderno sustituye pendientes genéricos, nunca hallazgos con veredicto.
+  /* ESTA PRUEBA AFIRMABA «no aplica» SOLO LO EMITE EL CUADERNO, y v0.87.0 dejó
+   * eso obsoleto a propósito: el inventario de medios emite `no-aplica` de
+   * 1.2.1, 1.2.2, 1.2.3 y 1.4.2 cuando la página no tiene un solo medio, que es
+   * justo lo que un auditor escribe en un sitio sin vídeo ni audio.
+   *
+   * Pero la invariante de fondo —cada criterio lo decide UNA capa— sí se rompió,
+   * y es la que esta prueba cazó: el inventario emitía además 1.2.4 y 1.2.5, que
+   * son del cuaderno, y salían DOS hallazgos del mismo criterio en la misma
+   * página. Así que lo que se afirma ahora es eso, que es más fuerte y es lo que
+   * de verdad hay que defender. */
   const r = await auditSite([{ url: base + "/paso-1" }, { url: base + "/paso-2" }], { waitMs: 100 });
   const sinVeredicto = r.findings.filter((f) => !f.verdict);
   assert.deepEqual(sinVeredicto, [], "todo hallazgo tiene que llevar veredicto");
+
+  // 1. NINGÚN criterio con dos hallazgos de la misma página: dos capas
+  //    dictaminando lo mismo es una fila duplicada en una hoja con efectos
+  //    legales, y la puerta a que digan cosas distintas sin que nadie lo note.
+  const porPagYCrit = {};
+  r.paginas.forEach(function (p) {
+    (p.findings || []).forEach(function (f) {
+      if (!f || !f.c || f.scope === "juicio") return;   // el de juicio es del sitio, una vez
+      const k = p.url + "\u0000" + f.c.n;
+      (porPagYCrit[k] = porPagYCrit[k] || []).push(f);
+    });
+  });
+  const dobles = Object.keys(porPagYCrit)
+    .filter(function (k) { return porPagYCrit[k].length > 1 && porPagYCrit[k].every(function (f) { return f.verdict === "no-aplica"; }); })
+    .map(function (k) { return k.split("\u0000")[1]; });
+  assert.deepEqual(dobles, [], "criterios con «no aplica» duplicado en la misma página: " + dobles.join(", "));
+
+  // 2. El «no aplica» sale solo de quien tiene derecho a emitirlo, y se
+  //    comprueba por DATO —ámbito y número de criterio—, no por la prosa.
+  const DEL_INVENTARIO = ["1.2.1", "1.2.2", "1.2.3", "1.4.2"];
   const noAplica = r.findings.filter((f) => f.verdict === "no-aplica");
   assert.ok(noAplica.length >= 1);
-  assert.ok(noAplica.every((f) => f.scope === "juicio"), "«no aplica» solo lo emite el cuaderno");
+  const intrusos = noAplica.filter(function (f) {
+    if (f.scope === "juicio") return false;                       // el cuaderno
+    return DEL_INVENTARIO.indexOf(f.c.n) === -1;                  // el inventario de medios
+  }).map(function (f) { return f.c.n + "/" + (f.scope || "—"); });
+  assert.deepEqual(intrusos, [], "«no aplica» de una capa que no debe emitirlo: " + intrusos.join(", "));
+
+  // 3. Y la mitad que v0.87.0 ganó no se pierde: en una página sin medios, los
+  //    cuatro del inventario tienen que estar dichos, no en blanco.
+  const paso1 = r.paginas.find(function (p) { return /paso-1$/.test(p.url); });
+  DEL_INVENTARIO.forEach(function (n) {
+    const f = (paso1.findings || []).find(function (x) { return x.c.n === n && x.verdict === "no-aplica"; });
+    assert.ok(f, n + " tiene que salir «no aplica» en una página sin medios, no en blanco");
+  });
 });
