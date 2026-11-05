@@ -214,7 +214,8 @@ const MOTIVOS = {
   "sonda-muda": "La sonda corrió y no encontró contenido al que aplicarlo; el agente no afirma que no aplique",
   "sonda-rota": "La sonda que lo mide FALLÓ en alguna página de la muestra: este criterio no está medido ahí. Repite la pasada",
   "muestra-incompleta": "Hay páginas de la muestra sin analizar: lo que sale bien en el resto no cubre las que faltan",
-  "pagina-inquieta": "La página seguía cambiando cuando se midió: lo que saliera conforme ahí no se puede firmar"
+  "pagina-inquieta": "La página seguía cambiando cuando se midió: lo que saliera conforme ahí no se puede firmar",
+  "pagina-tras-modal": "La página se midió detrás de un diálogo modal que tapaba su contenido: cierra el aviso y repite la pasada"
 };
 /* `sonda-rota` va con los duros y pronto: significa «parte de la muestra no se
  * midió», igual que una capa apagada, y además es de las cosas que quien lee
@@ -222,7 +223,7 @@ const MOTIVOS = {
  * está ordenada esta lista. Lo que NO puede es ser suave: un criterio cuya
  * sonda se cayó en una página no está medido en esa página, y que lo esté en
  * las otras once no lo cubre. */
-const PRECEDENCIA = ["pagina-inquieta", "capa-apagada", "capa-a-medias", "capa-no-corrio", "sonda-rota", "muestra-incompleta", "nadie-lo-mide", "sonda-muda"];
+const PRECEDENCIA = ["pagina-tras-modal", "pagina-inquieta", "capa-apagada", "capa-a-medias", "capa-no-corrio", "sonda-rota", "muestra-incompleta", "nadie-lo-mide", "sonda-muda"];
 
 export function motivoPendiente(fs, worst) {
   const lista = fs || [];

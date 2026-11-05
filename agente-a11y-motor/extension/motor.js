@@ -5966,6 +5966,107 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     return porCrit;
   }
 
+  /* ── LA AUSENCIA NO SE PUEDE MEDIR DETRÁS DE UN MODAL ───────────────────────
+   *
+   * Cuando un diálogo se abre, el patrón correcto es marcar el resto de la página
+   * con `aria-hidden="true"` para que la tecnología de apoyo solo vea el diálogo.
+   * Lo hace bien casi cualquier muro de cookies. Y entonces, para el agente, la
+   * página NO TIENE NADA: ni landmarks, ni encabezados, ni medios, ni controles.
+   *
+   * Medido sobre una captura real de administracion.gob.es, con su aviso de
+   * cookies abierto, que es el estado en el que se sirve la portada:
+   *
+   *     <div class="header-xf experiencefragment" aria-hidden="true">
+   *     <main class="dintel-container" aria-hidden="true">
+   *     <div class="footer-dintel" aria-hidden="true">
+   *
+   * La página tiene 1 header, 3 nav, 1 main, 1 footer, 2 h1 y 5 h2. El agente
+   * contó cero y firmó 2.4.1 como FALLA: «No hay enlace de salto ni landmarks ni
+   * encabezados». Falso, y con una recomendación falsa detrás —«añada
+   * landmarks»—, porque ya están.
+   *
+   * Y LO QUE IMPORTA MÁS ES EL OTRO SENTIDO. Midiendo la misma captura con el
+   * muro y sin él, DIEZ criterios cambian de veredicto, y uno de ellos es un
+   * `button «Página Anterior»` interactivo que NO es enfocable por teclado:
+   * severidad crítica, 2.1.1, nivel A. Con el muro puesto, el agente no lo ve.
+   * Auditar una página en este estado no solo inventa una barrera: TAPA las de
+   * verdad, y lo hace calladamente.
+   *
+   * Así que esto se detecta y NO SE FIRMA NADA de ámbito de página desde aquí.
+   * No es una barrera —el sitio está haciendo lo correcto— y no es conformidad:
+   * es que no se ha podido mirar. Se cierra el aviso y se repite la pasada.
+   *
+   * La detección es ESTRUCTURAL, no por clase ni por texto: un subárbol con
+   * `role=dialog`/`alertdialog` que NO está oculto, conviviendo con contenedores
+   * marcados `aria-hidden="true"` que se llevan la estructura de la página. Nada
+   * de buscar «cookie» en el marcado, que depende del idioma y del sitio.
+   */
+  function estadoModal(doc) {
+    const no = { modal: false };
+    if (!doc || !doc.querySelectorAll) return no;
+    const dialogos = visibles(doc.querySelectorAll("[role=dialog],[role=alertdialog],dialog[open]"));
+    if (!dialogos.length) return no;
+    const enDialogo = function (el) {
+      return dialogos.some(function (d) { return d === el || (d.contains && d.contains(el)); });
+    };
+    /* `aria-hidden` en un ANCESTRO, y solo eso.
+     *
+     * No vale `ocultoEl`, que también mira `hidden`, `display:none` y `template`:
+     * un menú plegado o una plantilla no son un modal, y tomarlos por uno pondría
+     * a «revisar» páginas perfectamente medibles. Lo que caracteriza al patrón
+     * modal es exactamente `aria-hidden="true"` sobre el resto de la página. */
+    const tapadoPorAria = function (el) {
+      let p = el;
+      while (p && p.nodeType === 1) {
+        if (p.getAttribute("aria-hidden") === "true") return true;
+        p = p.parentElement;
+      }
+      return false;
+    };
+    /* LO QUE DECIDE ES EL CONTENIDO PRINCIPAL, no «toda la estructura».
+     *
+     * La primera versión de esto exigía que TODA la estructura estuviera oculta, y
+     * no disparó en la captura real: de 17 elementos estructurales, 16 estaban
+     * tapados y UNO no —un `<footer class="xf-footer">` envoltorio, fuera del
+     * diálogo—. Una regla que un solo `div` de más desarma no sirve; y bajarla a
+     * un porcentaje invita a detectar modales donde no hay.
+     *
+     * La señal buena es el `main`: si el contenido principal está tapado mientras
+     * hay un diálogo visible, la página está detrás del modal y punto. Sin `main`,
+     * el sustituto son los encabezados de fuera del diálogo, que es lo único que
+     * marca dónde empieza el contenido en una página sin landmarks. */
+    const mainsDoc = Array.prototype.slice.call(doc.querySelectorAll("main,[role=main]")).filter(function (el) { return !enDialogo(el); });
+    const encabezados = Array.prototype.slice.call(doc.querySelectorAll(HEADING_SEL)).filter(function (el) { return !enDialogo(el); });
+    let tapado = false, via = null;
+    if (mainsDoc.length) {
+      tapado = mainsDoc.every(tapadoPorAria);
+      via = "el landmark main";
+    } else if (encabezados.length) {
+      tapado = encabezados.every(tapadoPorAria);
+      via = "todos los encabezados";
+    }
+    if (!tapado) return no;
+    const enfocablesTapados = Array.prototype.slice.call(
+      doc.querySelectorAll("a[href],button,input,select,textarea,summary,[tabindex]")
+    ).filter(function (el) { return !enDialogo(el) && tapadoPorAria(el); }).length;
+    return {
+      modal: true,
+      dialogo: loc(dialogos[0]),
+      dialogos: dialogos.length,
+      via: via,
+      enfocablesTapados: enfocablesTapados
+    };
+  }
+
+  /** Los criterios que `auditPageDoc` decide CONTANDO estructura visible. */
+  /* Los criterios que esta capa decide CONTANDO estructura visible, y que por
+   * tanto no se pueden firmar detrás de un modal. La lista está MEDIDA sobre la
+   * captura real: son exactamente los que cambian de veredicto al abrir y cerrar
+   * el muro. `2.4.2` y `3.1.1` quedan fuera a propósito —son atributos del
+   * documento, salen igual con muro y sin él—, y `2.4.6` y `1.3.1` tampoco
+   * cambian de conformidad, así que tocarlos sería quitar lo que sí está medido. */
+  const CRITERIOS_DE_ESTRUCTURA = ["1.2.1", "1.2.2", "1.2.3", "1.4.2", "2.4.1"];
+
   function auditPageDoc(doc) {
     const out = [];
     const html = doc.documentElement;
@@ -6557,6 +6658,42 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       }
     }
 
+    /* ── Y LO ÚLTIMO: SI LA PÁGINA ESTÁ DETRÁS DE UN MODAL, NO SE FIRMA ───────
+     *
+     * Los criterios de esta lista los decide esta capa CONTANDO estructura
+     * visible, así que detrás de un modal cuentan cero y concluyen de la nada. La
+     * lista está MEDIDA, no supuesta: son los que cambian de veredicto al abrir y
+     * cerrar el muro de cookies en la captura real de administracion.gob.es.
+     *
+     *     1.2.1  no-aplica → revisar          (inventario de medios: cero medios)
+     *     1.2.2  no-aplica → revisar
+     *     1.2.3  no-aplica → revisar
+     *     1.4.2  no-aplica → cumple-parcial
+     *     2.4.1  FALLA     → revisar          (cero landmarks, cero encabezados)
+     *
+     * `2.4.2` (title) y `3.1.1` (lang) NO entran, y eso también está medido: son
+     * atributos del documento y salen idénticos con muro y sin él. Bajarlos sería
+     * quitar conformidad que sí está medida, que es el error contrario.
+     *
+     * Lo que se emite no es una barrera —el sitio hace lo correcto marcando el
+     * resto con `aria-hidden`— ni una conformidad: es que NO SE HA PODIDO MIRAR. */
+    const modal = estadoModal(doc);
+    if (modal.modal) {
+      const porQue = "LA PÁGINA ESTÁ DETRÁS DE UN DIÁLOGO MODAL (" + modal.dialogo + ") que marca el resto con " +
+        "`aria-hidden=\"true\"`: " + modal.enfocablesTapados + " control(es) enfocable(s) quedan tapados y " + modal.via +
+        " no está expuesto. Esto NO se ha podido comprobar en este estado: el agente contaría cero landmarks, cero " +
+        "encabezados y cero medios, y de la nada no se concluye. No es una barrera —marcar el resto es lo correcto " +
+        "mientras el diálogo está abierto— y no es conformidad. Cierra o acepta el aviso y repite la pasada.";
+      const limpio = out.filter(function (f) { return CRITERIOS_DE_ESTRUCTURA.indexOf(f.c.n) === -1; });
+      out.length = 0;
+      limpio.forEach(function (f) { out.push(f); });
+      CRITERIOS_DE_ESTRUCTURA.forEach(function (n) {
+        const f = F(n, "revisar", null, [porQue]);
+        f.motivo = "pagina-tras-modal";
+        out.push(f);
+      });
+    }
+
     return out;
   }
 
@@ -6573,6 +6710,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     findings.forEach(function (f) { if (s[f.verdict] != null) s[f.verdict]++; });
     return s;
   }
+  NS.estadoModal = estadoModal;
   NS.auditPageDoc = auditPageDoc;
   NS.auditPageHtml = auditPageHtml;
   NS.pageSummary = pageSummary;
@@ -9825,7 +9963,8 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     "sonda-muda": "La sonda corrió y no encontró contenido al que aplicarlo; el agente no afirma que no aplique",
     "sonda-rota": "La sonda que lo mide FALLÓ en alguna página de la muestra: este criterio no está medido ahí. Repite la pasada",
     "muestra-incompleta": "Hay páginas de la muestra sin analizar: lo que sale bien en el resto no cubre las que faltan",
-    "pagina-inquieta": "La página seguía cambiando cuando se midió: lo que saliera conforme ahí no se puede firmar"
+    "pagina-inquieta": "La página seguía cambiando cuando se midió: lo que saliera conforme ahí no se puede firmar",
+    "pagina-tras-modal": "La página se midió detrás de un diálogo modal que tapaba su contenido: cierra el aviso y repite la pasada"
   };
   /* `sonda-rota` va con los duros y pronto: significa «parte de la muestra no se
    * midió», igual que una capa apagada, y además es de las cosas que quien lee
@@ -9833,7 +9972,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
    * está ordenada esta lista. Lo que NO puede es ser suave: un criterio cuya
    * sonda se cayó en una página no está medido en esa página, y que lo esté en
    * las otras once no lo cubre. */
-  const PRECEDENCIA = ["pagina-inquieta", "capa-apagada", "capa-a-medias", "capa-no-corrio", "sonda-rota", "muestra-incompleta", "nadie-lo-mide", "sonda-muda"];
+  const PRECEDENCIA = ["pagina-tras-modal", "pagina-inquieta", "capa-apagada", "capa-a-medias", "capa-no-corrio", "sonda-rota", "muestra-incompleta", "nadie-lo-mide", "sonda-muda"];
 
   function motivoPendiente(fs, worst) {
     const lista = fs || [];

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DOMParser } from "linkedom";
-import { auditPageHtml, cuadernoDeJuicio } from "../src/index.js";
+import { auditPageHtml, cuadernoDeJuicio, estadoModal } from "../src/index.js";
 
 function verdicts(html) {
   const doc = new DOMParser().parseFromString("", "text/html"); // no-op para asegurar carga
@@ -506,4 +506,79 @@ test("un idioma que el perfil no cubre se declara como tal, no se acusa", () => 
   const f = auditPageHtml(pagLang("de", aleman), DOMParser).find((x) => x.c.n === "3.1.1");
   assert.equal(f.verdict, "cumple-parcial");
   assert.match(f.evid[0], /no cubre «de»/);
+});
+
+/* ── LA AUSENCIA NO SE PUEDE MEDIR DETRÁS DE UN MODAL ────────────────────────
+ *
+ * Primer falso positivo medido en un sitio que NO es el del autor. Capturado el
+ * HTML real de administracion.gob.es, con su aviso de cookies abierto —que es el
+ * estado en el que se sirve la portada—, el agente firmó 2.4.1 como FALLA: «No
+ * hay enlace de salto ni landmarks ni encabezados». La página tiene 1 header,
+ * 3 nav, 1 main, 1 footer, 2 h1 y 5 h2: están todos dentro de contenedores que
+ * el sitio marca `aria-hidden="true"` mientras el diálogo está abierto, que es
+ * el patrón CORRECTO.
+ *
+ * Y midiendo la misma captura con el muro y sin él, diez criterios cambiaban de
+ * veredicto en los DOS sentidos: el muro inventaba esa falla y tapaba un
+ * `button «Página Anterior»` interactivo no enfocable por teclado —2.1.1,
+ * crítica—. Un muro de cookies es el estado por defecto de casi cualquier sitio
+ * del sector público, así que esto no es un caso raro.
+ */
+const MODAL = (extra) => '<!doctype html><html lang="es"><head><title>t</title></head><body>' +
+  '<div aria-hidden="true"><header><nav><a href="/">Inicio</a></nav></header>' +
+  '<main><h1>Contenido</h1><p>Texto.</p><a href="/a">Un enlace</a></main>' +
+  '<footer><a href="/c">Contacto</a></footer></div>' +
+  '<section role="dialog" tabindex="0"><h2>Cookies</h2><button>Aceptar</button></section>' +
+  (extra || "") + "</body></html>";
+
+test("detecta que la página está detrás de un modal, por estructura y no por texto", () => {
+  const e = estadoModal(new DOMParser().parseFromString(MODAL(), "text/html"));
+  assert.equal(e.modal, true, JSON.stringify(e));
+  assert.match(e.dialogo, /section/);
+  assert.equal(e.via, "el landmark main");
+  assert.ok(e.enfocablesTapados >= 3, "tiene que contar los controles tapados: " + e.enfocablesTapados);
+});
+
+test("y NO lo detecta cuando la página sigue expuesta", () => {
+  // Mismo diálogo, sin `aria-hidden` sobre el contenido: se puede medir y se mide.
+  const expuesta = MODAL().replace('<div aria-hidden="true">', "<div>");
+  assert.equal(estadoModal(new DOMParser().parseFromString(expuesta, "text/html")).modal, false);
+  // Y sin diálogo alguno, tampoco: un menú plegado no es un modal.
+  const plegado = '<!doctype html><html lang="es"><head><title>t</title></head><body>' +
+    '<header><nav hidden><a href="/">Inicio</a></nav></header><main><h1>x</h1></main></body></html>';
+  assert.equal(estadoModal(new DOMParser().parseFromString(plegado, "text/html")).modal, false,
+    "`hidden` no es el patrón modal: confundirlos pondría a revisar páginas medibles");
+});
+
+test("detrás de un modal NO se firma ninguno de los criterios de estructura", () => {
+  const fs = auditPageHtml(MODAL(), DOMParser);
+  ["1.2.1", "1.2.2", "1.2.3", "1.4.2", "2.4.1"].forEach((n) => {
+    const de = fs.filter((f) => f.c.n === n);
+    assert.equal(de.length, 1, n + ": una ficha y solo una, no la del conteo y la del modal");
+    assert.equal(de[0].verdict, "revisar", n + " → " + de[0].verdict);
+    assert.equal(de[0].motivo, "pagina-tras-modal", n + " → " + de[0].motivo);
+    assert.match(de[0].evid.join(" "), /DETRÁS DE UN DIÁLOGO MODAL/);
+    assert.match(de[0].evid.join(" "), /[Nn]o es una barrera/, "el sitio hace lo correcto: no se le acusa");
+  });
+  // Y sobre todo: NI UNA FALLA inventada por el estado modal.
+  assert.deepEqual(fs.filter((f) => f.verdict === "falla" && f.c.n === "2.4.1"), []);
+});
+
+test("pero el title y el idioma SÍ se firman: son atributos, no conteos", () => {
+  /* Es el error contrario y está medido: con muro y sin muro, 2.4.2 y 3.1.1 dan
+   * exactamente lo mismo en la captura real. Bajarlos sería quitar conformidad
+   * que sí está comprobada. */
+  const fs = auditPageHtml(MODAL(), DOMParser);
+  const t = fs.find((f) => f.c.n === "2.4.2");
+  assert.equal(t.verdict, "cumple-parcial", "el <title> se lee detrás de un modal");
+  assert.ok(!t.motivo, "y sin motivo de modal");
+  const l = fs.find((f) => f.c.n === "3.1.1");
+  // Lo que se defiende no es el veredicto exacto —depende del texto de la
+  // página— sino que el modal NO lo haya tocado.
+  assert.ok(l.verdict === "cumple" || l.verdict === "cumple-parcial", "3.1.1 → " + l.verdict);
+  assert.ok(!l.motivo, "3.1.1 no lleva motivo de modal");
+  // Y una falla de verdad en un atributo tampoco se absuelve.
+  const sinTitulo = auditPageHtml(MODAL().replace("<title>t</title>", ""), DOMParser);
+  assert.equal(sinTitulo.find((f) => f.c.n === "2.4.2").verdict, "falla",
+    "un <title> que falta falta igual, haya modal o no");
 });

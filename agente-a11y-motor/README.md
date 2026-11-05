@@ -1001,6 +1001,39 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.95.0 — el primer falso positivo medido fuera del sitio del autor: un muro de cookies
+
+Hasta aquí, el «cero falsos positivos» estaba medido en **un solo sitio**. Esta entrega sale de salir de él: se capturó el HTML real de `administracion.gob.es` —sector público, el dominio de este trabajo—, se sirvió en local y se le pasó el pipeline con Chromium. **909 hallazgos, 2 fallas**, adjudicadas una a una.
+
+La primera es verdadera: el aviso de cookies es `<section role="dialog" tabindex="0">` **sin nombre accesible**, y un lector lo anuncia solo como «dialog». 4.1.2, verificado en el marcado.
+
+La segunda era falsa, y de nivel A. El agente firmó:
+
+> 2.4.1 **FALLA** — «No hay enlace de salto ni landmarks ni encabezados para saltar bloques repetidos»
+
+La página tiene 1 `<header>`, 3 `<nav>`, 1 `<main>`, 1 `<footer>`, 2 `<h1>` y 5 `<h2>`. Están todos dentro de contenedores que el sitio marca `aria-hidden="true"` mientras el diálogo está abierto —que es el patrón **correcto**—, así que el agente contaba cero y concluía de la nada. Con una recomendación falsa detrás: «añada landmarks», cuando ya están.
+
+**Y lo que importa más es el otro sentido.** Midiendo la misma captura con el muro y sin él, **diez criterios cambian de veredicto**, en las dos direcciones:
+
+```
+2.4.1   con muro: FALLA      sin muro: revisar     ← el muro INVENTA una barrera
+2.1.1   con muro: revisar    sin muro: FALLA       ← el muro TAPA una barrera real
+```
+
+La que tapa es un `button «Página Anterior»` interactivo que **no es enfocable por teclado**: 2.1.1, nivel A, severidad **crítica**, en la portada. Auditar una página en su estado de muro no solo inventa barreras: esconde las de verdad, y calladamente. Un muro de cookies es el estado por defecto de casi cualquier sitio del sector público español.
+
+**La detección es estructural**, no por texto ni por clase: un subárbol con `role=dialog`/`alertdialog` visible mientras el `main` —o, sin `main`, todos los encabezados de fuera del diálogo— está tapado por un `aria-hidden` ancestro. Nada de buscar «cookie» en el marcado, que depende del idioma. Y solo cuenta `aria-hidden`: un menú plegado con `hidden` o una plantilla no son un modal, y tomarlos por uno pondría a «revisar» páginas perfectamente medibles.
+
+La primera versión de la regla exigía que **toda** la estructura estuviera tapada y no disparó: de 17 elementos estructurales había 16 tapados y uno no, un `<footer>` envoltorio. Una regla que un `div` de más desarma no sirve.
+
+**Qué deja de firmar, y qué sigue firmando.** Detrás de un modal, los cinco criterios que esta capa decide contando estructura visible salen `revisar` con el motivo `pagina-tras-modal` y la explicación: no es una barrera, no es conformidad, es que no se ha podido mirar. La lista está **medida**, no supuesta — son exactamente los que cambiaban: `1.2.1`, `1.2.2`, `1.2.3`, `1.4.2`, `2.4.1`. Y `2.4.2` (title) y `3.1.1` (lang) **no** entran, también medido: son atributos del documento y salen idénticos con muro y sin él. Bajarlos sería el error contrario, quitar conformidad que sí está comprobada. Un `<title>` que falta sigue siendo falla, haya modal o no, con su test.
+
+Encima va un **aviso** que dice el número: en la captura real, 197 controles enfocables tapados, con la advertencia de que la pasada puede estar escondiendo barreras del contenido.
+
+**Lo que esta entrega NO hace, y es una decisión:** el agente no acepta el muro por su cuenta. Aceptar un consentimiento en el sitio de un tercero es del auditor, no de la herramienta. Lo que hace el agente es decirlo y negarse a concluir.
+
+Resultado sobre la misma captura: **1 falla en vez de 2** — fuera el falso positivo, en pie el verdadero. **919 tests unitarios** (de 915) y la integración de página, orquestación, cuaderno y coherencia en verde, con cuatro guardias nuevas: que detecte por estructura, que **no** detecte con la página expuesta ni con un menú plegado, que no firme ninguno de los cinco, y que el title y el idioma sigan firmándose.
+
 ### v0.94.0 — dos capas dictaminando el mismo criterio, y tres versiones sin que nadie corriera la prueba que lo cazaba
 
 Salió de correr el banco de **integración** completo contra las cuatro entregas anteriores juntas, que es algo que ningún instalador hacía. Dos pruebas de `cuaderno-real` estaban en rojo, y lo que medían era esto:

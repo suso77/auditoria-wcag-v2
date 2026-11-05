@@ -14,7 +14,7 @@
 import { understand, analyze, setDOMParser, WCAG22 } from "./engine.js";
 import { launchOptions } from "./playwright-launch.js";
 import { MEASURE_BODY } from "./measure.browser.js";
-import { auditPageDoc } from "./page-audit.js";
+import { auditPageDoc, estadoModal } from "./page-audit.js";
 import { cuadernoDeJuicio, aplicaCuaderno, CRITERIOS_DE_JUICIO } from "./cuaderno.js";
 import { censoDeOyentes, analizaPuntero } from "./pointer.js";
 
@@ -206,6 +206,30 @@ export async function analyzeRendered(target, opts) {
             limita: ["2.4.1", "2.4.2", "3.1.1", "1.3.1"],
             detail: "la auditoría de página falló (" + ((e && e.message) || e) + "): los criterios de ámbito de página —title, idioma, landmarks, saltar bloques— NO se han comprobado en esta ejecución." });
         }
+        /* EL MURO DE COOKIES, DICHO ARRIBA Y NO SOLO EN LA FICHA.
+         *
+         * `auditPageDoc` ya se niega a firmar los criterios que cuenta sobre
+         * estructura visible cuando la página está detrás de un modal. Pero eso
+         * vive en la evidencia de cinco fichas, y lo que hay que saber antes de
+         * leer NADA de esta página es que el agente no ha visto su contenido:
+         * medido en la captura real, 197 controles enfocables tapados, y un
+         * `button «Página Anterior»` no enfocable por teclado —2.1.1, crítica—
+         * que con el muro puesto el agente NO VE. El muro no solo inventa
+         * barreras: tapa las de verdad, y eso tiene que salir en el aviso. */
+        const modal = docPagina ? estadoModal(docPagina) : { modal: false };
+        if (modal.modal) {
+          coberturasPropias.push({
+            crit: "__meta", label: "Página detrás de un diálogo modal", node: modal.dialogo, verdict: "revisar",
+            limita: ["1.2.1", "1.2.2", "1.2.3", "1.4.2", "2.4.1"],
+            detail: "OJO: ESTA PÁGINA SE HA MEDIDO DETRÁS DE UN DIÁLOGO MODAL (" + modal.dialogo + "), que marca el " +
+              "resto con `aria-hidden=\"true\"`: " + modal.enfocablesTapados + " control(es) enfocable(s) tapados. " +
+              "Lo que hay debajo NO se ha examinado, así que esta pasada no solo deja sin comprobar los criterios de " +
+              "ámbito de página: puede estar TAPANDO barreras reales del contenido. Medido en un sitio público real, " +
+              "el muro de cookies escondía un control interactivo no enfocable por teclado (2.1.1, crítica). " +
+              "Cierra o acepta el aviso y repite la pasada antes de dar nada por bueno."
+          });
+        }
+
         /* El cuaderno de juicio, sobre el MISMO documento y con el CSS ya
          * resuelto por el navegador.
          *
