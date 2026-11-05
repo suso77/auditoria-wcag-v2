@@ -104,6 +104,18 @@ function __apagado(el){
      deshabilitados. \`:disabled\` sí recoge la herencia. */
   if(el.hasAttribute('disabled')) return true;
   try { if(el.matches && el.matches(':disabled')) return true; } catch(e) {}
+  /* Y \`aria-disabled="true"\`, que era el mismo agujero sin tapar.
+     Medido contra el marcado real de administracion.gob.es, su paginación:
+     \`<a role="button" aria-label="Página Anterior" tabindex="-1" aria-disabled="true">\`
+     —la flecha «anterior» en la primera página, deshabilitada— salía como 2.1.1
+     \`falla\` GRAVE, «no alcanzable con teclado de ninguna manera». Lo es, y es
+     correcto que lo sea: está deshabilitada. Se mira también en los ANCESTROS,
+     por lo mismo que \`:disabled\` arriba: un grupo o una barra de herramientas
+     marcada no disponible deshabilita lo que lleva dentro.
+     El criterio NO se queda callado: el motor emite \`revisar\` por ese elemento
+     diciendo qué comprobar —que de verdad sea inerte—, que es lo único que no se
+     ve desde el marcado. */
+  try { if(el.closest && el.closest('[aria-disabled="true"]')) return true; } catch(e) {}
   return false;
 }
 function __focusables(){

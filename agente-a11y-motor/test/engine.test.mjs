@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { understand, analyze, announcement } from "./helpers.mjs";
+import { understand, analyze, announcement, elementFrom } from "./helpers.mjs";
 import { etiquetaEnNombre, textoDeEtiqueta, normalizaEtiqueta, accionDeContexto,
   funcionSoloConRaton, accionNativaDeTeclado, buildPath } from "../src/engine.js";
 import { literalesDeContent } from "../src/measure.browser.js";
@@ -553,4 +553,59 @@ test("buildPath: las rutas del <body> no han cambiado de forma", () => {
     '<!doctype html><html><head><title>T</title></head><body><main><p>a</p><p>b</p></main></body></html>', "text/html");
   assert.equal(buildPath(doc.querySelectorAll("p")[1]), "html > body > main:nth-of-type(1) > p:nth-of-type(2)");
   assert.equal(buildPath(doc.querySelector("main")), "html > body > main:nth-of-type(1)");
+});
+
+/* ── UN CONTROL DESHABILITADO NO ES UNA BARRERA CRÍTICA DE 2.1.1 ─────────────
+ *
+ * Es el falso positivo más caro que ha salido de medir fuera del sitio del
+ * autor, porque era CRÍTICO —el veredicto más grave que emite el agente— y
+ * porque cae sobre el patrón de interfaz más común que existe. Medido contra el
+ * marcado real de administracion.gob.es, su paginación:
+ *
+ *     <a role="button" aria-label="Página Anterior" tabindex="-1" aria-disabled="true">
+ *     <a role="button" aria-label="Página 2" tabindex="0">
+ *
+ * La flecha «anterior» está en la primera página: está DESHABILITADA, y que no
+ * reciba el foco es lo correcto. El agente la firmaba como falla crítica de
+ * nivel A. Aislado con un banco de cinco casos: `display:none`, `tabindex="0"` y
+ * el `disabled` nativo sí se respetaban; `aria-disabled` no.
+ *
+ * 2.1.1 habla de FUNCIONALIDAD, y un control declarado no disponible no ofrece
+ * ninguna. Pero no se calla: sale `revisar` diciendo qué comprobar —que de
+ * verdad sea inerte—, porque un control que se anuncia deshabilitado y aun así
+ * responde al clic SÍ es una falla de nivel A, y eso no se ve en el marcado.
+ */
+const obs211 = (html) => {
+  const r = analyze(understand(elementFrom(html)));
+  return (r.findings || []).filter((f) => f.c && f.c.n === "2.1.1");
+};
+
+test("aria-disabled: 2.1.1 sale «revisar», nunca falla crítica", () => {
+  const f = obs211('<a role="button" aria-label="Página Anterior" tabindex="-1" aria-disabled="true"></a>');
+  assert.equal(f.length, 1, JSON.stringify(f.map((x) => x.verdict)));
+  assert.equal(f[0].verdict, "revisar", "no puede ser falla: el control está deshabilitado");
+  assert.notEqual(f[0].sev, "crítica");
+  const t = (f[0].evid || []).join(" ");
+  assert.match(t, /aria-disabled/);
+  assert.match(t, /de verdad sea inerte/, "y dice qué hay que comprobar");
+});
+
+test("pero un control HABILITADO y sin foco sigue siendo falla CRÍTICA", () => {
+  /* La mitad que es fácil romper arreglando la otra: si esto se cae, el agente
+   * deja de ver la barrera de teclado de libro. */
+  const f = obs211('<a role="button" aria-label="Página siguiente"></a>');
+  assert.equal(f.length, 1);
+  assert.equal(f[0].verdict, "falla");
+  assert.equal(f[0].sev, "crítica");
+  assert.match((f[0].evid || []).join(" "), /no es enfocable por teclado/);
+});
+
+test("el disabled NATIVO sigue sin decir nada, y aria-disabled=false tampoco exime", () => {
+  // El nativo deshabilitado no es barrera: el agente dice `cumple`, no `falla`.
+  const nat = obs211('<button disabled>Anterior</button>');
+  assert.ok(!nat.some((x) => x.verdict === "falla"), JSON.stringify(nat.map((x) => x.verdict)));
+  const f = obs211('<a role="button" aria-label="Siguiente" aria-disabled="false"></a>');
+  assert.equal(f.length, 1);
+  assert.equal(f[0].verdict, "falla");
+  assert.equal(f[0].sev, "crítica", "«false» no deshabilita nada: la barrera es real");
 });

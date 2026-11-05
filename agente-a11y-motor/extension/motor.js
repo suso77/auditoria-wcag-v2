@@ -1362,7 +1362,37 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       });
     }
     if (model.interactive && !model.focusable && !model.isMedia && !model.disabled && !model.managed) {
-      obs.push({ html: "Es interactivo pero <strong>no es enfocable por teclado</strong> (sin elemento nativo ni <code>tabindex</code> ≥ 0).", crit: "2.1.1", sev: "crítica", type: "not-focusable" });
+      /* UN CONTROL DECLARADO NO DISPONIBLE NO ES UNA BARRERA CRÍTICA DE 2.1.1.
+       *
+       * Esto acusaba a cualquier control con rol de widget que no pudiera recibir
+       * el foco, y se comía los `aria-disabled`. Medido contra el marcado real de
+       * administracion.gob.es, su paginación:
+       *
+       *     <a role="button" aria-label="Página Anterior" tabindex="-1" aria-disabled="true">
+       *     <a role="button" aria-label="Página 2" tabindex="0">
+       *
+       * La flecha «anterior» está en la primera página: está DESHABILITADA, y que
+       * no reciba el foco es correcto. El agente la firmaba como falla CRÍTICA de
+       * nivel A — el veredicto más grave que emite— sobre el patrón de paginación
+       * más común que existe. Aislado con un banco de cinco casos: `display:none`
+       * y `tabindex="0"` sí se respetaban; `aria-disabled` no.
+       *
+       * 2.1.1 habla de FUNCIONALIDAD, y un control declarado no disponible no
+       * ofrece ninguna. Pero tampoco se calla, porque desde el marcado no se ve
+       * si de verdad es inerte: un control que se anuncia deshabilitado y sin
+       * embargo responde al clic es OTRO problema, y hay que mirarlo. Así que
+       * `revisar` con lo que hay que comprobar, nunca una falla crítica. */
+      if (model.ariaDisabled) {
+        obs.push({
+          html: "Se declara no disponible (<code>aria-disabled=\"true\"</code>) y no es enfocable por teclado. " +
+            "2.1.1 habla de funcionalidad, y un control deshabilitado no ofrece ninguna, así que de aquí no sale una barrera. " +
+            "Lo que hay que comprobar es que de verdad sea inerte: si responde al clic pese a anunciarse deshabilitado, " +
+            "es un control operable que ningún teclado alcanza, y entonces sí es una falla de nivel A.",
+          crit: "2.1.1", sev: "moderada", type: "not-focusable-aria-disabled", nivel: "revisar"
+        });
+      } else {
+        obs.push({ html: "Es interactivo pero <strong>no es enfocable por teclado</strong> (sin elemento nativo ni <code>tabindex</code> ≥ 0).", crit: "2.1.1", sev: "crítica", type: "not-focusable" });
+      }
     }
     // Alcanzable con Tab NO es operable con teclado. Un <div role="button"
     // tabindex="0"> recibe el foco, pero no dispara su `onclick` con Enter ni con
@@ -1567,6 +1597,14 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
     const implicit = presentacionHeredada ? "presentation" : implicitRole(el);
     const role = explicitRole ? explicitRole.split(/\s+/)[0] : implicit;
     const disabled = el.hasAttribute("disabled");
+    /* `aria-disabled` NO es `disabled`, y por eso va aparte.
+     *
+     * El nativo lo saca del orden de tabulación y lo deja inerte de verdad.
+     * `aria-disabled="true"` solo lo DECLARA no disponible: el elemento sigue
+     * siendo enfocable y pulsable salvo que el autor lo gestione, y es el patrón
+     * recomendado precisamente por eso. Así que no se pueden fundir: fundirlos
+     * haría que `focusable` mintiera y eso se propagaría a otros criterios. */
+    const ariaDisabled = el.getAttribute("aria-disabled") === "true";
     const focusable = keyboardFocusable(el);
     const hasClick = el.hasAttribute("onclick");
     // Solo ve los manejadores EN LÍNEA: un addEventListener no está en el marcado.
@@ -1615,7 +1653,7 @@ var A11Y = (typeof globalThis !== "undefined" ? globalThis : self).A11Y || {};
       id: ++NODE_SEQ, depth: depth, tag: tag, role: role, level: level, locator: buildLocator(el, tag), path: buildPath(el),
       roleSource: explicitRole ? "atributo role (explícito)" : "rol implícito de <" + tag + ">",
       name: nameObj, desc: descObj.text, descSource: descObj.source,
-      interactive: interactive, focusable: focusable, disabled: disabled, managed: managed, hasClick: hasClick, hasKeyHandler: hasKeyHandler, autocomplete: autocomplete, tabindex: tabAttr,
+      interactive: interactive, focusable: focusable, disabled: disabled, ariaDisabled: ariaDisabled, managed: managed, hasClick: hasClick, hasKeyHandler: hasKeyHandler, autocomplete: autocomplete, tabindex: tabAttr,
       states: collectStates(el), relations: relations, brokenRefs: brokenRefs,
       isImage: (tag === "img" || role === "img" || role === "(presentación)"),
       isMedia: (tag === "video" || tag === "audio" || role === "(medios)"),

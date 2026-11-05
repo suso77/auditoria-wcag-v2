@@ -1001,6 +1001,27 @@ Quedaban módulos sin pasar por la revisión, y los de más riesgo eran los crit
 
 **620 tests unitarios** (de 612) y **130 de integración**, en verde, con dieciséis nuevos para los diez defectos. Siete tests existentes afirmaban el comportamiento viejo —incluido uno que exigía `analyzeCoherence([]) === []`, es decir, el silencio— y se reescribieron conservando lo que de verdad defendían.
 
+### v0.96.0 — una flecha de paginación deshabilitada salía como falla CRÍTICA
+
+Sale de encender la capa dinámica contra las capturas reales, servidas desde localhost —así se la puede ejercitar sobre marcado ajeno sin mandar nada a ningún servidor de nadie—. Corrió limpia, cero sondas caídas, y dejó **una** falla suya que adjudicar. Era falsa, y de las caras:
+
+```
+<a role="button" aria-label="Página Anterior" tabindex="-1" aria-disabled="true">
+<a role="button" aria-label="Página 2" tabindex="0">
+```
+
+La flecha «anterior» de la paginación de `administracion.gob.es`, en la primera página: **deshabilitada**. Que no reciba el foco es lo correcto. El agente la firmaba como **falla crítica de nivel A** —el veredicto más grave que emite— sobre el patrón de interfaz más común que existe: una paginación, un carrusel, un «anterior/siguiente».
+
+Aislado con un banco de cinco casos: `display:none`, `tabindex="0"` y el `disabled` **nativo** sí se respetaban. `aria-disabled` no, y en **dos** sitios independientes — el modelo del motor (`const disabled = el.hasAttribute("disabled")`, solo el nativo) y el censo de controles no enfocables que se inyecta al navegador, cuya función `__apagado` ya llevaba un comentario sobre una iteración anterior del mismo defecto con `<fieldset disabled>`.
+
+**No se funden `disabled` y `aria-disabled`, y eso es deliberado.** El nativo saca al elemento del orden de tabulación y lo deja inerte; `aria-disabled="true"` solo lo *declara* no disponible y el elemento sigue siendo enfocable y pulsable salvo que el autor lo gestione — es el patrón recomendado precisamente por eso. Fundirlos haría que `focusable` mintiera y el embuste se propagaría a otros criterios.
+
+**Y no se calla.** 2.1.1 habla de funcionalidad y un control declarado no disponible no ofrece ninguna, así que de ahí no sale una barrera; pero desde el marcado no se ve si de verdad es inerte, y un control que se anuncia deshabilitado y aun así responde al clic **sí** es una falla de nivel A. Así que sale `revisar` diciendo exactamente eso. En los ancestros también, por la misma lección del `<fieldset>`: un grupo marcado no disponible deshabilita lo que lleva dentro.
+
+Medido sobre la captura real: la falla de 2.1.1 desaparece y la crítica del banco —un control habilitado sin ninguna forma de recibir el foco— sigue en pie. **922 tests unitarios** (de 919) y las 44 de integración de dinámico, seguridad del dinámico y foco en verde, con tres guardias: que `aria-disabled` dé `revisar`, que el control habilitado siga siendo crítica, y que `aria-disabled="false"` no exima a nadie.
+
+**Esto corrige lo que v0.95.0 contaba de sí misma.** Ese `button «Página Anterior»` se presentó como una barrera crítica real que el muro de cookies estaba tapando, y era este falso positivo. El hallazgo de v0.95.0 se sostiene —el muro cambia diez veredictos en los dos sentidos, medido—, pero el ejemplo con el que se ilustró era falso. La entrada de v0.95.0 queda corregida en su sitio en vez de borrada.
+
 ### v0.95.0 — el primer falso positivo medido fuera del sitio del autor: un muro de cookies
 
 Hasta aquí, el «cero falsos positivos» estaba medido en **un solo sitio**. Esta entrega sale de salir de él: se capturó el HTML real de `administracion.gob.es` —sector público, el dominio de este trabajo—, se sirvió en local y se le pasó el pipeline con Chromium. **909 hallazgos, 2 fallas**, adjudicadas una a una.
@@ -1020,7 +1041,9 @@ La página tiene 1 `<header>`, 3 `<nav>`, 1 `<main>`, 1 `<footer>`, 2 `<h1>` y 5
 2.1.1   con muro: revisar    sin muro: FALLA       ← el muro TAPA una barrera real
 ```
 
-La que tapa es un `button «Página Anterior»` interactivo que **no es enfocable por teclado**: 2.1.1, nivel A, severidad **crítica**, en la portada. Auditar una página en su estado de muro no solo inventa barreras: esconde las de verdad, y calladamente. Un muro de cookies es el estado por defecto de casi cualquier sitio del sector público español.
+La que tapa se presentó aquí como un `button «Página Anterior»` no enfocable por teclado, 2.1.1 crítica. **Eso era falso y lo corrige v0.96.0**: esa flecha es una paginación con `aria-disabled="true"`, o sea un control deshabilitado, y el agente la acusaba por no respetar ese atributo. El hecho de fondo —que el muro cambia diez veredictos en los dos sentidos— se midió y se sostiene; el ejemplo con el que se ilustró, no. Queda escrito así porque borrarlo sería esconder el error.
+
+Un muro de cookies es el estado por defecto de casi cualquier sitio del sector público español, y eso es lo que hace que esta entrega importe.
 
 **La detección es estructural**, no por texto ni por clase: un subárbol con `role=dialog`/`alertdialog` visible mientras el `main` —o, sin `main`, todos los encabezados de fuera del diálogo— está tapado por un `aria-hidden` ancestro. Nada de buscar «cookie» en el marcado, que depende del idioma. Y solo cuenta `aria-hidden`: un menú plegado con `hidden` o una plantilla no son un modal, y tomarlos por uno pondría a «revisar» páginas perfectamente medibles.
 
